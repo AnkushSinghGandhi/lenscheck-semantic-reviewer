@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pryti-semantic-reviewer"
+name = "lenscheck-semantic-reviewer"
 version = "0.5.0"
 description = "Semantic PR Reviewer for Python Web Applications"
 readme = "PYPI_README.md"
@@ -20,11 +20,11 @@ classifiers = [
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/AnkushSinghGandhi/pryti-semantic-reviewer"
-Repository = "https://github.com/AnkushSinghGandhi/pryti-semantic-reviewer"
+Homepage = "https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer"
+Repository = "https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer"
 
 [project.scripts]
-pryti = "cli:main"
+lenscheck = "cli:main"
 
 [tool.setuptools]
 py-modules = ["cli", "diff_pr", "serve", "gitutil", "enforce", "invariants", "deps", "digest"]

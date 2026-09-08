@@ -1,4 +1,4 @@
-"""pryti invariants --bootstrap — the pure corpus builder. No git, no IO."""
+"""lenscheck invariants --bootstrap — the pure corpus builder. No git, no IO."""
 import invariants
 
 
