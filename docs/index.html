@@ -3,43 +3,43 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>pryti-semantic-reviewer — deterministic semantic PR reviewer for Python (no LLM, no API key)</title>
-<meta name="description" content="pryti-semantic-reviewer is a deterministic semantic PR reviewer for Python web apps — no LLM, no API key, no per-PR token bill. Git tells you what lines changed; Pryti tells you what they mean and where to look.">
-<meta name="keywords" content="pryti, pryti semantic reviewer, pryti-semantic-reviewer, semantic PR reviewer, deterministic code review, Python PR reviewer, AST code review, no LLM code review, GitHub Action code review">
+<title>lenscheck-semantic-reviewer — deterministic semantic PR reviewer for Python (no LLM, no API key)</title>
+<meta name="description" content="lenscheck-semantic-reviewer is a deterministic semantic PR reviewer for Python web apps — no LLM, no API key, no per-PR token bill. Git tells you what lines changed; Lenscheck tells you what they mean and where to look.">
+<meta name="keywords" content="lenscheck, lenscheck semantic reviewer, lenscheck-semantic-reviewer, semantic PR reviewer, deterministic code review, Python PR reviewer, AST code review, no LLM code review, GitHub Action code review">
 <meta name="author" content="Ankush Singh Gandhi">
 <meta name="robots" content="index,follow,max-image-preview:large">
-<link rel="canonical" href="https://warriorwhocodes.com/pryti-semantic-reviewer/">
+<link rel="canonical" href="https://warriorwhocodes.com/lenscheck-semantic-reviewer/">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✦</text></svg>">
 
 <!-- Open Graph -->
 <meta property="og:type" content="website">
-<meta property="og:site_name" content="pryti-semantic-reviewer">
-<meta property="og:title" content="pryti-semantic-reviewer — deterministic semantic PR reviewer (no LLM)">
+<meta property="og:site_name" content="lenscheck-semantic-reviewer">
+<meta property="og:title" content="lenscheck-semantic-reviewer — deterministic semantic PR reviewer (no LLM)">
 <meta property="og:description" content="See what a pull request actually changes. A deterministic semantic PR reviewer for Python — no LLM, no API key, no token bill.">
-<meta property="og:url" content="https://warriorwhocodes.com/pryti-semantic-reviewer/">
-<meta property="og:image" content="https://warriorwhocodes.com/pryti-semantic-reviewer/images/00-welcome.png">
+<meta property="og:url" content="https://warriorwhocodes.com/lenscheck-semantic-reviewer/">
+<meta property="og:image" content="https://warriorwhocodes.com/lenscheck-semantic-reviewer/images/00-welcome.png">
 
 <!-- Twitter -->
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="pryti-semantic-reviewer — deterministic semantic PR reviewer (no LLM)">
+<meta name="twitter:title" content="lenscheck-semantic-reviewer — deterministic semantic PR reviewer (no LLM)">
 <meta name="twitter:description" content="See what a pull request actually changes. Deterministic, no LLM, no API key.">
-<meta name="twitter:image" content="https://warriorwhocodes.com/pryti-semantic-reviewer/images/00-welcome.png">
+<meta name="twitter:image" content="https://warriorwhocodes.com/lenscheck-semantic-reviewer/images/00-welcome.png">
 
-<!-- Structured data: helps Google understand the entity "pryti-semantic-reviewer" -->
+<!-- Structured data: helps Google understand the entity "lenscheck-semantic-reviewer" -->
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
-  "name": "pryti-semantic-reviewer",
-  "alternateName": "Pryti",
+  "name": "lenscheck-semantic-reviewer",
+  "alternateName": "Lenscheck",
   "applicationCategory": "DeveloperApplication",
   "operatingSystem": "OS Independent",
   "description": "A deterministic semantic PR reviewer for Python web apps — no LLM, no API key. Shows what a pull request actually changes and points you at the exact line to read.",
-  "url": "https://warriorwhocodes.com/pryti-semantic-reviewer/",
-  "downloadUrl": "https://pypi.org/project/pryti-semantic-reviewer/",
-  "installUrl": "https://pypi.org/project/pryti-semantic-reviewer/",
+  "url": "https://warriorwhocodes.com/lenscheck-semantic-reviewer/",
+  "downloadUrl": "https://pypi.org/project/lenscheck-semantic-reviewer/",
+  "installUrl": "https://pypi.org/project/lenscheck-semantic-reviewer/",
   "softwareVersion": "0.4.0",
-  "codeRepository": "https://github.com/AnkushSinghGandhi/pryti-semantic-reviewer",
+  "codeRepository": "https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer",
   "license": "https://spdx.org/licenses/Elastic-2.0.html",
   "author": { "@type": "Person", "name": "Ankush Singh Gandhi", "url": "https://warriorwhocodes.com" },
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
@@ -132,8 +132,8 @@
   .cmp th,.cmp td{padding:12px 12px;border-bottom:1px solid var(--line);text-align:center}
   .cmp th:first-child,.cmp td:first-child{text-align:left;color:var(--muted);font-weight:600}
   .cmp thead th{color:var(--muted);font-weight:600;font-size:13px}
-  .cmp .col-pryti{background:rgba(168,85,247,.10);color:var(--text)}
-  .cmp thead .col-pryti{color:var(--accent);font-weight:800}
+  .cmp .col-lenscheck{background:rgba(168,85,247,.10);color:var(--text)}
+  .cmp thead .col-lenscheck{color:var(--accent);font-weight:800}
   .cmp .y{color:var(--low);font-weight:700}.cmp .n{color:var(--crit)}.cmp .p{color:var(--med)}
 
   .pills{display:flex;gap:10px;flex-wrap:wrap;margin-top:24px}
@@ -185,23 +185,23 @@
 <div class="spectrum"></div>
 
 <nav><div class="wrap">
-  <div class="logo">✦ <span>pryti-semantic-reviewer</span></div>
+  <div class="logo">✦ <span>lenscheck-semantic-reviewer</span></div>
   <div class="links">
     <a href="#how">How it works</a>
     <a href="#ecosystem">Ecosystem</a>
     <a href="#contract">Contract</a>
     <a href="#lens">The lens</a>
     <a href="docs.html">Docs</a>
-    <a class="btn ghost" href="https://github.com/AnkushSinghGandhi/pryti-semantic-reviewer">GitHub</a>
+    <a class="btn ghost" href="https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer">GitHub</a>
   </div>
 </div></nav>
 
 <header class="hero"><div class="wrap">
   <div class="mark">✦</div>
-  <div class="eyebrow" style="text-transform:none;font-size:15px;letter-spacing:0;margin-bottom:2px">pryti-semantic-reviewer</div>
+  <div class="eyebrow" style="text-transform:none;font-size:15px;letter-spacing:0;margin-bottom:2px">lenscheck-semantic-reviewer</div>
   <h1>See what a pull request <em>actually</em> changes — <em>no LLM required</em></h1>
-  <p class="sub" style="font-size:14px;margin-top:10px"><b style="color:var(--accent)">PRYTI</b> — Pull Request Review, Yield &amp; Technical Intelligence</p>
-  <p class="sub">Git tells you what <b>lines</b> changed. Pryti tells you what they <b>mean</b> — and points you at the exact line to read.</p>
+  <p class="sub" style="font-size:14px;margin-top:10px"><b style="color:var(--accent)">LENSCHECK</b> — Pull Request Review, Yield &amp; Technical Intelligence</p>
+  <p class="sub">Git tells you what <b>lines</b> changed. Lenscheck tells you what they <b>mean</b> — and points you at the exact line to read.</p>
   <p class="one">A <b>deterministic</b> semantic PR reviewer for Python web apps. No AI black box, no API key, no per-PR token bill — same PR in, same review out, every time.</p>
   <div class="pills" style="justify-content:center">
     <span class="pill"><b>No LLM</b></span>
@@ -211,22 +211,22 @@
     <span class="pill"><b>Runs offline</b></span>
   </div>
   <div class="cta">
-    <a class="btn primary" href="https://github.com/AnkushSinghGandhi/pryti-semantic-reviewer">Get started on GitHub</a>
-    <a class="btn ghost" href="https://pypi.org/project/pryti-semantic-reviewer/">View on PyPI</a>
-    <a class="btn ghost" href="https://github.com/AnkushSinghGandhi/pryti-semantic-reviewer/blob/main/blog/pryti-complete-guide.md">Read the guide</a>
+    <a class="btn primary" href="https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer">Get started on GitHub</a>
+    <a class="btn ghost" href="https://pypi.org/project/lenscheck-semantic-reviewer/">View on PyPI</a>
+    <a class="btn ghost" href="https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer/blob/main/blog/lenscheck-complete-guide.md">Read the guide</a>
   </div>
   <div class="install">
     <span style="color:var(--muted);font-size:12px">reviewer</span>
-    <code id="pip">pip install pryti-semantic-reviewer</code>
+    <code id="pip">pip install lenscheck-semantic-reviewer</code>
     <button onclick="navigator.clipboard.writeText(document.getElementById('pip').textContent);this.textContent='copied'">copy</button>
   </div>
   <div class="install" style="margin-top:10px">
     <span style="color:var(--muted);font-size:12px">contract</span>
-    <code id="pip2">pip install pryti-contract</code>
+    <code id="pip2">pip install lenscheck-contract</code>
     <button onclick="navigator.clipboard.writeText(document.getElementById('pip2').textContent);this.textContent='copied'">copy</button>
   </div>
   <div class="meta">
-    <a class="star" href="https://github.com/AnkushSinghGandhi/pryti-semantic-reviewer">★ Star on GitHub</a>
+    <a class="star" href="https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer">★ Star on GitHub</a>
     <span class="sep">·</span>
     <a class="sponsor" href="https://github.com/sponsors/AnkushSinghGandhi">♥ Sponsor</a>
     <span class="sep">·</span>
@@ -240,38 +240,38 @@
 <section id="ecosystem"><div class="wrap">
   <div class="eyebrow">The ecosystem</div>
   <h2>Two tools, one promise: always know what your backend does</h2>
-  <p class="lead">Pryti looks at your backend from both sides — the <b>diff</b> from the outside and the <b>running app</b> from the inside. Each catches what the other structurally can't.</p>
+  <p class="lead">Lenscheck looks at your backend from both sides — the <b>diff</b> from the outside and the <b>running app</b> from the inside. Each catches what the other structurally can't.</p>
 
   <div class="grid g2">
     <div class="card">
       <div class="ico">🔎</div>
-      <h3>pryti-semantic-reviewer</h3>
+      <h3>lenscheck-semantic-reviewer</h3>
       <p><b>Outside-in.</b> A GitHub Action / CLI that reads the PR diff (AST, no LLM) and comments on what actually changed and where to look. Lives in your <b>CI</b> — zero code, zero setup.</p>
-      <p style="margin-top:10px"><code>pip install pryti-semantic-reviewer</code> · <a href="https://pypi.org/project/pryti-semantic-reviewer/">PyPI ↗</a></p>
+      <p style="margin-top:10px"><code>pip install lenscheck-semantic-reviewer</code> · <a href="https://pypi.org/project/lenscheck-semantic-reviewer/">PyPI ↗</a></p>
     </div>
     <div class="card">
       <div class="ico">🛡️</div>
-      <h3>pryti-contract</h3>
+      <h3>lenscheck-contract</h3>
       <p><b>Inside-out.</b> A library <b>inside your Django app</b> that records what it really does — routes, models, effects — fails CI on a risky change, and blocks undeclared calls at runtime.</p>
-      <p style="margin-top:10px"><code>pip install pryti-contract</code> · <a href="https://pypi.org/project/pryti-contract/">PyPI ↗</a></p>
+      <p style="margin-top:10px"><code>pip install lenscheck-contract</code> · <a href="https://pypi.org/project/lenscheck-contract/">PyPI ↗</a></p>
     </div>
   </div>
 
   <div class="term" style="margin-top:26px">
     <div class="bar">◭ the bridge — runtime <i>truth</i> feeds the reviewer</div>
-    <pre>$ pryti-contract invariants -o invariants.json        <span class="muted"># the app's real declared egress + rules</span>
-$ pryti review &lt;repo&gt; --pr 128 --invariants invariants.json   <span class="muted"># the reviewer stops guessing</span></pre>
+    <pre>$ lenscheck-contract invariants -o invariants.json        <span class="muted"># the app's real declared egress + rules</span>
+$ lenscheck review &lt;repo&gt; --pr 128 --invariants invariants.json   <span class="muted"># the reviewer stops guessing</span></pre>
   </div>
-  <p class="lead" style="margin-top:16px">On its own the reviewer <i>guesses</i> your invariants from git history. <b>pryti-contract</b> hands it the truth instead: your app's declared destinations become an <b>enforced allowlist</b>, so a brand-new domain sneaking into a PR is a <span class="c-crit">🔴 critical</span> alert — grounded in fact, not a hunch. <a href="docs.html">See the full docs →</a></p>
+  <p class="lead" style="margin-top:16px">On its own the reviewer <i>guesses</i> your invariants from git history. <b>lenscheck-contract</b> hands it the truth instead: your app's declared destinations become an <b>enforced allowlist</b>, so a brand-new domain sneaking into a PR is a <span class="c-crit">🔴 critical</span> alert — grounded in fact, not a hunch. <a href="docs.html">See the full docs →</a></p>
 </div></section>
 
 <!-- contract deep-dive -->
 <section id="contract"><div class="wrap">
-  <div class="eyebrow">pryti-contract · inside-out</div>
+  <div class="eyebrow">lenscheck-contract · inside-out</div>
   <h2>Your backend can't lie about what it does</h2>
-  <p class="lead">Static analysis can't see routers, loops, or mixins — but Django already resolved all of it at startup. So pryti-contract asks the running app instead of parsing files.</p>
+  <p class="lead">Static analysis can't see routers, loops, or mixins — but Django already resolved all of it at startup. So lenscheck-contract asks the running app instead of parsing files.</p>
   <div class="grid g3">
-    <div class="card lvl" style="border-top-color:#58a6ff"><h3 style="color:#58a6ff">1 · Zero code</h3><span class="tag">pryti-contract export</span><p>Reads Django's real router + model registry → <code>contract.json</code>. Coverage reported, not hidden.</p></div>
+    <div class="card lvl" style="border-top-color:#58a6ff"><h3 style="color:#58a6ff">1 · Zero code</h3><span class="tag">lenscheck-contract export</span><p>Reads Django's real router + model registry → <code>contract.json</code>. Coverage reported, not hidden.</p></div>
     <div class="card lvl" style="border-top-color:var(--accent)"><h3 style="color:var(--accent)">2 · Declare</h3><span class="tag">a decorator, done</span><p>Mark the routes + effects that matter — a decorator that looks like every Django one.</p></div>
     <div class="card lvl" style="border-top-color:var(--low)"><h3 style="color:var(--low)">3 · Enforce</h3><span class="tag">the runtime guard</span><p>One hook at the socket layer: an undeclared call fails loudly. The bad code doesn't ship.</p></div>
   </div>
@@ -279,7 +279,7 @@ $ pryti review &lt;repo&gt; --pr 128 --invariants invariants.json   <span class=
   <h2 style="margin-top:46px">3 bad things in. 0 shipped.</h2>
   <p class="lead">A PR that "looks harmless" — caught on <b>two layers</b>: structural (the CI diff) and runtime (the guard).</p>
   <div class="split">
-    <div class="shot"><img src="images/money-shot.png" alt="pryti-contract catching three bad things across CI and runtime"></div>
+    <div class="shot"><img src="images/money-shot.png" alt="lenscheck-contract catching three bad things across CI and runtime"></div>
     <ul class="layerlist">
       <li><b style="color:#58a6ff">Layer 2 · CI diff</b> — auth <span class="c-crit">weakened</span> (user → public) and a model field <span class="c-crit">dropped</span> → <b>CI blocked</b> before merge.</li>
       <li><b style="color:var(--low)">Layer 3 · runtime guard</b> — an <span class="c-crit">undeclared exfiltration</span> call <b style="color:var(--low)">blocked</b> before it ever left the process.</li>
@@ -295,7 +295,7 @@ $ pryti review &lt;repo&gt; --pr 128 --invariants invariants.json   <span class=
   <p class="lead">A normal line-diff buries the one change that matters — "user email now leaves the server" — under thousands of mechanical edits. You don't need to read all of it. You need to know <b>what changed</b> in behavior, <b>how it flows</b>, <b>where to look</b>, and <b>whether it broke a promise</b>.</p>
 
   <div class="term">
-    <div class="bar">$ pryti review . --pr 481 &nbsp;&nbsp;→&nbsp;&nbsp; <b>🔴 3</b> &nbsp; <i>🟠 4</i> &nbsp; <span style="color:#e3b341">🟡 4</span> &nbsp; <s>🟢 20</s></div>
+    <div class="bar">$ lenscheck review . --pr 481 &nbsp;&nbsp;→&nbsp;&nbsp; <b>🔴 3</b> &nbsp; <i>🟠 4</i> &nbsp; <span style="color:#e3b341">🟡 4</span> &nbsp; <s>🟢 20</s></div>
 <pre><span class="muted"># 17,841 lines changed → 3 things to actually look at</span>
 
 <span class="c-crit">🔴 NEW ENDPOINT</span>  <b>/api/companions/payment</b>
@@ -331,31 +331,31 @@ $ pryti review &lt;repo&gt; --pr 128 --invariants invariants.json   <span class=
   <div class="eyebrow">See it</div>
   <h2>What changed → how it flows → where to look</h2>
   <p class="lead">A ranked list, an interactive flow graph for every change, and the exact <code>file:line</code> locations — in the terminal, a web UI, a PR comment, or your Security tab.</p>
-  <div class="shot"><img src="images/01-review.png" alt="A finished Pryti review in the web UI"></div>
+  <div class="shot"><img src="images/01-review.png" alt="A finished Lenscheck review in the web UI"></div>
 </div></section>
 
 <!-- why -->
 <section id="why"><div class="wrap">
-  <div class="eyebrow">Why Pryti</div>
+  <div class="eyebrow">Why Lenscheck</div>
   <h2>Why not just read the diff?</h2>
   <p class="lead">Because on an 18,000-line PR you can't — and the usual alternatives either guess, or miss what actually matters.</p>
   <div class="grid g2">
     <div class="card"><div class="ico">🎯</div><h3>Facts, not vibes</h3><p>It reads your code with Python's own parser and reports what's there — it never runs it, and never guesses. Every finding traces to a <code>file:line</code>, so there's nothing to fact-check.</p></div>
-    <div class="card"><div class="ico">🤫</div><h3>Honest about the unknown</h3><p>A tool that wrongly says "all clear" ships the bug. Pryti fails toward <i>look here</i> — ✓ / ⚠ / ? — and never renders "didn't see it" as "it's safe."</p></div>
+    <div class="card"><div class="ico">🤫</div><h3>Honest about the unknown</h3><p>A tool that wrongly says "all clear" ships the bug. Lenscheck fails toward <i>look here</i> — ✓ / ⚠ / ? — and never renders "didn't see it" as "it's safe."</p></div>
     <div class="card"><div class="ico">🔁</div><h3>Refactor-proof</h3><p>Facts are matched on the URL route, not class names. Rename every class in the repo and a pure refactor produces <b>zero</b> noise — so the real change stands out.</p></div>
     <div class="card"><div class="ico">🔒</div><h3>Your rules, enforced</h3><p>It learns the promises your codebase already keeps and flags the PR that breaks one. That confirmed corpus is yours — the piece a competitor can't clone.</p></div>
   </div>
 
   <div style="overflow-x:auto">
   <table class="cmp">
-    <thead><tr><th></th><th>Read the diff</th><th>AI reviewers</th><th>Static scanners</th><th class="col-pryti">Pryti</th></tr></thead>
+    <thead><tr><th></th><th>Read the diff</th><th>AI reviewers</th><th>Static scanners</th><th class="col-lenscheck">Lenscheck</th></tr></thead>
     <tbody>
-      <tr><td>Survives an 18k-line PR</td><td class="n">✗</td><td class="p">~</td><td class="p">~</td><td class="col-pryti y">✓</td></tr>
-      <tr><td>No hallucinations</td><td class="y">✓</td><td class="n">✗</td><td class="y">✓</td><td class="col-pryti y">✓</td></tr>
-      <tr><td>Honest about what it can't tell</td><td class="p">—</td><td class="n">✗</td><td class="p">~</td><td class="col-pryti y">✓</td></tr>
-      <tr><td>Refactor-stable (renames = no noise)</td><td class="n">✗</td><td class="n">✗</td><td class="n">✗</td><td class="col-pryti y">✓</td></tr>
-      <tr><td>Learns your team's own rules</td><td class="n">✗</td><td class="n">✗</td><td class="n">✗</td><td class="col-pryti y">✓</td></tr>
-      <tr><td>Zero config, zero dependencies</td><td class="y">✓</td><td class="n">✗</td><td class="p">~</td><td class="col-pryti y">✓</td></tr>
+      <tr><td>Survives an 18k-line PR</td><td class="n">✗</td><td class="p">~</td><td class="p">~</td><td class="col-lenscheck y">✓</td></tr>
+      <tr><td>No hallucinations</td><td class="y">✓</td><td class="n">✗</td><td class="y">✓</td><td class="col-lenscheck y">✓</td></tr>
+      <tr><td>Honest about what it can't tell</td><td class="p">—</td><td class="n">✗</td><td class="p">~</td><td class="col-lenscheck y">✓</td></tr>
+      <tr><td>Refactor-stable (renames = no noise)</td><td class="n">✗</td><td class="n">✗</td><td class="n">✗</td><td class="col-lenscheck y">✓</td></tr>
+      <tr><td>Learns your team's own rules</td><td class="n">✗</td><td class="n">✗</td><td class="n">✗</td><td class="col-lenscheck y">✓</td></tr>
+      <tr><td>Zero config, zero dependencies</td><td class="y">✓</td><td class="n">✗</td><td class="p">~</td><td class="col-lenscheck y">✓</td></tr>
     </tbody>
   </table>
   </div>
@@ -390,19 +390,19 @@ $ pryti review &lt;repo&gt; --pr 128 --invariants invariants.json   <span class=
   <h2>Terminal, a web UI, or on every PR</h2>
   <p class="lead">Same facts, three surfaces — pick whatever fits your workflow.</p>
   <div class="grid g3">
-    <div class="card"><div class="ico">⌨️</div><h3>CLI</h3><p><code>pryti review</code> — a ranked review right in your terminal or CI logs.</p></div>
-    <div class="card"><div class="ico">🖥️</div><h3>Web UI</h3><p><code>pryti serve</code> — an interactive flow graph and where-to-look, in your browser.</p></div>
+    <div class="card"><div class="ico">⌨️</div><h3>CLI</h3><p><code>lenscheck review</code> — a ranked review right in your terminal or CI logs.</p></div>
+    <div class="card"><div class="ico">🖥️</div><h3>Web UI</h3><p><code>lenscheck serve</code> — an interactive flow graph and where-to-look, in your browser.</p></div>
     <div class="card"><div class="ico">🤖</div><h3>GitHub Action</h3><p>A sticky comment, inline notes, and an optional merge gate on every pull request.</p></div>
   </div>
-  <div class="shot" style="margin-top:22px"><img src="images/00-welcome.png" alt="The Pryti web UI"></div>
+  <div class="shot" style="margin-top:22px"><img src="images/00-welcome.png" alt="The Lenscheck web UI"></div>
 </div></section>
 
 <!-- moat -->
 <section id="moat"><div class="wrap">
   <div class="eyebrow">The moat</div>
   <h2>It learns the rules your code already follows</h2>
-  <p class="lead">A property your codebase kept for 800 commits was almost certainly on purpose. Pryti mines your git history, surfaces those rules, you confirm the real ones — and then every PR that breaks one gets flagged, with the exact commit that broke it.</p>
-  <div class="shot"><img src="images/02-invariants.png" alt="Pryti invariants: discover, confirm, and blame rules"></div>
+  <p class="lead">A property your codebase kept for 800 commits was almost certainly on purpose. Lenscheck mines your git history, surfaces those rules, you confirm the real ones — and then every PR that breaks one gets flagged, with the exact commit that broke it.</p>
+  <div class="shot"><img src="images/02-invariants.png" alt="Lenscheck invariants: discover, confirm, and blame rules"></div>
 </div></section>
 
 <!-- features -->
@@ -415,7 +415,7 @@ $ pryti review &lt;repo&gt; --pr 128 --invariants invariants.json   <span class=
     <div class="card"><div class="ico">🎭</div><h3>Intent vs. behavior</h3><p>PR says "just a refactor" but added an endpoint? Caught — from facts, not an LLM.</p></div>
     <div class="card"><div class="ico">💬</div><h3>Inline PR comments</h3><p>Each finding pinned to the exact changed line, plus a sticky summary and a triage label.</p></div>
     <div class="card"><div class="ico">🛡️</div><h3>SARIF + gating</h3><p>Findings in the Security tab, and an optional merge gate on a broken rule.</p></div>
-    <div class="card"><div class="ico">📊</div><h3>Org roll-up</h3><p><code>pryti digest</code> counts the open risky PRs across every repo — one number for leadership.</p></div>
+    <div class="card"><div class="ico">📊</div><h3>Org roll-up</h3><p><code>lenscheck digest</code> counts the open risky PRs across every repo — one number for leadership.</p></div>
   </div>
 </div></section>
 
@@ -426,11 +426,11 @@ $ pryti review &lt;repo&gt; --pr 128 --invariants invariants.json   <span class=
   <div class="faq">
     <details><summary>Won't it be noisy?</summary><p>No — it's a <b>diff</b>. It only speaks up about what a PR actually changed, and it labels anything uncertain "look here," never "safe." Roll it out in observe mode and you'll see the signal before it can ever block a merge.</p></details>
     <details><summary>Does it need setup or config?</summary><p>Nothing. It's a pure-Python-standard-library package with <b>zero third-party dependencies</b>. Point it at a repo (local path or GitHub URL) and go — no config file, no server, no account.</p></details>
-    <details><summary>Will it hallucinate like an AI reviewer?</summary><p>No. There's no LLM in the analysis — so there's nothing to hallucinate, no API key to wire up, and no per-PR token bill. It reads your code with Python's parser and reports <b>facts</b>; every finding traces to an exact <code>file:line</code>, and the same PR always produces the same review. That's the whole point: LLM reviewers are smart but drift and cost tokens; Pryti is deterministic and free.</p></details>
+    <details><summary>Will it hallucinate like an AI reviewer?</summary><p>No. There's no LLM in the analysis — so there's nothing to hallucinate, no API key to wire up, and no per-PR token bill. It reads your code with Python's parser and reports <b>facts</b>; every finding traces to an exact <code>file:line</code>, and the same PR always produces the same review. That's the whole point: LLM reviewers are smart but drift and cost tokens; Lenscheck is deterministic and free.</p></details>
     <details><summary>Does it run my code?</summary><p>Never. It reads code statically and analyzes clean git snapshots (via <code>git archive</code>) in a temp folder — it doesn't execute anything or touch your working tree. Safe to point at any repo.</p></details>
     <details><summary>What about repos that aren't Django / DRF?</summary><p>Its lens is endpoint-centric (Django &amp; Django REST Framework today). On a repo it can't read, it simply finds nothing to report — it won't invent false alarms. More frameworks (FastAPI, …) are on the roadmap.</p></details>
     <details><summary>Do I need GitHub Advanced Security?</summary><p>No. The review, PR comments, labels, gating, and the org roll-up all work without it. GHAS only powers the optional SARIF Security-tab dashboard.</p></details>
-    <details><summary>Is it free?</summary><p>Yes — under the <a href="https://github.com/AnkushSinghGandhi/pryti-semantic-reviewer/blob/main/LICENSE">Elastic License 2.0</a>: free to use, self-host, and modify. You just can't resell it as a hosted service.</p></details>
+    <details><summary>Is it free?</summary><p>Yes — under the <a href="https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer/blob/main/LICENSE">Elastic License 2.0</a>: free to use, self-host, and modify. You just can't resell it as a hosted service.</p></details>
   </div>
 </div></section>
 
@@ -440,25 +440,25 @@ $ pryti review &lt;repo&gt; --pr 128 --invariants invariants.json   <span class=
   <h2>Three commands, zero setup</h2>
   <p class="lead">Needs Python 3.8+, plus <code>git</code> and <code>tar</code>. That's the whole install.</p>
   <div class="steps">
-    <div class="step"><div class="num">1</div><div class="body"><h3>Install it</h3><pre>pip install pryti-semantic-reviewer</pre></div></div>
-    <div class="step"><div class="num">2</div><div class="body"><h3>Review a pull request</h3><pre>pryti review https://github.com/owner/repo --pr 481</pre></div></div>
-    <div class="step"><div class="num">3</div><div class="body"><h3>Or explore it in your browser</h3><pre>cd your-repo &amp;&amp; pryti serve</pre></div></div>
+    <div class="step"><div class="num">1</div><div class="body"><h3>Install it</h3><pre>pip install lenscheck-semantic-reviewer</pre></div></div>
+    <div class="step"><div class="num">2</div><div class="body"><h3>Review a pull request</h3><pre>lenscheck review https://github.com/owner/repo --pr 481</pre></div></div>
+    <div class="step"><div class="num">3</div><div class="body"><h3>Or explore it in your browser</h3><pre>cd your-repo &amp;&amp; lenscheck serve</pre></div></div>
   </div>
   <div class="cta" style="margin-top:30px">
-    <a class="btn primary" href="https://pypi.org/project/pryti-semantic-reviewer/">Install from PyPI</a>
-    <a class="btn ghost" href="https://github.com/AnkushSinghGandhi/pryti-semantic-reviewer#github-action">Add the GitHub Action</a>
-    <a class="btn ghost" href="https://github.com/AnkushSinghGandhi/pryti-semantic-reviewer/blob/main/blog/pryti-complete-guide.md">Read the guide</a>
+    <a class="btn primary" href="https://pypi.org/project/lenscheck-semantic-reviewer/">Install from PyPI</a>
+    <a class="btn ghost" href="https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer#github-action">Add the GitHub Action</a>
+    <a class="btn ghost" href="https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer/blob/main/blog/lenscheck-complete-guide.md">Read the guide</a>
   </div>
 </div></section>
 
 <footer><div class="wrap">
-  <div>✦ <b>Pryti</b> — the product is the gap between what your code does and what you said it should.</div>
+  <div>✦ <b>Lenscheck</b> — the product is the gap between what your code does and what you said it should.</div>
   <div>
-    <a href="https://github.com/AnkushSinghGandhi/pryti-semantic-reviewer">GitHub</a> ·
-    PyPI: <a href="https://pypi.org/project/pryti-semantic-reviewer/">reviewer</a> ·
-    <a href="https://pypi.org/project/pryti-contract/">contract</a> ·
-    <a href="https://github.com/AnkushSinghGandhi/pryti-semantic-reviewer/blob/main/blog/pryti-complete-guide.md">Docs</a> ·
-    <a href="https://github.com/AnkushSinghGandhi/pryti-semantic-reviewer/blob/main/LICENSE">Elastic License 2.0</a>
+    <a href="https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer">GitHub</a> ·
+    PyPI: <a href="https://pypi.org/project/lenscheck-semantic-reviewer/">reviewer</a> ·
+    <a href="https://pypi.org/project/lenscheck-contract/">contract</a> ·
+    <a href="https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer/blob/main/blog/lenscheck-complete-guide.md">Docs</a> ·
+    <a href="https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer/blob/main/LICENSE">Elastic License 2.0</a>
   </div>
 </div></footer>
 
