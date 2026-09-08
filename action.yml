@@ -52,7 +52,7 @@ runs:
 
     - name: Install Lenscheck
       shell: bash
-      run: pip install "lenscheck-semantic-reviewer>=0.1.3"
+      run: pip install "lenscheck-semantic-reviewer>=1.0.0"
 
     - name: Run Lenscheck review
       shell: bash
