@@ -1,4 +1,4 @@
-"""The 6-edge lens on a fixture Django app. Pryti parses the fixtures with `ast`; it never
+"""The 6-edge lens on a fixture Django app. Lenscheck parses the fixtures with `ast`; it never
 imports or runs them, so Django/DRF don't need to be installed."""
 import ast
 

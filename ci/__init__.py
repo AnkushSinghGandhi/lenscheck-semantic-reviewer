@@ -1,1 +1,1 @@
-# Pryti CI helpers (packaged so `pryti post` can import post_review).
+# Lenscheck CI helpers (packaged so `lenscheck post` can import post_review).
