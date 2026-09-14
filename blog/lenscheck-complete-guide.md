@@ -186,14 +186,26 @@ Once a review runs, you read it top-to-bottom. Using the screenshot above:
 3. **📦 Dependency capability changes** — bumped libraries and whether the new version can *do* more
    than the old one. ([feature #5](#feature-5--dependency-capability-delta))
 
-4. **The tally** — 🔴 2 — how many findings at each severity.
+4. **The tally** — 🔴 1 — how many findings at each severity.
 
 5. **The change list** (left) — one row per changed endpoint, worst first. Click a row to see…
 
 6. **The flow graph** (right) — a live picture of what that endpoint does. In the screenshot,
-   `ExportUsers` → writes **AuditLog**, reads **User**, and calls **hooks.example.com** — with new
-   parts highlighted. This is the same picture Lenscheck can also draw as a
+   `ExportUsers` → reads **User** (SQL table `auth_user`), writes **AuditLog** (`audit_log`), calls
+   **hooks.example.com**, reads and writes the **cache**, and dispatches two **async** jobs
+   (`reindex_users`, a thread) — every edge colored by kind, with the new parts highlighted. This is
+   the same picture Lenscheck can also draw as a
    [Mermaid diagram](#feature-7--mermaid-flow-diagram) inside a GitHub comment.
+
+7. **The "Where to look" tab** — switch the detail pane from the graph to a flat, ranked list of
+   every fact with its exact `file:line` — the **WHERE** of the review, including the traced leak.
+
+![The "Where to look" tab — every fact at its exact line](images/03-where-to-look.png)
+
+Click any block in the graph (or a line here) and Lenscheck shows you the **source**, with the exact
+line highlighted:
+
+![Click a block to see its source, the exact line highlighted](images/04-source-snippet.png)
 
 ### The Invariants panel — teach Lenscheck your rules
 
@@ -204,11 +216,11 @@ Click **⚖ Invariants** in the top bar:
 Lenscheck samples your git history and shows **candidate rules** it noticed your codebase following. In
 the screenshot:
 
-- *"Authenticated access before any DB write"* — holds **3/4 (75%)**, with the one exception named
-  (`api/users/export`). The `[near-miss]` tag means "almost always true" — which is exactly what a
-  real rule-with-one-bug looks like.
-- Each rule has a **Confirm** button (freeze it as a rule Lenscheck will enforce from now on) and a
-  **🩸 Blame** button (find the commit that first broke it).
+- *"External/PII egress limited to 2 known destinations"* `[boundary]` — holds **2/2 (100%)**. It's
+  the rule that makes the `ExportUsers` change dangerous: the new endpoint would send an email to a
+  **third** destination, widening that boundary.
+- Each rule has a **Confirm** button (freeze it as a rule Lenscheck will enforce from now on); rules
+  with exceptions also get a **🩸 Blame** button (find the commit that first broke it).
 
 This is the **moat** — over time you teach Lenscheck the rules *your* codebase cares about, and no
 competitor has that knowledge. ([feature #10](#feature-10--invariants-discover-confirm-enforce-blame))
@@ -229,6 +241,13 @@ competitor has that knowledge. ([feature #10](#feature-10--invariants-discover-c
 ### `lenscheck review` — the main event
 
 Analyze a PR / branch / commit and print a review.
+
+![`lenscheck review` in the terminal](images/07-cli.png)
+
+The same review as a **self-contained HTML file** (`--html`) you can send to anyone — no install
+needed:
+
+![The self-contained HTML report — what changed, how it flows, where to look](images/06-html-report.png)
 
 ```bash
 lenscheck review                       # no args: review THIS branch vs the default branch
@@ -385,6 +404,11 @@ lenscheck digest --org my-org --slack "$SLACK_WEBHOOK"
 🟡 12  new DB write / external
 ```
 
+With `--slack`, that lands in your channel every morning — one number the whole team (and leadership)
+can read without opening a single PR:
+
+![The digest posted to Slack](images/09-digest-slack.png)
+
 | Flag | What it does |
 |------|--------------|
 | `--org ORG` | The GitHub org/owner to summarize (**required**). |
@@ -453,6 +477,8 @@ If it can't fetch a version (offline, or the package has no source), it says **�
 
 Turn the network scan off with `LENSCHECK_SCAN_DEPS=0` (or the Action's `scan_deps: false`) and you'll
 always get the fast ⚠ mode.
+
+![The dependency capability panel — bumped packages, honest about the unresolved ones](images/05-dependencies.png)
 
 ### Feature #9 — PII taint
 
@@ -540,6 +566,11 @@ sequenceDiagram
     NExportUsers->>External: https://hooks.example.com/export
 ```
 ````
+
+GitHub renders that right inside the PR comment — a real picture of the endpoint's behavior, drawn
+from facts:
+
+![The Mermaid flow diagram as GitHub renders it in the PR comment](images/08-mermaid.png)
 
 ### Feature #8 — smart default target
 
