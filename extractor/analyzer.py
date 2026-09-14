@@ -893,6 +893,7 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
         agg.db += local.db
         agg.external += local.external
         agg.async_ += local.async_
+        agg.cache += local.cache
         agg.pii += local.pii
         agg.leaks += local.leaks
     else:
