@@ -830,5 +830,20 @@ LENSCHECK_GIT_TIMEOUT=…   # seconds before a git clone/archive is aborted
 
 ---
 
+## Companion tool: lenscheck-contract
+
+Everything above happens **before merge** — the reviewer *discovers* the rules your code follows and
+flags a PR that breaks one. Its companion, **[lenscheck-contract](https://github.com/AnkushSinghGandhi/lenscheck-contract)**
+(a tiny, MIT-licensed runtime library), closes the loop **at runtime**: your app keeps a declared list
+of what each endpoint is allowed to do — write these tables, call these hosts — and **can't lie about
+it**. An undeclared DB write or a new external call is blocked (or logged) the moment it happens.
+
+So a rule you confirmed here — *"auth before any DB write," "personal data never leaves without
+auth"* — can be **declared once and enforced in production**, not just checked in review. Same
+promise, two moments: **the reviewer catches it in the PR; the contract stops it in prod.** →
+[Read the contract guide](https://github.com/AnkushSinghGandhi/lenscheck-contract).
+
+---
+
 *Lenscheck is source-available (Elastic-2.0). Built by [Ankush Singh Gandhi](https://warriorwhocodes.com). Questions,
 stars, and sponsorships welcome on [GitHub](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer).*
