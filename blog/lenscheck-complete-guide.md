@@ -307,6 +307,8 @@ Useful **environment variables** for a hosted deployment:
 | `LENSCHECK_BASE_PATH` | Serve under a sub-path (e.g. `/lenscheck`) behind a reverse proxy. |
 | `LENSCHECK_DEFAULT_REPO` | The repo shown by default in the UI. |
 | `LENSCHECK_INVARIANTS` | Default invariant corpus path to enforce in the UI. |
+| `LENSCHECK_CACHE` | Where cloned repos are cached (default `~/.cache/lenscheck/repos`). |
+| `LENSCHECK_GIT_TIMEOUT` | Seconds before a `git clone`/`archive` is aborted (guards huge repos). |
 | `GITHUB_TOKEN` | For private repos / to avoid GitHub rate limits. |
 
 To host one shared Lenscheck UI: run `lenscheck serve --no-open` behind your usual reverse proxy, set
@@ -791,9 +793,11 @@ lenscheck digest --org my-org --repos repos.txt --slack "$SLACK_WEBHOOK"  # + ad
 # env vars
 LENSCHECK_SCAN_DEPS=0     # skip the dependency network scan
 LENSCHECK_TOKEN=…         # lock down a hosted `lenscheck serve`
+LENSCHECK_CACHE=…         # where cloned repos are cached (default ~/.cache/lenscheck/repos)
+LENSCHECK_GIT_TIMEOUT=…   # seconds before a git clone/archive is aborted
 ```
 
 ---
 
-*Lenscheck is open source. Built by [Ankush Singh Gandhi](https://warriorwhocodes.com). Questions,
+*Lenscheck is source-available (Elastic-2.0). Built by [Ankush Singh Gandhi](https://warriorwhocodes.com). Questions,
 stars, and sponsorships welcome on [GitHub](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer).*
