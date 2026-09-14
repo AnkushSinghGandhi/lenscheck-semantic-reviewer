@@ -426,15 +426,51 @@ def intent_summary(changes, findings):
 # asking an LLM to eyeball the diff; every contradiction below is derived from a verified fact
 # that traces to a `file:line`, so it can't be hallucinated. (#3 is the neutral summary; #4 is
 # the contradiction.)
+# Phrases are matched as substrings anywhere in the title+body, so every entry here is a
+# WHOLE-CHANGE ASSERTION ("this PR changes no behaviour") — never an ambiguous partial word like
+# bare "cleanup"/"rename"/"typo", which also show up in real feature PRs ("…also does some cleanup")
+# and would fire a false contradiction. Keeping these unambiguous is what makes a flagged
+# contradiction trustworthy (see the honesty rules) rather than a keyword accident.
 _INTENT_PHRASES = {
-    "refactor": ("refactor", "no behavior change", "no behaviour change",
-                 "no functional change", "no logic change"),
-    "docs-only": ("docs only", "docs-only", "documentation only", "doc only"),
-    "bugfix": ("bugfix", "bug fix", "hotfix"),
+    "refactor": (
+        # the word itself + its inflections
+        "refactor", "refactoring", "refactored", "re-factor",
+        # explicit "behaviour is preserved" assertions (en-GB + en-US spellings)
+        "no behavior change", "no behaviour change", "no behavioral change", "no behavioural change",
+        "no functional change", "no functional changes", "no logic change", "no logic changes",
+        "no semantic change", "no semantic changes", "no change in behavior", "no change in behaviour",
+        "without changing behavior", "without changing behaviour", "behavior unchanged",
+        "behaviour unchanged", "behavior is unchanged", "behaviour is unchanged",
+        "behavior preserving", "behaviour preserving", "behavior-preserving", "behaviour-preserving",
+        "semantics preserved", "semantically equivalent", "functionally equivalent",
+        "functionally identical", "no functional change intended", "(nfc)", "(nfci)",
+        "no-op change", "noop change",
+        # cosmetic / formatting-only assertions
+        "purely cosmetic", "cosmetic only", "cosmetic-only", "cosmetic changes only",
+        "formatting only", "formatting-only", "whitespace only", "whitespace-only",
+        "style only", "style-only", "lint only", "lint-only", "linting only",
+        # "this is just a refactor" assertions
+        "pure refactor", "just a refactor", "mechanical refactor", "mechanical change only",
+    ),
+    "docs-only": (
+        "docs only", "docs-only", "doc only", "doc-only", "documentation only",
+        "documentation-only", "documentation change only", "docs change only",
+        "readme only", "readme-only", "comment only", "comments only", "comment-only",
+    ),
+    "bugfix": (
+        "bugfix", "bug fix", "bug-fix", "hotfix", "hot fix", "hot-fix",
+        "fixes a bug", "fix a bug", "fixes bug", "fixing a bug", "bug fixes",
+        "regression fix", "fixes a regression", "fix a regression", "patch a bug",
+    ),
 }
-# conventional-commit prefixes (e.g. "refactor(auth): …") mapped to the same claim tags
-_INTENT_PREFIXES = {"refactor": ("refactor", "style"), "docs-only": ("docs",),
-                    "bugfix": ("fix", "hotfix", "bugfix")}
+# Conventional-commit prefixes (e.g. "refactor(auth): …", "perf!: …") mapped to the same claim tags.
+# These match only the *start of line 1* AND only ever fire when the facts show a real behavioural
+# change, so even broad types (chore/perf) are safe — they flag a mislabeled PR, not a keyword hit.
+_INTENT_PREFIXES = {
+    "refactor": ("refactor", "style", "perf", "chore", "format", "fmt", "cleanup"),
+    "docs-only": ("docs", "doc"),
+    "bugfix": ("fix", "hotfix", "bugfix", "bug"),
+}
 
 
 def parse_intent(text):
