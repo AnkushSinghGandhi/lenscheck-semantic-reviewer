@@ -9,6 +9,7 @@ the diff — just with the comparison turned off. Reductive by default: lead wit
 """
 import argparse
 import json
+import os
 import sys
 
 from extractor.analyzer import analyze_repo
@@ -98,6 +99,17 @@ def render_md(m):
     return "\n".join(L)
 
 
+def write_html(m, path):
+    """A self-contained, shareable map — the interactive `web/map.html`, with the data baked in so it
+    opens from a file:// with no server (same trick as `review --html`)."""
+    tpl_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web", "map.html")
+    tpl = open(tpl_path, encoding="utf-8").read()
+    inject = "<script>window.__MAP_EMBEDDED__=" + json.dumps(m, ensure_ascii=False) + ";</script>\n"
+    html = tpl.replace("<script>", inject + "<script>", 1)   # runs before the page's own script
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(html)
+
+
 def main():
     ap = argparse.ArgumentParser(prog="lenscheck map",
                                  description="Whole-repo endpoint map, grouped by app, worst-first.")
@@ -105,21 +117,28 @@ def main():
     ap.add_argument("--risky", action="store_true", help="only 🔴/🟠 endpoints (the security view)")
     ap.add_argument("--app", help="only this app")
     ap.add_argument("--json", dest="json_out", help="write the full map (with graphs) as JSON")
+    ap.add_argument("--html", dest="html_out", help="write a self-contained interactive HTML report")
     ap.add_argument("--out", help="write the Markdown map to a file (else prints)")
     args = ap.parse_args()
 
     m = build_map(args.repo, risky=args.risky, app=args.app)
+    wrote_any = False
     if args.json_out:
         with open(args.json_out, "w", encoding="utf-8") as f:
             json.dump(m, f, ensure_ascii=False, indent=2)
         print(f"wrote {args.json_out}: {m['shown']} endpoints, {len(m['apps'])} apps")
-    md = render_md(m)
+        wrote_any = True
+    if args.html_out:
+        write_html(m, args.html_out)
+        print(f"wrote {args.html_out}: open it in a browser — no server needed")
+        wrote_any = True
     if args.out:
         with open(args.out, "w", encoding="utf-8") as f:
-            f.write(md)
+            f.write(render_md(m))
         print(f"wrote {args.out}")
-    elif not args.json_out:
-        print(md)
+        wrote_any = True
+    if not wrote_any:
+        print(render_md(m))
 
 
 if __name__ == "__main__":
