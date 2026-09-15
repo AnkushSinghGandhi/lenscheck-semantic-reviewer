@@ -48,6 +48,10 @@ font-weight:700;font-size:15px}
 svg text{fill:var(--fg);font:12px ui-monospace,Menlo,monospace}
 svg .elabel{fill:#adbac7;font-size:10.5px}
 .empty{color:var(--mut);padding:40px;text-align:center}
+.posture{display:flex;gap:9px;flex-wrap:wrap;margin:-6px 0 18px}
+.posture .p{cursor:pointer;border:1px solid var(--line);border-radius:2em;padding:3px 11px;font-size:12.5px;color:var(--mut)}
+.posture .p:hover{border-color:var(--link)}.posture .p.on{background:var(--panel);border-color:var(--link);color:var(--fg)}
+.posture .p b{color:var(--fg)}.posture .p.risk b{color:#f0b9b4}
 body.static .live-only{display:none}
 .fact.clk{cursor:pointer}.fact.clk:hover .loc{text-decoration:underline}
 .snippet{margin-top:10px;border:1px solid var(--line);border-radius:7px;overflow:hidden;background:#0d1117}
@@ -71,6 +75,7 @@ body.static .live-only{display:none}
 </header>
 <main>
   <div class="sub" id="summary">Enter a repo and hit <b>Map</b> — every endpoint, grouped by app, worst-first.</div>
+  <div class="posture" id="posture"></div>
   <div id="apps"></div>
 </main>
 <script>
@@ -104,6 +109,8 @@ function epMatches(e){
   const q=$("#q").value.trim().toLowerCase();
   if(filter==="🔴"&&e.sev!=="🔴")return false;
   if(filter==="🟠"&&e.sev!=="🟠")return false;
+  if(filter==="unauth-write"&&!(e.tags.includes("open")&&e.tags.includes("write")))return false;
+  if(filter==="pii-egress"&&!(e.tags.includes("pii")&&e.tags.includes("external")))return false;
   if(["open","write","pii","external"].includes(filter)&&!e.tags.includes(filter))return false;
   if(!q)return true;
   const hay=(e.route+" "+e.handler+" "+e.auth+" "+e.tags.join(" ")+" "+
@@ -117,6 +124,16 @@ function render(){
   const shown=apps.reduce((n,a)=>n+a.eps.length,0);
   $("#summary").innerHTML=`<b>${DATA.total}</b> endpoints · <b>${DATA.apps.length}</b> apps`+
     (shown!==DATA.total?` · showing <b>${shown}</b>`:"")+` · <span style="color:var(--mut)">worst-first</span>`;
+  // repo-wide posture — from ALL endpoints, one glance at security exposure. Click to filter.
+  const all=DATA.apps.flatMap(a=>a.endpoints), has=(e,...t)=>t.every(x=>e.tags.includes(x));
+  const P=[["🔴","critical",all.filter(e=>e.sev==="🔴").length,1],
+           ["🟠","high",all.filter(e=>e.sev==="🟠").length,1],
+           ["unauth-write","unauth-write",all.filter(e=>has(e,"open","write")).length,1],
+           ["pii-egress","PII-egress",all.filter(e=>has(e,"pii","external")).length,1],
+           ["open","public",all.filter(e=>e.tags.includes("open")).length,0],
+           ["external","external",all.filter(e=>e.tags.includes("external")).length,0]];
+  $("#posture").innerHTML=P.map(([k,l,n,risk])=>
+    `<span class="p${risk?' risk':''}${filter===k?' on':''}" onclick="setFilter('${k}')"><b>${n}</b> ${l}</span>`).join("");
   $("#apps").innerHTML = apps.length? apps.map(appHtml).join("") :
     `<div class="empty">No endpoints match.</div>`;
 }
