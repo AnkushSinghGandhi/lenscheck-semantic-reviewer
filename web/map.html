@@ -48,13 +48,14 @@ font-weight:700;font-size:15px}
 svg text{fill:var(--fg);font:12px ui-monospace,Menlo,monospace}
 svg .elabel{fill:#adbac7;font-size:10.5px}
 .empty{color:var(--mut);padding:40px;text-align:center}
+body.static .live-only{display:none}
 </style></head>
 <body>
 <header>
   <div class="top">
     <span class="brand"><span class="tri">◆</span> Lenscheck <span style="color:var(--mut);font-weight:500">· backend map</span></span>
-    <input id="repo" placeholder="/path/to/repo or github url">
-    <button onclick="load()"><b>Map</b></button>
+    <input id="repo" class="live-only" placeholder="/path/to/repo or github url">
+    <button class="live-only" onclick="load()"><b>Map</b></button>
     <input id="q" placeholder="search route, handler, table, host…" oninput="render()">
     <a href="/app.html" style="margin-left:auto;font-size:13px">← review a PR</a>
   </div>
@@ -75,7 +76,10 @@ const FILTERS=[["all","all"],["🔴","🔴"],["🟠","🟠"],["open","open"],["w
 $("#chips").innerHTML=FILTERS.map(([k,l])=>`<span class="chip${k==='all'?' on':''}" data-k="${k}" onclick="setFilter('${k}')">${l}</span>`).join("");
 function setFilter(k){filter=k;document.querySelectorAll('.chip').forEach(c=>c.classList.toggle('on',c.dataset.k===k));render();}
 
-async function boot(){ try{const c=await (await fetch("/api/config")).json(); if(c.repo){$("#repo").value=c.repo; load();}}catch(e){} }
+async function boot(){
+  if(window.__MAP_EMBEDDED__){ DATA=window.__MAP_EMBEDDED__; document.body.classList.add("static"); render(); return; }
+  try{const c=await (await fetch("/api/config")).json(); if(c.repo){$("#repo").value=c.repo; load();}}catch(e){}
+}
 async function load(){
   const repo=$("#repo").value.trim(); if(!repo)return;
   $("#summary").textContent="Analyzing "+repo+" …"; $("#apps").innerHTML="";
