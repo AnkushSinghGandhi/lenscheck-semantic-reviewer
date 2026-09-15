@@ -99,6 +99,8 @@ function downloadSeed(){
 }
 async function boot(){
   if(window.__MAP_EMBEDDED__){ DATA=window.__MAP_EMBEDDED__; document.body.classList.add("static"); render(); return; }
+  const urlRepo=new URLSearchParams(location.search).get("repo");
+  if(urlRepo){ $("#repo").value=urlRepo; load(); return; }
   try{const c=await (await fetch("/api/config")).json(); if(c.repo){$("#repo").value=c.repo; load();}}catch(e){}
 }
 async function load(){
