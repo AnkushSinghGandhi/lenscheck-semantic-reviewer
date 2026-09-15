@@ -8,6 +8,7 @@ the diff — just with the comparison turned off. Reductive by default: lead wit
     python3 map_repo.py <repo-or-url> [--risky] [--app NAME] [--json out.json] [--out map.md]
 """
 import argparse
+import ast
 import json
 import os
 import sys
@@ -30,11 +31,58 @@ def _clean_why(w):
              .replace("new ", ""))
 
 
-def app_of(ep):
-    """The Django app an endpoint belongs to, from its file path. Drops an `apps/`|`src/` wrapper;
-    files sitting at the repo root fall into `(root)`. A cheap, honest first cut — refine later with
-    INSTALLED_APPS if needed."""
-    parts = [p for p in (ep.file or "").split("/") if p]
+_APP_SKIP = {".git", "node_modules", "__pycache__", ".venv", "venv", "migrations", "static",
+             "media", "tests", "test"}
+
+
+def resolve_apps(root):
+    """Map the repo's real Django apps to their directories: `{reldir: label}`.
+
+    Primary signal is **INSTALLED_APPS** in any `settings*.py` (local entries only — django.* and
+    third-party are dropped because their module path isn't a directory in the repo). Anything with
+    an `apps.py` (an AppConfig package) is folded in as a fallback, so apps missing from a
+    dynamically-built INSTALLED_APPS are still found. One pass over the tree."""
+    installed, apps_py = {}, {}
+    for dirpath, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d not in _APP_SKIP]
+        if "apps.py" in files:
+            apps_py[os.path.relpath(dirpath, root)] = os.path.basename(dirpath)
+        for fn in files:
+            if not (fn.endswith(".py") and "settings" in fn):
+                continue
+            try:
+                tree = ast.parse(open(os.path.join(dirpath, fn), encoding="utf-8").read())
+            except (OSError, SyntaxError):
+                continue
+            for node in ast.walk(tree):
+                if not (isinstance(node, ast.Assign)
+                        and any(getattr(t, "id", None) == "INSTALLED_APPS" for t in node.targets)):
+                    continue
+                for elt in getattr(node.value, "elts", []):
+                    v = getattr(elt, "value", None)
+                    if not isinstance(v, str):
+                        continue
+                    mod = v[:v.rindex(".apps.")] if (".apps." in v and v.endswith("Config")) else v
+                    reldir = mod.replace(".", "/")
+                    if os.path.isdir(os.path.join(root, reldir)):     # a local app, not a library
+                        installed[reldir] = reldir.split("/")[-1]
+    apps = dict(apps_py)
+    apps.update(installed)                                            # INSTALLED_APPS labels win
+    return apps
+
+
+def app_of(ep, apps):
+    """Which app an endpoint belongs to — the longest app directory that prefixes its file path.
+    Falls back to the top path segment (minus an `apps/`|`src/` wrapper) when nothing matches."""
+    f = ep.file or ""
+    best = None
+    for reldir, label in apps.items():
+        if reldir != "." and (f == reldir or f.startswith(reldir + "/")):
+            if best is None or len(reldir) > len(best[0]):
+                best = (reldir, label)
+    if best:
+        return best[1]
+    parts = [p for p in f.split("/") if p]
     if parts and parts[0] in ("apps", "src") and len(parts) > 1:
         parts = parts[1:]
     return parts[0] if len(parts) > 1 else "(root)"
@@ -56,7 +104,9 @@ def tags(ep):
 
 def build_map(repo, risky=False, app=None):
     """Analyze the whole repo → apps, each with its endpoints ranked worst-first + a risk rollup."""
-    eps = analyze_repo(ensure_local(repo))
+    local = ensure_local(repo)
+    apps_index = resolve_apps(local)
+    eps = analyze_repo(local)
     buckets = {}
     for ep in eps:
         sev, why = endpoint_risk(ep)
@@ -65,7 +115,7 @@ def build_map(repo, risky=False, app=None):
         rec = {"route": ep.route, "handler": ep.handler, "auth": auth_str(ep), "sev": sev,
                "why": _clean_why(why), "tags": tags(ep), "loc": f"{ep.file}:{ep.line}",
                "unknowns": unknowns(ep), "graph": build_graph(ep)}
-        buckets.setdefault(app_of(ep), []).append(rec)
+        buckets.setdefault(app_of(ep, apps_index), []).append(rec)
 
     apps = []
     for name, recs in buckets.items():
