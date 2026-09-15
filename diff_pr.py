@@ -733,6 +733,46 @@ def build_diff_graph(base_ep, head_ep):
     return {"nodes": nodes, "edges": edges}
 
 
+def build_blast_graph(changes):
+    """One combined graph for the whole PR: each changed endpoint and the tables / hosts / jobs it
+    touches. A resource touched by **2+** changed endpoints is the *blast radius* — change it and
+    every connected endpoint is affected. Bipartite: endpoints on the left, shared resources right."""
+    drawn = [c for c in changes if c.get("ep")
+             and c["kind"] in ("NEW ENDPOINT", "CHANGED", "REMOVED ENDPOINT")]
+    nodes, edges, users = {}, [], {}
+
+    def resource(rid, label, rtype):
+        nodes.setdefault(rid, {"id": rid, "label": label, "type": rtype})
+        return rid
+
+    for c in drawn:
+        ep, route = c["ep"], c["route"]
+        eid = "ep:" + route
+        nodes[eid] = {"id": eid, "label": route, "type": "endpoint", "sev": c["sev"], "kind": c["kind"]}
+        for t in items(ep, "e3_db_tables"):
+            name, _, k = t.partition(":")
+            rid = resource("table:" + name, name, "table")
+            edges.append({"from": eid, "to": rid, "kind": k or "read"})
+            users.setdefault(rid, set()).add(route)
+        for x in items(ep, "e4_external"):
+            host = x.split(" -> ", 1)[-1]
+            rid = resource("ext:" + host, host, "external")
+            edges.append({"from": eid, "to": rid, "kind": "calls"})
+            users.setdefault(rid, set()).add(route)
+        for a in items(ep, "e5_async"):
+            tgt = a.split(" -> ", 1)[-1]
+            rid = resource("async:" + tgt, tgt, "async")
+            edges.append({"from": eid, "to": rid, "kind": "dispatches"})
+            users.setdefault(rid, set()).add(route)
+
+    shared = 0
+    for rid, us in users.items():
+        if len(us) >= 2:
+            nodes[rid]["shared"] = len(us)
+            shared += 1
+    return {"nodes": list(nodes.values()), "edges": edges, "endpoints": len(drawn), "shared": shared}
+
+
 def build_review(changes, findings, meta, changed=None):
     """Structured review for the JSON / HTML / web outputs."""
     def cd(c):
@@ -756,6 +796,7 @@ def build_review(changes, findings, meta, changed=None):
             "shortstat": meta["shortstat"], "summary": meta.get("summary", ""),
             "invariants": findings or [], "contradictions": meta.get("contradictions", []),
             "dependencies": meta.get("dependencies", []), "egress": meta.get("egress", []),
+            "blast_graph": build_blast_graph(changes),
             "changed_lines": changed or {}, "changes": [cd(c) for c in changes]}
 
 

@@ -485,7 +485,12 @@ function render(){
       egress.map(g=>`<div class="row"><div><b>${g.count} endpoints → <span class="mono">${esc(g.dest)}</span></b>`+
       `<span style="color:var(--mut)">${eflag[g.status]||""}</span></div>`+
       `<div class="det">`+g.routes.map(chip).join(", ")+`</div></div>`).join("")) : "";
-  document.getElementById("invwrap").innerHTML = contraHtml + depsHtml + invHtml + egressHtml;
+  const bg=DATA.blast_graph;                   // whole-PR blast radius
+  const blastHtml=(bg&&bg.endpoints>=2)?
+    panel("blast","",bg.shared>0,`🧨 Blast radius — ${bg.endpoints} changed endpoints`+
+      (bg.shared?`, ${bg.shared} shared resource${bg.shared>1?'s':''}`:", none shared"),
+      `<div style="padding:10px 14px 4px;overflow-x:auto">${drawBlast(bg)}</div>`):"";
+  document.getElementById("invwrap").innerHTML = contraHtml + depsHtml + invHtml + blastHtml + egressHtml;
   renderFilters();
   document.getElementById("detail").innerHTML='<div class="empty">Select a change.</div>';
   // deep links: ?open=N selects a change (shows its flow graph), ?invariants=1 opens the panel
@@ -673,6 +678,44 @@ function drawGraph(g){
   const width=(dbt.length?colT+maxW(dbt):colL+maxW(leaves))+24;
   return `<svg width="100%" viewBox="0 0 ${width} ${H}" style="width:${Math.round(100*graphZoom)}%;max-width:${Math.round(width*graphZoom)}px">`+
     g.edges.map(edgeSvg).join("")+g.nodes.map(nodeSvg).join("")+`</svg>`;
+}
+
+// whole-PR blast radius: changed endpoints (left) ↔ the tables/hosts/jobs they touch (right).
+// A resource shared by 2+ endpoints is highlighted — that's the radius.
+function drawBlast(g){
+  const eps=g.nodes.filter(n=>n.type==="endpoint");
+  const res=g.nodes.filter(n=>n.type!=="endpoint").sort((a,b)=>(b.shared||0)-(a.shared||0));
+  const rowH=40, top=24, boxH=26;
+  const w=lbl=>Math.min(320,Math.max(120,clip(lbl,44).length*7+26));
+  const eW=eps.reduce((m,n)=>Math.max(m,w(n.label)),120);
+  const rW=res.reduce((m,n)=>Math.max(m,w(n.label)),120);
+  const colE=16, colR=colE+eW+150, pos={};
+  const rows=Math.max(eps.length,res.length,1), H=rows*rowH+top*2;
+  const place=(list,x)=>list.forEach((n,i)=>pos[n.id]=[x,top+boxH/2+i*rowH]);
+  place(eps,colE); place(res,colR);
+  const sevCol={"🔴":"var(--crit)","🟠":"var(--high)","🟡":"#d0b429","🟢":"var(--low)"};
+  function node(n){
+    const [x,y]=pos[n.id], ww=n.type==="endpoint"?eW:rW;
+    let stroke="#57ab5a", sw=1.6;
+    if(n.type==="endpoint")stroke=sevCol[n.sev]||"#6e7681";
+    else if(n.type==="external")stroke="var(--crit)";
+    else if(n.type==="async")stroke="var(--purple)";
+    if(n.shared){stroke="#e3b341";sw=2.6;}
+    const badge=n.shared?`<text x="${x+ww+7}" y="${y+4}" fill="#e3b341" font-weight="700">×${n.shared}</text>`:"";
+    return `<g><title>${esc(n.label)}${n.shared?" · shared by "+n.shared+" changed endpoints":""}</title>`+
+      `<rect x="${x}" y="${y-boxH/2}" width="${ww}" height="${boxH}" rx="6" fill="var(--panel)" stroke="${stroke}" stroke-width="${sw}"/>`+
+      `<text x="${x+9}" y="${y+4}">${esc(clip(n.label,44))}</text>${badge}</g>`;
+  }
+  function edge(e){
+    const s=pos[e.from], t=pos[e.to]; if(!s||!t)return"";
+    const x1=s[0]+eW, y1=s[1], x2=t[0], y2=t[1], mx=(x1+x2)/2;
+    const col=(e.kind||"").includes("write")?"var(--high)":e.kind==="calls"?"var(--crit)":
+      e.kind==="dispatches"?"var(--purple)":"#57ab5a";
+    return `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" fill="none" stroke="${col}" stroke-width="1.3" opacity=".5"/>`;
+  }
+  const width=colR+rW+60;
+  return `<svg width="100%" viewBox="0 0 ${width} ${H}" style="max-width:${width}px">`+
+    g.edges.map(edge).join("")+g.nodes.map(node).join("")+`</svg>`;
 }
 
 function clip(s,n){return s.length>n?s.slice(0,n-1)+"…":s;}
