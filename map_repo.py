@@ -13,6 +13,7 @@ import json
 import os
 import sys
 
+import invariants as inv_mod
 from extractor.analyzer import analyze_repo
 from diff_pr import (endpoint_risk, auth_str, items, ops_of, is_open, unknowns, build_graph,
                      CRIT, HIGH, MED, LOW)
@@ -102,6 +103,35 @@ def tags(ep):
     return t
 
 
+def seed_corpus(eps):
+    """A starter invariant corpus from the *current* code — the map's tie into the moat. Runs the
+    same evaluators as `lenscheck invariants`, but on this one snapshot, and freezes today's
+    violations as `baseline_exceptions` (the ratchet: enforcement then only fires on a *new* break).
+    `confirmed:false` — a human confirms the real rules. Same shape as the reviewer's `--invariants`."""
+    cands = []
+    for ev in inv_mod.RATIO_EVALS:
+        for cid, (total, ok, exc) in ev(eps).items():
+            if total == 0:
+                continue
+            if cid in inv_mod.STATEMENTS:
+                stmt, sev, scope = inv_mod.STATEMENTS[cid]
+            elif cid.startswith("auth-group:"):
+                grp = cid.split(":", 1)[1]
+                stmt, sev, scope = f"All endpoints under {grp} require authentication", "high", grp
+            else:
+                stmt, sev, scope = cid, "medium", "—"
+            cands.append(inv_mod.Candidate(cid, stmt, "near-miss" if exc else "universal",
+                                           sev, scope, total, ok, exc, [], {}))
+    dests = sorted({d for e in eps for d in inv_mod.ext_dests(e)})
+    if dests:
+        cands.append(inv_mod.Candidate(
+            "external-egress-allowlist",
+            f"External/PII egress limited to {len(dests)} known destinations",
+            "boundary", "critical", "all outbound calls", len(dests), len(dests), [], [],
+            {"destinations": dests}))
+    return inv_mod.corpus(cands)
+
+
 def build_map(repo, risky=False, app=None):
     """Analyze the whole repo → apps, each with its endpoints ranked worst-first + a risk rollup."""
     local = ensure_local(repo)
@@ -125,7 +155,8 @@ def build_map(repo, risky=False, app=None):
         counts = {s: sum(1 for r in recs if r["sev"] == s) for s in (CRIT, HIGH, MED, LOW)}
         apps.append({"app": name, "endpoints": recs, "counts": counts, "worst": recs[0]["sev"]})
     apps.sort(key=lambda a: (SEV_ORDER[a["worst"]], -len(a["endpoints"]), a["app"]))
-    return {"repo": repo, "total": len(eps), "shown": sum(len(a["endpoints"]) for a in apps), "apps": apps}
+    return {"repo": repo, "total": len(eps), "shown": sum(len(a["endpoints"]) for a in apps),
+            "apps": apps, "seed": seed_corpus(eps)}
 
 
 def _counts_str(c):
@@ -168,6 +199,7 @@ def main():
     ap.add_argument("--app", help="only this app")
     ap.add_argument("--json", dest="json_out", help="write the full map (with graphs) as JSON")
     ap.add_argument("--html", dest="html_out", help="write a self-contained interactive HTML report")
+    ap.add_argument("--seed", dest="seed_out", help="write a starter invariant corpus for --invariants")
     ap.add_argument("--out", help="write the Markdown map to a file (else prints)")
     args = ap.parse_args()
 
@@ -181,6 +213,12 @@ def main():
     if args.html_out:
         write_html(m, args.html_out)
         print(f"wrote {args.html_out}: open it in a browser — no server needed")
+        wrote_any = True
+    if args.seed_out:
+        with open(args.seed_out, "w", encoding="utf-8") as f:
+            json.dump(m["seed"], f, ensure_ascii=False, indent=2)
+        print(f"wrote {args.seed_out}: {len(m['seed'])} candidate invariants — confirm the real ones, "
+              f"then enforce with `lenscheck review --invariants {args.seed_out}`")
         wrote_any = True
     if args.out:
         with open(args.out, "w", encoding="utf-8") as f:
