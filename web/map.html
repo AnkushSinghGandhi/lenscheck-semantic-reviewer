@@ -69,7 +69,9 @@ body.static .live-only{display:none}
     <input id="repo" class="live-only" placeholder="/path/to/repo or github url">
     <button class="live-only" onclick="load()"><b>Map</b></button>
     <input id="q" placeholder="search route, handler, table, host…" oninput="render()">
-    <a href="/app.html" style="margin-left:auto;font-size:13px">← review a PR</a>
+    <a href="#" onclick="downloadSeed();return false" style="margin-left:auto;font-size:13px"
+       title="A starter invariant corpus from this repo's current state — confirm the real rules, then enforce on every PR">⚖ invariant seed</a>
+    <a href="/app.html" style="font-size:13px">← review a PR</a>
   </div>
   <div class="chips" id="chips"></div>
 </header>
@@ -89,6 +91,12 @@ const FILTERS=[["all","all"],["🔴","🔴"],["🟠","🟠"],["open","open"],["w
 $("#chips").innerHTML=FILTERS.map(([k,l])=>`<span class="chip${k==='all'?' on':''}" data-k="${k}" onclick="setFilter('${k}')">${l}</span>`).join("");
 function setFilter(k){filter=k;document.querySelectorAll('.chip').forEach(c=>c.classList.toggle('on',c.dataset.k===k));render();}
 
+function downloadSeed(){
+  if(!DATA||!DATA.seed||!DATA.seed.length){ alert("Map a repo first — then this downloads its starter invariant corpus."); return; }
+  const blob=new Blob([JSON.stringify(DATA.seed,null,2)],{type:"application/json"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+  a.download="lenscheck-invariants.seed.json"; a.click(); URL.revokeObjectURL(a.href);
+}
 async function boot(){
   if(window.__MAP_EMBEDDED__){ DATA=window.__MAP_EMBEDDED__; document.body.classList.add("static"); render(); return; }
   try{const c=await (await fetch("/api/config")).json(); if(c.repo){$("#repo").value=c.repo; load();}}catch(e){}
