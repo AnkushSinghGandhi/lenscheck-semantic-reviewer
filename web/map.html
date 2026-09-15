@@ -49,6 +49,14 @@ svg text{fill:var(--fg);font:12px ui-monospace,Menlo,monospace}
 svg .elabel{fill:#adbac7;font-size:10.5px}
 .empty{color:var(--mut);padding:40px;text-align:center}
 body.static .live-only{display:none}
+.fact.clk{cursor:pointer}.fact.clk:hover .loc{text-decoration:underline}
+.snippet{margin-top:10px;border:1px solid var(--line);border-radius:7px;overflow:hidden;background:#0d1117}
+.snhead{padding:6px 10px;font:12px ui-monospace,monospace;color:var(--mut);border-bottom:1px solid var(--line)}
+.sncode{font:12.5px/1.55 ui-monospace,Menlo,monospace;padding:6px 0}
+.snline{display:flex;padding:0 10px;white-space:pre}
+.snline.hl{background:#2d2a12}
+.snn{color:#586069;width:42px;text-align:right;margin-right:14px;user-select:none;flex:none}
+.snc{color:#c9d1d9}
 </style></head>
 <body>
 <header>
@@ -69,7 +77,7 @@ body.static .live-only{display:none}
 const $=s=>document.querySelector(s), esc=s=>(s||"").replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const clip=(s,n)=>{s=s||"";return s.length>n?s.slice(0,n-1)+"…":s;};
 const graphZoom=1;
-let DATA=null, filter="all";
+let DATA=null, filter="all", REPO=null;
 const SEV=["🔴","🟠","🟡","🟢"];
 const FILTERS=[["all","all"],["🔴","🔴"],["🟠","🟠"],["open","open"],["write","write"],["pii","pii"],["external","external"]];
 
@@ -82,6 +90,7 @@ async function boot(){
 }
 async function load(){
   const repo=$("#repo").value.trim(); if(!repo)return;
+  REPO=repo;
   $("#summary").textContent="Analyzing "+repo+" …"; $("#apps").innerHTML="";
   try{
     const r=await fetch("/api/map?repo="+encodeURIComponent(repo));
@@ -129,11 +138,29 @@ function drawEp(det){
   const box=det.querySelector(".detail"); if(box.dataset.drawn)return; box.dataset.drawn="1";
   const e=JSON.parse(box.getAttribute("data-ep").replace(/&#39;/g,"'"));
   const facts=e.graph.nodes.filter(n=>n.loc).map(n=>
-    `<div class="fact"><span class="loc">${esc(n.loc)}</span>${esc(n.label)} <span style="color:var(--mut)">${esc(n.kind||n.type)}</span></div>`).join("");
+    `<div class="fact clk" onclick="showSource('${esc(n.loc).replace(/'/g,'')}',this)"><span class="loc">${esc(n.loc)}</span>${esc(n.label)} <span style="color:var(--mut)">${esc(n.kind||n.type)}</span></div>`).join("");
   const unk=(e.unknowns||[]).map(u=>`<div class="fact" style="color:#d0b429">⚠ ${esc(u)}</div>`).join("");
   box.innerHTML=(e.sev==="🔴"||e.sev==="🟠"?`<div class="why">${e.sev} ${esc(e.why)}</div>`:"")+
     drawGraph(e.graph)+
     `<div class="wtl"><h4>Where to look</h4>${facts||'<div class="fact" style="color:var(--mut)">—</div>'}${unk}</div>`;
+}
+
+/* ---- click a node or fact → show its source (live server only) ---- */
+async function showSource(loc, el){
+  const det=el.closest(".detail"); if(!det)return;
+  let box=det.querySelector(".snippet");
+  if(!box){ box=document.createElement("div"); box.className="snippet"; det.appendChild(box); }
+  const i=loc.lastIndexOf(":"), path=i>0?loc.slice(0,i):loc, line=i>0?(+loc.slice(i+1)||1):1;
+  if(!REPO){ box.innerHTML=`<div class="snhead">${esc(path)}:${line} — source view needs the live server</div>`; return; }
+  box.innerHTML=`<div class="snhead">${esc(path)}:${line} · loading…</div>`;
+  try{
+    const d=await (await fetch(`/api/source?repo=${encodeURIComponent(REPO)}&ref=WORKTREE&path=${encodeURIComponent(path)}&line=${line}`)).json();
+    if(!d.found){ box.innerHTML=`<div class="snhead">${esc(path)}:${line} — not found at HEAD</div>`; return; }
+    const rows=d.lines.map((ln,k)=>{const n=d.start+k;
+      return `<div class="snline${n===d.line?' hl':''}"><span class="snn">${n}</span><span class="snc">${esc(ln)||' '}</span></div>`;}).join("");
+    box.innerHTML=`<div class="snhead">${esc(path)}:${line}</div><div class="sncode">${rows}</div>`;
+    box.scrollIntoView({block:"nearest"});
+  }catch(e){ box.innerHTML=`<div class="snhead">${esc(path)}:${line} — ${esc(String(e))}</div>`; }
 }
 
 /* ---- flow graph (ported from the review UI) ---- */
@@ -159,8 +186,9 @@ function drawGraph(g){
     else if(n.type==="table")stroke=(n.kind||"").includes("write")?"var(--high)":"#6e7681";
     else if(n.type==="route")stroke="#8b949e";
     const pii=n.pii?`<circle cx="${x+ww-8}" cy="${y-boxH/2+2}" r="5" fill="var(--crit)"><title>PII source</title></circle>`:"";
-    const tip=[n.label,n.type==="handler"&&n.auth?n.auth:"",n.loc||""].filter(Boolean).join("  ·  ");
-    return `<g><title>${esc(tip)}</title><rect x="${x}" y="${y-boxH/2}" width="${ww}" height="${boxH}" rx="6" `+
+    const tip=[n.label,n.type==="handler"&&n.auth?n.auth:"",n.loc||"",n.loc?"(click for source)":""].filter(Boolean).join("  ·  ");
+    const click=n.loc?`onclick="showSource('${esc(n.loc).replace(/'/g,'')}',this)" style="cursor:pointer"`:"";
+    return `<g ${click}><title>${esc(tip)}</title><rect x="${x}" y="${y-boxH/2}" width="${ww}" height="${boxH}" rx="6" `+
       `fill="var(--panel)" stroke="${stroke}" stroke-width="1.8"/>`+
       `<text x="${x+9}" y="${y+4}">${esc(clip(n.label,34))}</text>${pii}</g>`;
   }
