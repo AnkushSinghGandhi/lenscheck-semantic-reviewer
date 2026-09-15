@@ -273,6 +273,31 @@ def ops_of(ep):
             "cache": bool(items(ep, "e7_cache"))}
 
 
+def endpoint_risk(ep):
+    """Inherent risk of one endpoint, from its facts — the single source of truth shared by the PR
+    diff (rating a *new* endpoint) and the whole-repo map (rating *every* endpoint). Returns
+    (severity, why), worst case first."""
+    route = ep.route
+    resolved = ep.e1_route_handler.status == "✓"
+    pii = bool(ep.e6_pii.items) and ep.e6_pii.status in {"✓", "⚠", "?"}
+    writes = any(":write" in t for t in items(ep, "e3_db_tables"))
+    ext = bool(items(ep, "e4_external"))
+    money = any(k in route for k in ("payment", "order", "recharge", "invoice", "coupon"))
+    if not resolved:
+        return MED, "new endpoint — handler not resolved in repo (library/external view)"
+    if pii and is_open(ep):
+        return CRIT, "new endpoint exposes a PII path with open/unspecified auth"
+    if is_open(ep) and writes:
+        return CRIT, "new *unauthenticated* endpoint performs DB writes"
+    if pii:
+        return CRIT, "new endpoint reads PII and has an egress path"
+    if money:
+        return HIGH, "new endpoint on a money/payment path"
+    if ext or writes:
+        return MED, "new endpoint with a DB write / external call"
+    return LOW, "new read-only endpoint"
+
+
 def diff(base_eps, head_eps):
     base, head = index(base_eps), index(head_eps)
     changes = []
@@ -280,25 +305,7 @@ def diff(base_eps, head_eps):
     # added / removed endpoints
     for route, ep in head.items():
         if route not in base:
-            resolved = ep.e1_route_handler.status == "✓"
-            pii = bool(ep.e6_pii.items) and ep.e6_pii.status in {"✓", "⚠", "?"}
-            writes = any(":write" in t for t in items(ep, "e3_db_tables"))
-            ext = bool(items(ep, "e4_external"))
-            money = any(k in route for k in ("payment", "order", "recharge", "invoice", "coupon"))
-            if not resolved:
-                sev, why = MED, "new endpoint — handler not resolved in repo (library/external view)"
-            elif pii and is_open(ep):
-                sev, why = CRIT, "new endpoint exposes a PII path with open/unspecified auth"
-            elif is_open(ep) and writes:
-                sev, why = CRIT, "new *unauthenticated* endpoint performs DB writes"
-            elif pii:
-                sev, why = CRIT, "new endpoint reads PII and has an egress path"
-            elif money:
-                sev, why = HIGH, "new endpoint on a money/payment path"
-            elif ext or writes:
-                sev, why = MED, "new endpoint with a DB write / external call"
-            else:
-                sev, why = LOW, "new read-only endpoint"
+            sev, why = endpoint_risk(ep)
             risky = (locs_for(ep, "e4_external", items(ep, "e4_external"))
                      + locs_for(ep, "e6_pii", items(ep, "e6_pii"))
                      + [x for x in (ep.e3_db_tables.items or []) if ":write" in norm(x)])

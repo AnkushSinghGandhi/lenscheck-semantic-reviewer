@@ -60,6 +60,7 @@ def main():
         print("\nUsage: lenscheck <command> [options]")
         print("\nCommands:")
         print("  init      Add the GitHub Action to this repo (one-command setup)")
+        print("  map       Map every endpoint in a repo, grouped by app, worst-first")
         print("  review    Run a semantic review of a PR or commit range")
         print("  post      Post a review to a PR (sticky comment, inline comments, label)")
         print("  serve     Start the Lenscheck web UI")
@@ -74,6 +75,9 @@ def main():
 
     if command == "init":
         sys.exit(cmd_init(sys.argv[1:]))
+    elif command == "map":
+        import map_repo
+        map_repo.main()
     elif command == "review":
         import diff_pr
         # No args → review the current repo's branch vs. its default branch (diff_pr resolves it).
