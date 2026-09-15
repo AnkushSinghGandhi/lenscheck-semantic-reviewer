@@ -1,27 +1,54 @@
-# Lenscheck: See What a Pull Request *Actually* Changes — On Every Repo You Own
+## Lenscheck: See What a Pull Request *Actually* Changes — On Every Repo You Own
 
 *Git shows you what **lines** changed. Lenscheck shows you what they **mean**, where to look, and whether
 they broke a rule. It's a semantic PR reviewer for Python web apps. This guide starts from zero —
 every idea, command, and setting in plain English — then shows you how to set Lenscheck up **once** and
 run it across **all your repos** (personal, team, or organization).*
 
+**`No LLM`  ·  `Deterministic`  ·  `Never runs your code`  ·  `Nothing leaves your network`**
+
 ---
 
 ## Table of contents
 
+- [Quickstart (60 seconds)](#quickstart-60-seconds)
 1. [What is Lenscheck (in one minute)](#1-what-is-lenscheck-in-one-minute)
-2. [The one big idea: "what changed" vs "what it means"](#2-the-one-big-idea)
-3. [Words you need to know (plain-English glossary)](#3-words-you-need-to-know)
-4. [Install](#4-install)
-5. [Three ways to use Lenscheck](#5-three-ways-to-use-lenscheck)
-6. [The Web UI, panel by panel](#6-the-web-ui-panel-by-panel)
-7. [The CLI, command by command, flag by flag](#7-the-cli-command-by-command)
-8. [Every feature explained](#8-every-feature-explained)
-9. [The GitHub Action, input by input](#9-the-github-action-input-by-input)
-10. [Set up Lenscheck for all your repos (personal, team, or org)](#10-set-up-lenscheck-for-all-your-repos)
-11. [A full worked example](#11-a-full-worked-example)
-12. [Honesty rules (why Lenscheck never lies)](#12-honesty-rules)
-13. [Quick reference card](#13-quick-reference-card)
+2. [Two features, two problems (start here)](#2-two-features-two-problems)
+3. [Install](#3-install)
+4. [Three ways to use Lenscheck](#4-three-ways-to-use-lenscheck)
+5. [The Web UI, panel by panel](#5-the-web-ui-panel-by-panel)
+6. [The CLI, command by command, flag by flag](#6-the-cli-command-by-command)
+7. [Every feature explained](#7-every-feature-explained)
+8. [The GitHub Action, input by input](#8-the-github-action-input-by-input)
+9. [Set up Lenscheck for all your repos (personal, team, or org)](#9-set-up-lenscheck-for-all-your-repos)
+10. [A full worked example](#10-a-full-worked-example)
+11. [Honesty rules (why Lenscheck never lies)](#11-honesty-rules)
+12. [Quick reference card](#12-quick-reference-card)
+- [Glossary (words you need to know)](#glossary-words-you-need-to-know)
+
+---
+
+## Quickstart (60 seconds)
+
+**Try it on a repo you already have** — see the review right in your terminal:
+
+```bash
+pip install lenscheck-semantic-reviewer
+cd your-django-repo
+lenscheck review          # your current branch vs. main → the few things that actually matter
+```
+
+**Turn it on for a team — one command** (drops a GitHub Action that reviews every PR, advisory only):
+
+```bash
+lenscheck init            # writes .github/workflows/lenscheck.yml (comments, never blocks)
+git add .github/workflows/lenscheck.yml && git commit -m "add lenscheck" && git push
+```
+
+**Prefer to click around?** `lenscheck serve` opens a local web UI with the flow graph.
+
+That's the whole tool: a **flow graph** of what a PR does, and **rules** it can enforce. Everything
+below is depth for when you want it.
 
 ---
 
@@ -38,74 +65,49 @@ at the exact line to look at. It's built for Python web apps (Django / Django RE
 It is **not** an AI that guesses. It reads your code with Python's own parser and reports **facts**.
 When it isn't sure, it says so (you'll see a ⚠). It never dresses up "I didn't see it" as "it's safe."
 
-![The Lenscheck landing page](images/00-welcome.png)
+![The Lenscheck landing page](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer/blob/main/blog/images/00-welcome.png?raw=true)
 
 ---
 
-## 2. The one big idea
+## 2. Two features, two problems
 
-Every other tool answers **"what changed?"** Lenscheck answers a second, harder question:
+Lenscheck has a lot of features, but they exist to serve **two** that matter most. If you remember
+nothing else from this guide, remember these two.
 
-> **"what *is* the code doing"** vs **"what it *should* be doing"**
+### ① See what a PR *means* — not just what changed
 
-That gap — between what your code actually does and what everyone assumed it does — is where bugs and
-security holes live. Almost every Lenscheck feature is a version of comparing those two things:
+**The problem.** A git diff shows you *text* — hundreds of red and green lines. It doesn't tell you
+that one of them opened a new endpoint, started writing to the database, or sent a user's email out
+of the building. On a big (often AI-generated) PR, the reviewer skims — and the risky change ships.
 
-- The PR title says *"just a refactor"* → but the code added a new endpoint. (**contradiction**)
-- Your codebase has *always* required a login before writing to the DB → this PR broke that. (**invariant**)
-- The old version of a library couldn't run shell commands → the new version can. (**dependency capability**)
+**What Lenscheck does.** It reads the code *before* and *after* the PR and turns the diff into
+**meaning**: *what changed → how it flows → where to look*. A huge diff becomes a short, ranked list
+plus a **flow graph** of each change (route → auth → DB tables → external → cache → async → PII). On a
+real 17,841-line PR, that came out to **3 things to look at.**
 
----
+> Git tells you what *lines* changed. Lenscheck tells you what those changes *mean*.
 
-## 3. Words you need to know
+### ② Enforce the rules your code already follows — invariants
 
-You'll meet these terms everywhere. Here they are in plain English.
+**The problem.** Every codebase has rules everyone "knows" — *auth before any DB write*, *personal
+data never leaves without a login* — but nothing actually enforces them. A PR quietly breaks one, and
+it ships.
 
-**Endpoint** — a single "door" into your web app. A URL + the code that runs when someone hits it.
-Example: `POST /api/users/export` runs the `ExportUsers` function. Lenscheck reviews your PR one
-endpoint at a time.
-
-**The 6-edge lens** — for each endpoint, Lenscheck asks six simple questions (these are the "edges"):
-
-| Edge | The question it answers |
-|------|-------------------------|
-| **Route** | What URL is this, and which function handles it? |
-| **Auth** | Do you need to be logged in? (or is it open to anyone?) |
-| **DB** | Does it read or **write** the database? Which tables? |
-| **External** | Does it call the outside world? (Stripe, a webhook, an API…) |
-| **Async** | Does it kick off a background job? (Celery, a thread…) |
-| **PII** | Does it touch **personal data** (email, phone, address…)? |
-
-**Severity colors** — Lenscheck ranks every finding by how much it should worry you:
-
-- 🔴 **critical** — security / data-flow (e.g. an open endpoint writing to the DB)
-- 🟠 **high** — money paths (payments, orders)
-- 🟡 **medium** — a new write or a dependency change
-- 🟢 **low** — a safe refactor, nothing risky
-
-**PII** — "Personally Identifiable Information": personal data like an **email, phone number,
-address, password, card number**. Leaking it is a legal and trust problem.
-
-**PII egress** — "egress" just means *leaving*. **PII egress** = personal data **leaving your
-server** — sent to an external API, written to a log, or returned to the browser. That's the moment
-that matters.
-
-**Taint** — following a piece of data as it moves through the code. If an email is "tainted," Lenscheck
-watches whether that exact value **reaches an exit** (an external call, a log, a response). If it
-does, that's a confirmed leak.
-
-**Invariant** — a rule your codebase has *always* followed, whether or not anyone wrote it down.
-Example: *"every endpoint that writes to the database first checks you're logged in."* Lenscheck can
-**discover** these from your git history, let you **confirm** the real ones, and then **enforce**
-them on every PR.
-
-**Semantic diff** — a normal diff compares *text*. A **semantic diff** compares *meaning*: Lenscheck
-analyzes your code before and after the PR and reports the difference in **behavior** (new
-endpoints, new DB writes, new calls…), ignoring cosmetic changes like renaming a function.
+**What Lenscheck does.** It **discovers** those rules from your git history, lets you **confirm** the
+real ones, then **enforces** them on every PR — flagging (and optionally blocking) a *new* violation
+while ignoring existing debt. This is the part that compounds: over time Lenscheck learns the rules
+*your* codebase cares about, and no competitor has that knowledge.
 
 ---
 
-## 4. Install
+**Everything else is in service of these two.** Intent-vs-behaviour contradictions, traced PII leaks,
+dependency-capability scanning, SARIF, inline comments, labels, the org roll-up — all of it makes the
+two features above sharper. The rest of this guide explains each one, but if the list ever feels like
+a lot: it's a **flow graph** and **enforced rules**. That's the product.
+
+---
+
+## 3. Install
 
 ```bash
 pip install lenscheck-semantic-reviewer
@@ -118,12 +120,13 @@ That's it — Lenscheck has **zero dependencies** (it only uses Python's standar
 lenscheck --help
 ```
 
-```
+```plaintext
 Lenscheck Semantic Reviewer
 
 Usage: lenscheck <command> [options]
 
 Commands:
+  init       Add the GitHub Action to this repo (one-command setup)
   review     Run a semantic review of a PR or commit range
   post       Post a review to a PR (sticky comment, inline comments, label)
   serve      Start the Lenscheck web UI
@@ -133,22 +136,22 @@ Commands:
 
 ---
 
-## 5. Three ways to use Lenscheck
+## 4. Three ways to use Lenscheck
 
 You can use Lenscheck in whichever way fits:
 
 1. **Web UI** — run `lenscheck serve`, open your browser, click around. Best for **exploring** and for
-   people who don't live in the terminal. → [jump to the tour](#6-the-web-ui-panel-by-panel)
+   people who don't live in the terminal. → [jump to the tour](#5-the-web-ui-panel-by-panel)
 2. **Command line** — `lenscheck review …`. Best for **scripts, quick checks, and CI**. →
-   [jump to the CLI](#7-the-cli-command-by-command)
+   [jump to the CLI](#6-the-cli-command-by-command)
 3. **GitHub Action** — Lenscheck runs automatically on every PR and comments on it. Best for **teams**.
-   → [jump to the Action](#9-the-github-action-input-by-input)
+   → [jump to the Action](#8-the-github-action-input-by-input)
 
 They all share the same engine, so they find the same things.
 
 ---
 
-## 6. The Web UI, panel by panel
+## 5. The Web UI, panel by panel
 
 Start it inside any repo:
 
@@ -161,7 +164,7 @@ repo, it auto-detects that repo for you.
 
 ### The top bar — choosing what to review
 
-![A finished review in the web UI](images/01-review.png)
+![A finished review in the web UI](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer/blob/main/blog/images/01-review.png?raw=true)
 
 Along the top you pick **what** to compare. You have four ways:
 
@@ -169,7 +172,7 @@ Along the top you pick **what** to compare. You have four ways:
 - **branches** — compare two branches (e.g. `main` → `my-feature`).
 - **commits** — compare two commits.
 - **Branch vs default** button — the one-click shortcut: review *your current branch* against the
-  *main branch*. (This is [feature #8](#feature-8--smart-default-target).)
+  *main branch*. (This is [the zero-arg default](#a-review-should-not-need-arguments).)
 
 ### Reading a review (top to bottom)
 
@@ -177,14 +180,14 @@ Once a review runs, you read it top-to-bottom. Using the screenshot above:
 
 1. **The one-line summary** — *"This PR adds 1 endpoint, 1 new DB write to `AuditLog`, 1 new
    external call… and 4 new PII signals."* A plain-English sentence of everything that changed,
-   built from facts. ([feature #3](#feature-3--the-intent-summary))
+   built from facts. ([the intent summary](#you-still-have-to-read-the-whole-pr))
 
 2. **🎭 Intent vs. behavior** — the red panel. The PR called itself a *"refactor / no behavior
    change,"* but Lenscheck found it **added an endpoint** and **started logging an email**. When the
-   promise and the facts disagree, this panel calls it out. ([feature #4](#feature-4--intent-vs-behavior-contradiction))
+   promise and the facts disagree, this panel calls it out. ([intent vs. behavior](#the-pr-description-contradicts-the-code))
 
 3. **📦 Dependency capability changes** — bumped libraries and whether the new version can *do* more
-   than the old one. ([feature #5](#feature-5--dependency-capability-delta))
+   than the old one. ([dependency scanning](#a-dependency-bump-quietly-gains-new-powers))
 
 4. **The tally** — 🔴 1 — how many findings at each severity.
 
@@ -195,23 +198,23 @@ Once a review runs, you read it top-to-bottom. Using the screenshot above:
    **hooks.example.com**, reads and writes the **cache**, and dispatches two **async** jobs
    (`reindex_users`, a thread) — every edge colored by kind, with the new parts highlighted. This is
    the same picture Lenscheck can also draw as a
-   [Mermaid diagram](#feature-7--mermaid-flow-diagram) inside a GitHub comment.
+   [Mermaid diagram](#a-text-list-does-not-show-the-flow) inside a GitHub comment.
 
 7. **The "Where to look" tab** — switch the detail pane from the graph to a flat, ranked list of
    every fact with its exact `file:line` — the **WHERE** of the review, including the traced leak.
 
-![The "Where to look" tab — every fact at its exact line](images/03-where-to-look.png)
+![The "Where to look" tab — every fact at its exact line](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer/blob/main/blog/images/03-where-to-look.png?raw=true)
 
 Click any block in the graph (or a line here) and Lenscheck shows you the **source**, with the exact
 line highlighted:
 
-![Click a block to see its source, the exact line highlighted](images/04-source-snippet.png)
+![Click a block to see its source, the exact line highlighted](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer/blob/main/blog/images/04-source-snippet.png?raw=true)
 
 ### The Invariants panel — teach Lenscheck your rules
 
 Click **⚖ Invariants** in the top bar:
 
-![The invariants panel: discover, confirm, blame](images/02-invariants.png)
+![The invariants panel: discover, confirm, blame](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer/blob/main/blog/images/02-invariants.png?raw=true)
 
 Lenscheck samples your git history and shows **candidate rules** it noticed your codebase following. In
 the screenshot:
@@ -223,7 +226,7 @@ the screenshot:
   with exceptions also get a **🩸 Blame** button (find the commit that first broke it).
 
 This is the **moat** — over time you teach Lenscheck the rules *your* codebase cares about, and no
-competitor has that knowledge. ([feature #10](#feature-10--invariants-discover-confirm-enforce-blame))
+competitor has that knowledge. ([invariants](#your-codebase-rules-are-not-enforced))
 
 > **Note:** the **Confirm** buttons only appear if you started the server with a place to save them:
 > `lenscheck serve --invariants my-rules.json`. Without that, the panel is read-only (Lenscheck never writes
@@ -236,18 +239,31 @@ competitor has that knowledge. ([feature #10](#feature-10--invariants-discover-c
 
 ---
 
-## 7. The CLI, command by command
+## 6. The CLI, command by command
+
+### `lenscheck init` — one-command setup
+
+Drops a ready-to-run GitHub Action into the current repo — the fastest way to adopt.
+
+```bash
+lenscheck init            # writes .github/workflows/lenscheck.yml in advisory mode (comments, never blocks)
+lenscheck init --gate     # start it blocking on a confirmed-rule violation instead
+lenscheck init --force    # overwrite an existing workflow
+```
+
+It refuses to clobber an existing workflow unless you pass `--force`, and prints the two remaining
+steps (commit, open a PR). Start advisory; switch to `--gate` once your rules are confirmed and trusted.
 
 ### `lenscheck review` — the main event
 
 Analyze a PR / branch / commit and print a review.
 
-![`lenscheck review` in the terminal](images/07-cli.png)
+![`lenscheck review` in the terminal](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer/blob/main/blog/images/07-cli.png?raw=true)
 
 The same review as a **self-contained HTML file** (`--html`) you can send to anyone — no install
 needed:
 
-![The self-contained HTML report — what changed, how it flows, where to look](images/06-html-report.png)
+![The self-contained HTML report — what changed, how it flows, where to look](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer/blob/main/blog/images/06-html-report.png?raw=true)
 
 ```bash
 lenscheck review                       # no args: review THIS branch vs the default branch
@@ -278,7 +294,7 @@ lenscheck review https://github.com/owner/repo --pr 123
 | `--out FILE` | Where to write the Markdown report. Default: `pr_review.md`. |
 | `--json FILE` | Also write the full review as structured JSON (for tools/automation). |
 | `--html FILE` | Also write a **self-contained HTML** viewer you can open in a browser. |
-| `--sarif FILE` | Also write **SARIF** — the format GitHub reads to show findings in its Security tab. ([feature #2](#feature-2--sarif-output)) |
+| `--sarif FILE` | Also write **SARIF** — the format GitHub reads to show findings in its Security tab. ([SARIF output](#findings-belong-in-the-security-tab)) |
 | `--invariants FILE` | Enforce a confirmed rules file: flag any endpoint in this PR that breaks a rule. |
 | `--fail-on violation` | **Exit with an error** if the PR breaks a confirmed rule. (Use in CI to block merges.) |
 | `--fail-on crit` | Exit with an error on **any** 🔴 finding. |
@@ -296,8 +312,8 @@ lenscheck post 123 pr_review.md --json pr_review.json --inline --label
 | `123` | The PR number. |
 | `pr_review.md` | The Markdown body to post as a **sticky comment** (it updates in place on re-runs). |
 | `--json FILE` | The structured review (needed for `--inline` and `--label`). |
-| `--inline` | Post each finding as a comment **pinned to the exact changed line**. ([feature #1](#feature-1--inline-pr-comments)) |
-| `--label` | Put one `lenscheck:*` **label** on the PR based on its worst finding. ([feature #6](#feature-6--auto-label)) |
+| `--inline` | Post each finding as a comment **pinned to the exact changed line**. ([inline comments](#the-finding-is-not-next-to-the-code)) |
+| `--label` | Put one `lenscheck:*` **label** on the PR based on its worst finding. ([auto-label](#a-queue-of-prs-is-hard-to-triage)) |
 | `--dry-run` | Print what *would* be posted, without touching GitHub. Great for testing. |
 
 *(Needs a `GITHUB_TOKEN` env var and the `gh` CLI, which GitHub's runners already have.)*
@@ -333,7 +349,7 @@ Useful **environment variables** for a hosted deployment:
 To host one shared Lenscheck UI: run `lenscheck serve --no-open` behind your usual reverse proxy, set
 `LENSCHECK_TOKEN` (so the API isn't open), and optionally `LENSCHECK_ALLOWED_REPOS` to fence it to just your
 repos. To run Lenscheck across *all* your repos from one place, see
-[§10 — Set up Lenscheck for all your repos](#10-set-up-lenscheck-for-all-your-repos).
+[§9 — Set up Lenscheck for all your repos](#9-set-up-lenscheck-for-all-your-repos).
 
 ### `lenscheck invariants` — discover, confirm, and blame rules
 
@@ -371,7 +387,7 @@ lenscheck invariants --confirm --id auth-before-write --owner security   # scrip
 In interactive mode you press one key per rule: **c**onfirm · **f**ix (confirm, but the current
 exceptions are bugs) · **s**kip · **q**uit.
 
-**Blame** — find the commit that first broke a rule ([semantic blame](#feature-10--invariants-discover-confirm-enforce-blame)):
+**Blame** — find the commit that first broke a rule ([semantic blame](#your-codebase-rules-are-not-enforced)):
 
 ```bash
 lenscheck invariants /path/to/repo --blame auth-before-write --exact
@@ -390,14 +406,14 @@ actually asks: *"across **all** our repos, how much risk is sitting in review ri
 short message, with **no re-analysis** and **no GitHub Advanced Security**.
 
 It works by counting labels. Each PR review applies exactly one `lenscheck:*` triage label
-([feature #6](#feature-6--auto-label)); the digest just searches an org for the **open** PRs still
+([auto-label](#a-queue-of-prs-is-hard-to-triage)); the digest just searches an org for the **open** PRs still
 carrying each one:
 
 ```bash
 lenscheck digest --org my-org --slack "$SLACK_WEBHOOK"
 ```
 
-```
+```plaintext
 *Lenscheck digest — my-org*  (open PRs by risk)
 🔴  4  security / PII / unauth write
 🟠  9  money path
@@ -407,7 +423,7 @@ lenscheck digest --org my-org --slack "$SLACK_WEBHOOK"
 With `--slack`, that lands in your channel every morning — one number the whole team (and leadership)
 can read without opening a single PR:
 
-![The digest posted to Slack](images/09-digest-slack.png)
+![The digest posted to Slack](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer/blob/main/blog/images/09-digest-slack.png?raw=true)
 
 | Flag | What it does |
 |------|--------------|
@@ -423,84 +439,27 @@ answer to "is Lenscheck worth keeping on?" — because the labels feed it, keep 
 
 ---
 
-## 8. Every feature explained
+## 7. Every feature explained
 
-### Semantic diff & severity (the foundation)
+Each heading below is **the problem the feature solves**. The first two are the headline features from
+[§2](#2-two-features-two-problems); everything after them is supporting cast that sharpens those two.
+Skim to what's relevant — you don't need to read all eleven.
 
-Lenscheck analyzes your code **before** and **after** the PR and reports the change in **behavior**.
-Renaming a function with no behavior change? Silence (that's a good thing). Adding an
-unauthenticated database write? 🔴. Every finding is ranked 🔴/🟠/🟡/🟢 and points at a `file:line`.
+### A diff shows text, not meaning
 
-### Feature #3 — the intent summary
+**The semantic diff, severity & flow graph — headline feature ①.** Lenscheck analyzes your code
+**before** and **after** the PR and reports the change in **behavior**. Renaming a function with no
+behavior change? Silence (that's a good thing). Adding an unauthenticated database write? 🔴. Every
+finding is ranked 🔴/🟠/🟡/🟢, points at a `file:line`, and gets a **flow graph** of what the endpoint
+does (route → auth → DB tables → external → cache → async → PII).
 
-One plain-English sentence at the top of every review, built from verified facts:
+### Your codebase rules are not enforced
 
-> *"This PR adds 1 endpoint, 1 new DB write to `AuditLog`, 1 new external call to
-> `hooks.example.com/export` and 4 new PII signals."*
-
-Other tools generate this with an AI that reads the diff and sometimes makes things up. Lenscheck counts
-real facts, so every number traces to a line.
-
-### Feature #4 — intent vs. behavior contradiction
-
-Your PR title/description is a **promise**. Lenscheck checks it against the facts.
-
-- Says **"refactor / no behavior change"** but added an endpoint or a DB write → 🔴 *"claims
-  refactor, but behavior changed here."*
-- Says **"docs only"** but code changed → flagged.
-
-From the demo, the PR titled *"refactor: tidy up user views"* got caught twice:
-
-```
-🎭 Intent vs. behavior — PR describes itself as "refactor / no behavior change", but the facts disagree
-🔴 claims refactor / no behavior change, but adds an endpoint — api/users/export @ shop/views.py:40
-🔴 claims refactor / no behavior change, but new PII signal: email → log.info — api/profile @ shop/views.py:32
-```
-
-### Feature #5 — dependency capability-delta
-
-When a PR bumps a library, Lenscheck downloads the **old** and **new** versions and compares what each
-can *do* — checking for **network / subprocess / native code / file writes / reading secrets**. It
-reports only the **newly gained** powers:
-
-- `requests 2.28→2.31: no new capabilities` 🟢
-- `leftpad 1.0→2.0: now spawns a subprocess` 🔴
-
-If it can't fetch a version (offline, or the package has no source), it says **⚠ unresolved** — never
-"safe":
-
-```
-📦 Dependency capability changes
-⚠ requests 2.28.0→2.31.0 — capabilities not statically resolved (offline or no sdist)
-⚠ six 1.15.0→1.16.0 — capabilities not statically resolved (offline or no sdist)
-```
-
-Turn the network scan off with `LENSCHECK_SCAN_DEPS=0` (or the Action's `scan_deps: false`) and you'll
-always get the fast ⚠ mode.
-
-![The dependency capability panel — bumped packages, honest about the unresolved ones](images/05-dependencies.png)
-
-### Feature #9 — PII taint
-
-The star precision feature. Old tools say *"personal data and an external call are both in this
-function — maybe it leaks."* Vague. Lenscheck **follows the data**:
-
-- If an email actually **flows into** an external call / log / response → ✅ **verified**:
-  `email → requests.post @ line 46`. The exact field, the exact exit, the exact line.
-- If they just co-exist with no traced path → it stays **⚠ potential** (honest, no false alarm).
-- If the data passes through a function Lenscheck doesn't recognize (which *might* clean it) → it
-  **refuses** to call it a confirmed leak.
-
-It also resolves fuzzy database writes: `for order in Order.objects.filter(...): order.save()` is now
-understood as writing the **Order** table, not a vague `<instance>`.
-
-### Feature #10 — invariants: discover, confirm, enforce, blame
-
-The compounding asset. Four steps:
+**Invariants: discover, confirm, enforce, blame — headline feature ②.** The compounding asset. Four steps:
 
 1. **Discover** (`lenscheck invariants`) — mine history for rules your code already follows:
 
-   ```
+   ```plaintext
    ⚠ NEAR-MISS — Authenticated access before any DB write
    - holds: 3/4 endpoints (75%)  ·  persistence: 100% → 100% → 100% → 75% across 4 snapshots
    - exceptions — look here (1):
@@ -515,7 +474,7 @@ The compounding asset. Four steps:
 
 4. **Blame** (`lenscheck invariants --blame … --exact`) — find exactly which commit broke a rule:
 
-   ```
+   ```plaintext
    🩸 auth-before-write first broke at e23c96a (exact, in window 3e9817b..e23c96a)
       holds 3/4 at the snapshot.
       offending endpoint(s):
@@ -531,29 +490,78 @@ repo's own exceptions are filled in automatically. Auto-confirmed rules are tagg
 `owner: auto-bootstrap` so a human can review them later. This is what makes the moat adoptable
 across a whole org instead of one repo at a time.
 
-### Feature #2 — SARIF output
+---
 
-`--sarif pr_review.sarif` writes a standard file GitHub understands. Upload it and your findings show
-up **on the exact changed lines** in the PR's "Files changed" tab and in the repo's **Security** tab
-— native, official, high-visibility.
+*Everything below supports the two above.*
 
-### Feature #1 — inline PR comments
+### You still have to read the whole PR
 
-`lenscheck post … --inline` pins each finding as a comment **on the exact line**. The honest guard: it
-only pins a comment where it can prove the line is in the diff (GitHub rejects anything else); the
-rest roll into the one sticky summary comment.
+**The intent summary.** One plain-English sentence at the top of every review, built from verified facts:
 
-### Feature #6 — auto-label
+> *"This PR adds 1 endpoint, 1 new DB write to `AuditLog`, 1 new external call to
+> `hooks.example.com/export` and 4 new PII signals."*
 
-`lenscheck post … --label` puts **one** triage label on the PR based on its worst finding:
-`lenscheck:🔴security` / `lenscheck:🟠payment` / `lenscheck:🟡new-write` / `lenscheck:🟢safe-refactor`. Makes a queue
-of PRs scannable at a glance.
+Other tools generate this with an AI that reads the diff and sometimes makes things up. Lenscheck counts
+real facts, so every number traces to a line.
 
-### Feature #7 — Mermaid flow diagram
+### The PR description contradicts the code
 
-Every review's Markdown includes a **Mermaid sequence diagram** of the before→after flow. GitHub
-renders it right inside the PR comment — a real picture of your endpoint's behavior, drawn from
-facts, not by an AI:
+**Intent vs. behavior.** Your PR title/description is a **promise**. Lenscheck checks it against the facts.
+
+- Says **"refactor / no behavior change"** but added an endpoint or a DB write → 🔴 *"claims
+  refactor, but behavior changed here."*
+- Says **"docs only"** but code changed → flagged.
+
+From the demo, the PR titled *"refactor: tidy up user views"* got caught twice:
+
+```plaintext
+🎭 Intent vs. behavior — PR describes itself as "refactor / no behavior change", but the facts disagree
+🔴 claims refactor / no behavior change, but adds an endpoint — api/users/export @ shop/views.py:40
+🔴 claims refactor / no behavior change, but new PII signal: email → log.info — api/profile @ shop/views.py:32
+```
+
+### Is it a real leak, or a coincidence?
+
+**PII taint — the precision feature.** Old tools say *"personal data and an external call are both in
+this function — maybe it leaks."* Vague. Lenscheck **follows the data**:
+
+- If an email actually **flows into** an external call / log / response → ✅ **verified**:
+  `email → requests.post @ line 46`. The exact field, the exact exit, the exact line.
+- If they just co-exist with no traced path → it stays **⚠ potential** (honest, no false alarm).
+- If the data passes through a function Lenscheck doesn't recognize (which *might* clean it) → it
+  **refuses** to call it a confirmed leak.
+
+It also resolves fuzzy database writes: `for order in Order.objects.filter(...): order.save()` is now
+understood as writing the **Order** table, not a vague `<instance>`.
+
+### A dependency bump quietly gains new powers
+
+**Dependency capability-delta.** When a PR bumps a library, Lenscheck downloads the **old** and **new**
+versions and compares what each can *do* — checking for **network / subprocess / native code / file
+writes / reading secrets**. It reports only the **newly gained** powers:
+
+- `requests 2.28→2.31: no new capabilities` 🟢
+- `leftpad 1.0→2.0: now spawns a subprocess` 🔴
+
+If it can't fetch a version (offline, or the package has no source), it says **⚠ unresolved** — never
+"safe":
+
+```plaintext
+📦 Dependency capability changes
+⚠ requests 2.28.0→2.31.0 — capabilities not statically resolved (offline or no sdist)
+⚠ six 1.15.0→1.16.0 — capabilities not statically resolved (offline or no sdist)
+```
+
+Turn the network scan off with `LENSCHECK_SCAN_DEPS=0` (or the Action's `scan_deps: false`) and you'll
+always get the fast ⚠ mode.
+
+![The dependency capability panel — bumped packages, honest about the unresolved ones](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer/blob/main/blog/images/05-dependencies.png?raw=true)
+
+### A text list does not show the flow
+
+**Mermaid flow diagram.** Every review's Markdown includes a **Mermaid sequence diagram** of the
+before→after flow. GitHub renders it right inside the PR comment — a real picture of your endpoint's
+behavior, drawn from facts, not by an AI:
 
 ````markdown
 ```mermaid
@@ -570,17 +578,35 @@ sequenceDiagram
 GitHub renders that right inside the PR comment — a real picture of the endpoint's behavior, drawn
 from facts:
 
-![The Mermaid flow diagram as GitHub renders it in the PR comment](images/08-mermaid.png)
+![The Mermaid flow diagram as GitHub renders it in the PR comment](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer/blob/main/blog/images/08-mermaid.png?raw=true)
 
-### Feature #8 — smart default target
+### The finding is not next to the code
 
-Running `lenscheck review` with **no arguments** inside a repo just does the obvious thing: reviews your
-**current branch vs. the default branch**. If you're *on* the default branch, it tells you to switch
-to a feature branch instead of guessing.
+**Inline PR comments.** `lenscheck post … --inline` pins each finding as a comment **on the exact
+line**. The honest guard: it only pins a comment where it can prove the line is in the diff (GitHub
+rejects anything else); the rest roll into the one sticky summary comment.
+
+### A queue of PRs is hard to triage
+
+**Auto-label.** `lenscheck post … --label` puts **one** triage label on the PR based on its worst
+finding: `lenscheck:🔴security` / `lenscheck:🟠payment` / `lenscheck:🟡new-write` /
+`lenscheck:🟢safe-refactor`. Makes a queue of PRs scannable at a glance.
+
+### Findings belong in the Security tab
+
+**SARIF output.** `--sarif pr_review.sarif` writes a standard file GitHub understands. Upload it and
+your findings show up **on the exact changed lines** in the PR's "Files changed" tab and in the repo's
+**Security** tab — native, official, high-visibility.
+
+### A review should not need arguments
+
+**Smart default target.** Running `lenscheck review` with **no arguments** inside a repo just does the
+obvious thing: reviews your **current branch vs. the default branch**. If you're *on* the default
+branch, it tells you to switch to a feature branch instead of guessing.
 
 ---
 
-## 9. The GitHub Action, input by input
+## 8. The GitHub Action, input by input
 
 Add this workflow and Lenscheck reviews every PR automatically:
 
@@ -610,9 +636,9 @@ Every input:
 | `fail_on` | `none` | `violation` fails the build on a broken rule; `crit` fails on any 🔴. |
 | `invariants` | *(none)* | Path to a confirmed rules file to enforce. |
 | `comment` | `true` | Post the sticky summary comment. |
-| `inline` | `true` | Also post inline comments on changed lines. ([#1](#feature-1--inline-pr-comments)) |
-| `label` | `true` | Apply one `lenscheck:*` label. ([#6](#feature-6--auto-label)) |
-| `scan_deps` | `true` | Scan bumped dependencies against PyPI. Set `false` to skip the network (findings become ⚠). ([#5](#feature-5--dependency-capability-delta)) |
+| `inline` | `true` | Also post inline comments on changed lines. ([inline](#the-finding-is-not-next-to-the-code)) |
+| `label` | `true` | Apply one `lenscheck:*` label. ([label](#a-queue-of-prs-is-hard-to-triage)) |
+| `scan_deps` | `true` | Scan bumped dependencies against PyPI. Set `false` to skip the network (findings become ⚠). ([deps](#a-dependency-bump-quietly-gains-new-powers)) |
 | `upload_sarif` | `true` | Upload SARIF to code scanning. Set `false` on private repos **without** GitHub Advanced Security so the step is skipped and the check stays green. |
 
 The Action uploads SARIF (when `upload_sarif` is on), so findings appear in the Security tab —
@@ -622,9 +648,9 @@ arrive as the PR comment, inline comments, and label, and an org-wide roll-up is
 
 ---
 
-## 10. Set up Lenscheck for all your repos
+## 9. Set up Lenscheck for all your repos
 
-Section 9 put Lenscheck on **one** repo. This section turns it on across **every repo you own** —
+Section 8 put Lenscheck on **one** repo. This section turns it on across **every repo you own** —
 personal projects, a team's services, or a whole company — from **one place**, with almost no
 per-repo work.
 
@@ -713,7 +739,7 @@ right now* — `lenscheck digest` counts the open PRs carrying each `lenscheck:*
 lenscheck digest --org your-github-org --slack "$SLACK_WEBHOOK"
 ```
 
-```
+```plaintext
 🔴  4  security / PII / unauth write
 🟠  9  money path
 🟡 12  new DB write / external
@@ -746,7 +772,7 @@ Python's parser and analyzes clean git snapshots, so there's nothing to execute.
 
 ---
 
-## 11. A full worked example
+## 10. A full worked example
 
 Here's the exact scenario from the screenshots. A developer opens a PR titled
 **"refactor: tidy up user views."** It claims to be a harmless cleanup. In reality it:
@@ -777,7 +803,7 @@ Every single item points to a line you can click. Nothing was guessed.
 
 ---
 
-## 12. Honesty rules
+## 11. Honesty rules
 
 Lenscheck's whole value is that you can **trust** it. So it follows strict rules:
 
@@ -791,7 +817,7 @@ Lenscheck's whole value is that you can **trust** it. So it follows strict rules
 
 ---
 
-## 13. Quick reference card
+## 12. Quick reference card
 
 ```bash
 # review
@@ -827,6 +853,55 @@ LENSCHECK_TOKEN=…         # lock down a hosted `lenscheck serve`
 LENSCHECK_CACHE=…         # where cloned repos are cached (default ~/.cache/lenscheck/repos)
 LENSCHECK_GIT_TIMEOUT=…   # seconds before a git clone/archive is aborted
 ```
+
+---
+
+## Glossary (words you need to know)
+
+You'll meet these terms everywhere. Here they are in plain English.
+
+**Endpoint** — a single "door" into your web app. A URL + the code that runs when someone hits it.
+Example: `POST /api/users/export` runs the `ExportUsers` function. Lenscheck reviews your PR one
+endpoint at a time.
+
+**The 7-edge lens** — for each endpoint, Lenscheck asks seven simple questions (these are the "edges"):
+
+| Edge | The question it answers |
+|------|-------------------------|
+| **Route** | What URL is this, and which function handles it? |
+| **Auth** | Do you need to be logged in? (or is it open to anyone?) |
+| **DB** | Does it read or **write** the database? Which tables? |
+| **External** | Does it call the outside world? (Stripe, a webhook, an API…) |
+| **Async** | Does it kick off a background job? (Celery, a thread…) |
+| **Cache** | Does it read or invalidate the cache? Which keys? |
+| **PII** | Does it touch **personal data** (email, phone, address…)? |
+
+**Severity colors** — Lenscheck ranks every finding by how much it should worry you:
+
+- 🔴 **critical** — security / data-flow (e.g. an open endpoint writing to the DB)
+- 🟠 **high** — money paths (payments, orders)
+- 🟡 **medium** — a new write or a dependency change
+- 🟢 **low** — a safe refactor, nothing risky
+
+**PII** — "Personally Identifiable Information": personal data like an **email, phone number,
+address, password, card number**. Leaking it is a legal and trust problem.
+
+**PII egress** — "egress" just means *leaving*. **PII egress** = personal data **leaving your
+server** — sent to an external API, written to a log, or returned to the browser. That's the moment
+that matters.
+
+**Taint** — following a piece of data as it moves through the code. If an email is "tainted," Lenscheck
+watches whether that exact value **reaches an exit** (an external call, a log, a response). If it
+does, that's a confirmed leak.
+
+**Invariant** — a rule your codebase has *always* followed, whether or not anyone wrote it down.
+Example: *"every endpoint that writes to the database first checks you're logged in."* Lenscheck can
+**discover** these from your git history, let you **confirm** the real ones, and then **enforce**
+them on every PR.
+
+**Semantic diff** — a normal diff compares *text*. A **semantic diff** compares *meaning*: Lenscheck
+analyzes your code before and after the PR and reports the difference in **behavior** (new
+endpoints, new DB writes, new calls…), ignoring cosmetic changes like renaming a function.
 
 ---
 
