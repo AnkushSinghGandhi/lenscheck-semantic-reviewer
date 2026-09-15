@@ -45,17 +45,27 @@ def _discovered(repo, n):
     return INV_CACHE[key]
 
 
+def _snippet_from(text, rel, line, ctx):
+    lines = text.splitlines()
+    start = max(1, line - ctx)
+    end = min(len(lines), line + ctx)
+    return {"found": True, "path": rel, "line": line, "start": start, "lines": lines[start - 1:end]}
+
+
 def source_snippet(repo, ref, rel, line, ctx=6):
-    """A few source lines around `line` of `rel` at git `ref` (read-only via `git show`, so it works
-    for the exact reviewed snapshot even after temp checkouts are gone). `{found: False}` if missing."""
+    """A few source lines around `line` of `rel`. `ref="WORKTREE"` reads the file straight off disk
+    (what the whole-repo map analyzed — works regardless of where the git root sits); any other ref
+    reads that exact git snapshot via `git show`. `{found: False}` if missing."""
+    if ref in (None, "", "WORKTREE"):
+        try:
+            with open(os.path.join(repo, rel), encoding="utf-8", errors="replace") as f:
+                return _snippet_from(f.read(), rel, line, ctx)
+        except OSError:
+            return {"found": False, "path": rel, "line": line}
     for r in ([ref, "HEAD"] if ref and ref != "HEAD" else ["HEAD"]):     # fall back to HEAD
         text = sh("git", "-C", repo, "show", f"{r}:{rel}")
         if text:
-            lines = text.splitlines()
-            start = max(1, line - ctx)
-            end = min(len(lines), line + ctx)
-            return {"found": True, "path": rel, "line": line, "start": start,
-                    "lines": lines[start - 1:end]}
+            return _snippet_from(text, rel, line, ctx)
     return {"found": False, "path": rel, "line": line}
 
 
