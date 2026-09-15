@@ -26,12 +26,14 @@ from urllib.parse import urlparse, parse_qs
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import diff_pr           # noqa: E402
 import invariants as inv_mod                          # noqa: E402
+import map_repo           # noqa: E402
 from gitutil import (is_url, git_toplevel, ensure_local, sh,   # noqa: E402
                      current_branch, default_branch)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CACHE = {}       # (repo, merge, base, head, pr, inv) -> review
 INV_CACHE = {}   # (repo, n) -> [candidate dict]  (discovery is expensive; cache per repo)
+MAP_CACHE = {}   # (repo, risky, app) -> whole-repo map
 
 
 def _discovered(repo, n):
@@ -106,6 +108,9 @@ def make_handler(cfg):
                     # `lenscheck serve` goes straight to the usage page (the review UI)
                     return self._send(200, open(os.path.join(HERE, "web", "app.html"), "rb").read(),
                                       "text/html; charset=utf-8")
+                if path in ("/map", "/map.html"):
+                    return self._send(200, open(os.path.join(HERE, "web", "map.html"), "rb").read(),
+                                      "text/html; charset=utf-8")
                 if path == "/healthz":
                     return self._json(200, {"ok": True})
 
@@ -147,6 +152,15 @@ def make_handler(cfg):
                                                  invariants_path=inv)
                         CACHE[key] = res["review"]
                     return self._json(200, CACHE[key])
+                if path == "/api/map":
+                    repo = g("repo") or cfg["repo"]
+                    if not self._repo_ok(repo):
+                        return self._json(403, {"error": "repo not in allowlist"})
+                    key = (repo, g("risky"), g("app"))
+                    if key not in MAP_CACHE:
+                        MAP_CACHE[key] = map_repo.build_map(repo, risky=(g("risky") == "1"),
+                                                            app=g("app") or None)
+                    return self._json(200, MAP_CACHE[key])
                 if path == "/api/source":
                     # source snippet for a flow-graph node: git show <ref>:<path> around a line
                     repo = g("repo") or cfg["repo"]
