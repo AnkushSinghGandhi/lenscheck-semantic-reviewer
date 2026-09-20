@@ -19,7 +19,7 @@ jobs:
   lenscheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer@v1
+      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer@v2
         with:
           # Request beta access, then add the token as a repo secret named LENSCHECK_API_KEY.
           api_key: ${{ secrets.LENSCHECK_API_KEY }}
