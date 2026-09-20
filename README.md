@@ -89,7 +89,7 @@ jobs:
   lenscheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer@v1
+      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer@v2
         with:
           api_key: ${{ secrets.LENSCHECK_API_KEY }}   # add your beta token as a repo secret
 ```
