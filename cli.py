@@ -59,7 +59,10 @@ def main():
         print("  init      Add the GitHub Action to this repo (one-command setup)")
         print("  review    Semantic review of a PR / commit range (needs LENSCHECK_API_KEY)")
         print("  map       Map every endpoint in a repo, grouped by app, worst-first")
+        print("  serve     Open the interactive web UI (review + flow graph) in your browser")
         print("  post      Post a review to a PR (sticky comment, inline comments, label)")
+        print("  invariants Discover the rules your code follows, confirm them, enforce on every PR")
+        print("  digest    Org-wide roll-up of your reviews (needs LENSCHECK_API_KEY)")
         print("  usage     Show your plan and reviews used this month")
         print("\nSet LENSCHECK_API_KEY (request access) and, if self-hosting, LENSCHECK_API_URL.")
         print("Run 'lenscheck <command> --help' for more information on a command.")
@@ -71,12 +74,17 @@ def main():
 
     if command == "init":
         sys.exit(cmd_init(sys.argv[1:]))
-    elif command in ("review", "map", "usage"):
+    elif command in ("review", "map", "usage", "digest", "invariants"):
         import cloud
         if not cloud.have_token():
             sys.exit("lenscheck: no API key. Request beta access, then "
                      "`export LENSCHECK_API_KEY=sk_live_...` (self-hosting? also set LENSCHECK_API_URL).")
         getattr(cloud, command)(sys.argv[1:])    # thin client: extract locally, rank in the cloud
+    elif command == "serve":
+        import cloud, serve                        # thin web UI: local UI + cloud ranking
+        if not cloud.have_token():
+            sys.exit("lenscheck: no API key. Request beta access, then export LENSCHECK_API_KEY=sk_live_...")
+        serve.main()
     elif command == "post":
         from ci import post_review                # engine-free GitHub poster (used by the Action)
         if len(sys.argv) == 1:
