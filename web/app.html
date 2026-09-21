@@ -1,0 +1,724 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lenscheck — Semantic PR Review</title>
+<style>
+  :root{--bg:#0d1117;--panel:#161b22;--line:#30363d;--fg:#e6edf3;--mut:#8b949e;
+    --crit:#f85149;--high:#db8f2b;--med:#d0b429;--low:#3fb950;--link:#58a6ff;--purple:#bc8cff;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:14px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  header{padding:12px 18px;border-bottom:1px solid var(--line)}
+  header h1{margin:0 0 8px;font-size:16px}
+  .bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  input,select,button{background:var(--panel);color:var(--fg);border:1px solid var(--line);
+    border-radius:6px;padding:6px 9px;font-size:13px}
+  input{min-width:340px}select{min-width:340px;max-width:520px}
+  button{cursor:pointer}button:hover{border-color:var(--link)}
+  .sub{color:var(--mut);font-size:12.5px;margin-top:8px}
+  .summary{font-size:14px;font-weight:600;line-height:1.4;margin-top:8px}
+  .summary:empty{display:none}
+  .tally{display:flex;gap:12px;margin-top:6px;font-size:12.5px}
+  .inv{margin:12px 18px 0;border:1px solid var(--crit);border-radius:8px;background:rgba(248,81,73,.08)}
+  .inv.info{border-color:var(--line);background:rgba(88,166,255,.06)}
+  .inv .det a{color:var(--link);text-decoration:none}.inv .det a:hover{text-decoration:underline}
+  .inv summary{margin:0;padding:9px 13px;font-size:13px;font-weight:600;cursor:pointer;list-style:none;display:flex;align-items:center;gap:7px}
+  .inv summary::-webkit-details-marker{display:none}
+  .inv summary::before{content:"▸";color:var(--mut);font-size:9px;flex:none}
+  .inv[open] summary::before{content:"▾"}
+  .inv[open] summary{border-bottom:1px solid var(--line)}
+  .inv summary:hover{background:rgba(255,255,255,.03)}
+  .inv .row{padding:8px 13px;border-bottom:1px solid var(--line)}.inv .row:last-child{border-bottom:0}
+  .inv .det{color:var(--mut);font-size:12px;margin-top:2px}
+  main{display:grid;grid-template-columns:minmax(320px,400px) 1fr;height:calc(100vh - 132px)}
+  #list{border-right:1px solid var(--line);overflow:auto}
+  .filters{padding:9px 13px;border-bottom:1px solid var(--line);display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .filters button{border-radius:14px;padding:3px 10px;font-size:12px}.filters button.off{opacity:.4}
+  .filters .fsep{width:1px;align-self:stretch;background:var(--line);margin:0 3px}
+  .filters .fsearch{border-radius:14px;padding:3px 10px;font-size:12px;width:130px}
+  .filters .flbl{color:var(--mut);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em}
+  .item{padding:10px 13px;border-bottom:1px solid var(--line);cursor:pointer;display:flex;gap:9px}
+  .item:hover{background:var(--panel)}.item.sel{background:#1f2937;border-left:3px solid var(--link);padding-left:10px}
+  .dot{width:9px;height:9px;border-radius:50%;margin-top:6px;flex:0 0 auto}
+  .item .kind{font-size:10px;letter-spacing:.4px;color:var(--mut);text-transform:uppercase}
+  .item .route{word-break:break-all}
+  #detail{overflow:auto;padding:16px 20px}
+  #detail .empty{color:var(--mut);text-align:center;margin-top:40px}
+  #detail h2{font-size:15px;margin:0 0 4px}
+  .badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;border:1px solid var(--line);margin-left:6px}
+  .tabs{display:flex;gap:6px;margin:14px 0 10px;border-bottom:1px solid var(--line)}
+  .tabs button{border:0;border-bottom:2px solid transparent;border-radius:0;background:none;padding:6px 4px;color:var(--mut)}
+  .tabs button.on{color:var(--fg);border-bottom-color:var(--link)}
+  .invest{list-style:none;margin:0;padding:0}
+  .invest li{padding:7px 10px;border:1px solid var(--line);border-radius:6px;margin-bottom:6px;
+    display:flex;justify-content:space-between;gap:12px}
+  .invest .where{color:var(--link)}.invest .fact{color:var(--mut);font-size:12.5px}
+  .unk{color:var(--high);font-size:12.5px;background:rgba(219,143,43,.08);border:1px solid rgba(219,143,43,.3);
+    border-radius:6px;padding:8px 10px;margin-bottom:6px}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:var(--mut);margin-bottom:8px}
+  .legend span::before{content:"";display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:middle}
+  .lg-handler::before{background:var(--link)}.lg-read::before{background:#6e7681}.lg-write::before{background:var(--high)}
+  .lg-ext::before{background:var(--crit)}.lg-async::before{background:var(--purple)}
+  .lg-cache::before{background:#39c5cf}.lg-dbtable::before{background:#57ab5a}
+  .snippet{margin-top:12px}
+  .snippet .snhead{font-size:11.5px;color:var(--mut);padding:5px 2px}
+  .snippet .mut{color:var(--mut)}
+  .sncode{border:1px solid var(--line);border-radius:6px;overflow:auto;background:var(--panel)}
+  .snline{display:flex;font-size:12px;line-height:1.5}
+  .snline.hl{background:rgba(210,180,41,.16)}
+  .snn{color:var(--mut);text-align:right;width:42px;padding:0 8px;flex:none;user-select:none;border-right:1px solid var(--line)}
+  .snc{padding:0 10px;white-space:pre;overflow-x:auto}
+  svg text{fill:var(--fg);font:12px ui-monospace,Menlo,monospace}
+  svg .elabel{fill:#adbac7;font-size:10.5px}
+  .gtools{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:-4px 0 8px;flex-wrap:wrap}
+  .zoom{display:flex;align-items:center;gap:4px}
+  .zoom button{width:26px;height:24px;padding:0;font-size:15px;line-height:1;
+    display:flex;align-items:center;justify-content:center}
+  .zpct{font-size:11px;color:var(--mut);min-width:36px;text-align:center;user-select:none}
+  /* branding */
+  .logo{font-weight:800;letter-spacing:.5px}
+  .logo .g{background:linear-gradient(90deg,var(--crit),var(--high),var(--low),var(--link),var(--purple));
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  /* right-corner branding — hidden on the welcome screen, shown once a review is loaded */
+  .brand-corner{display:none;margin-left:auto;align-self:center;align-items:center;gap:9px;
+    font-size:12px;color:var(--mut);font-weight:400}
+  .brand-corner a{text-decoration:none}
+  .brand-corner .who{color:var(--link);font-weight:600}
+  .brand-corner .who:hover{text-decoration:underline}
+  .brand-corner .mini{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:14px;
+    border:1px solid var(--line);background:var(--panel);color:var(--fg);font-weight:600;
+    transition:border-color .15s,color .15s,transform .15s}
+  .brand-corner .mini:hover{transform:translateY(-1px)}
+  .brand-corner .mini.star:hover{border-color:var(--med);color:var(--med)}
+  .brand-corner .mini.sponsor:hover{border-color:#db61a2;color:#db61a2}
+  .brand-corner .bwave{display:inline-block;transform-origin:70% 70%;animation:wave 2.2s ease-in-out infinite}
+  body.loaded .brand-corner{display:flex}
+  /* compact labels + compare controls */
+  .bar .lbl{color:var(--mut);min-width:62px;display:inline-block}
+  .bar .arrow{color:var(--mut)}
+  select.ref{min-width:210px;max-width:300px}
+  /* welcome / empty state */
+  #welcome{display:flex;align-items:center;justify-content:center;min-height:calc(100vh - 175px);padding:24px}
+  #welcome .hero{max-width:640px;text-align:center}
+  #welcome .mark{font-size:64px;line-height:1;margin-bottom:14px;
+    background:linear-gradient(135deg,var(--crit),var(--high),var(--low),var(--link),var(--purple));
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  #welcome h2{font-size:24px;margin:0 0 10px}#welcome h2 em{font-style:normal;color:var(--link)}
+  #welcome p{color:var(--mut);font-size:14.5px;margin:0 auto 18px;max-width:520px}
+  #welcome .chips{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-bottom:16px}
+  #welcome .chips span{background:var(--panel);border:1px solid var(--line);border-radius:14px;
+    padding:4px 11px;font-size:12.5px}
+  #welcome .sev{display:flex;gap:16px;justify-content:center;flex-wrap:wrap;font-size:12.5px;color:var(--mut)}
+  #welcome .sev b{color:var(--fg);font-weight:600}
+  #welcome .byline{margin-top:22px;font-size:12.5px;color:var(--mut)}
+  #welcome .byline a{color:var(--link);text-decoration:none;font-weight:600}
+  #welcome .byline a:hover{text-decoration:underline}
+  #welcome .links{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:12px}
+  #welcome .links .gh{display:inline-flex;align-items:center;gap:6px;padding:6px 13px;border-radius:16px;
+    border:1px solid var(--line);background:var(--panel);color:var(--fg);font-size:12.5px;
+    font-weight:600;text-decoration:none;transition:border-color .15s,transform .15s}
+  #welcome .links .gh:hover{transform:translateY(-1px)}
+  #welcome .links .star:hover{border-color:var(--med);color:var(--med)}
+  #welcome .links .sponsor:hover{border-color:#db61a2;color:#db61a2}
+  #welcome .byline .wave{display:inline-block;transform-origin:70% 70%;
+    animation:wave 2.2s ease-in-out infinite}
+  @keyframes wave{0%,60%,100%{transform:rotate(0)}10%{transform:rotate(14deg)}
+    20%{transform:rotate(-8deg)}30%{transform:rotate(14deg)}40%{transform:rotate(-4deg)}50%{transform:rotate(10deg)}}
+  @media (prefers-reduced-motion:reduce){#welcome .byline .wave,.brand-corner .bwave{animation:none}}
+  body:not(.loaded) main{display:none}
+  body.loaded #welcome{display:none}
+</style>
+</head>
+<body>
+<header>
+  <h1 style="display:flex;align-items:center;gap:10px">
+    <span class="logo">✦ <span class="g">Lenscheck</span></span>
+    <span style="color:var(--mut);font-weight:400;font-size:12.5px">semantic PR review</span>
+    <div class="brand-corner">
+      <span class="bwave">👋</span> by
+      <a class="who" href="https://warriorwhocodes.com" target="_blank" rel="noopener">Ankush Singh Gandhi</a>
+      <a class="mini star" href="https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer" target="_blank" rel="noopener">★ Star</a>
+      <a class="mini sponsor" href="https://github.com/sponsors/AnkushSinghGandhi" target="_blank" rel="noopener">♥ Sponsor</a>
+    </div>
+  </h1>
+  <div class="bar">
+    <span class="lbl mono">repo</span>
+    <input id="repo" style="min-width:440px" placeholder="/path/to/local/repo">
+    <button onclick="loadRepo()"><b>Load</b></button>
+    <button onclick="reviewDefault()" title="Review the current branch vs. the default branch">Branch vs default</button>
+    <button onclick="loadInvariants()" title="Discover & confirm the rules this codebase follows">⚖ Invariants</button>
+    <button onclick="location.href='/map'+(val('repo').trim()?('?repo='+encodeURIComponent(val('repo').trim())):'')" title="Every endpoint in the repo, grouped by app, worst-first">🗺 Backend map</button>
+  </div>
+  <div class="bar">
+    <span class="lbl mono">branch</span>
+    <select id="curBranch" class="ref"><option value="">— current branch —</option></select>
+    <span class="arrow">vs</span>
+    <span class="lbl mono" id="defBranch" title="the branch this is reviewed against">default</span>
+    <button onclick="reviewCurrentBranch()" title="Review the selected branch against the repo's default branch">Review</button>
+  </div>
+  <div class="bar">
+    <span class="lbl mono">PR</span>
+    <select id="pr"><option value="">— pick a merged PR —</option></select>
+    <button onclick="reviewPR()">Review</button>
+  </div>
+  <div class="bar">
+    <span class="lbl mono">branches</span>
+    <select id="baseBranch" class="ref"><option value="">— base branch —</option></select>
+    <span class="arrow">→</span>
+    <select id="headBranch" class="ref"><option value="">— compare branch —</option></select>
+    <button onclick="compareBranches()">Compare</button>
+  </div>
+  <div class="bar">
+    <span class="lbl mono">commits</span>
+    <select id="baseCommit" class="ref"><option value="">— base commit —</option></select>
+    <span class="arrow">→</span>
+    <select id="headCommit" class="ref"><option value="">— compare commit —</option></select>
+    <button onclick="compareCommits()">Compare</button>
+  </div>
+  <!-- hidden refs: canonical review state, also settable via `serve --commit/--base/--head/--pr` -->
+  <input type="hidden" id="prnum"><input type="hidden" id="commit">
+  <input type="hidden" id="base"><input type="hidden" id="head">
+  <div class="sub" id="status">Enter a local repo path and hit Load — then pick a PR, or compare two branches or two commits.</div>
+  <div class="summary" id="summary"></div>
+  <div class="tally" id="tally"></div>
+</header>
+<div id="welcome">
+  <div class="hero">
+    <div class="mark">✦</div>
+    <h2>See what a PR <em>means</em>, not just what changed</h2>
+    <p>Point Lenscheck at a <b>local repo</b>, then pick a merged PR — or compare two branches or two
+      commits. It turns a huge diff into the few changes that matter, with the exact lines to look at.</p>
+    <div class="chips"><span>new endpoints</span><span>DB writes</span><span>SQL tables</span><span>external calls</span>
+      <span>cache</span><span>PII egress</span><span>auth changes</span></div>
+    <div class="sev"><span>🔴 <b>security / data-flow</b></span><span>🟠 money</span>
+      <span>🟡 new write / dependency</span><span>🟢 refactor</span></div>
+    <div class="byline"><span class="wave">👋</span> by <a href="https://warriorwhocodes.com" target="_blank" rel="noopener">Ankush Singh Gandhi</a> · warriorwhocodes.com</div>
+    <div class="links">
+      <a class="gh star" href="https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer" target="_blank" rel="noopener">★ Star on GitHub</a>
+      <a class="gh sponsor" href="https://github.com/sponsors/AnkushSinghGandhi" target="_blank" rel="noopener">♥ Sponsor me</a>
+    </div>
+  </div>
+</div>
+<div id="invwrap"></div>
+<div id="invpanel"></div>
+<main>
+  <div id="list"><div class="filters" id="filters"></div><div id="items"></div></div>
+  <div id="detail"><div class="empty">Run a review, then select a change.</div></div>
+</main>
+<script>
+const SEV={"🔴":"crit","🟠":"high","🟡":"med","🟢":"low"};
+const COL={crit:"var(--crit)",high:"var(--high)",med:"var(--med)",low:"var(--low)"};
+const active=new Set(["🔴","🟠","🟡","🟢"]);                     // severity (all shown by default)
+const activeKind=new Set(["NEW","CHANGED","REMOVED","REFACTOR"]); // change kind (all shown by default)
+const activeOps=new Set();   // touches: read/write/external/async — empty = no filter (show all)
+let DATA=null, sel=null, tab="graph", graphZoom=1, REFS=null, searchText="";
+const LS_KEY="lenscheck.ui";
+let panelState={};                                  // panel key -> open(bool), remembered across reviews
+try{ const s=JSON.parse(localStorage.getItem(LS_KEY)||"{}"); if(s.panels) panelState=s.panels; }catch(e){}
+
+function _saveUI(){
+  try{ localStorage.setItem(LS_KEY, JSON.stringify(
+    {sev:[...active], kind:[...activeKind], ops:[...activeOps], q:searchText, panels:panelState})); }catch(e){}
+}
+function _syncURL(){                                 // shareable filtered view: only encode non-defaults
+  const p=new URLSearchParams(location.search);
+  ["fsev","fkind","fops","fq"].forEach(k=>p.delete(k));
+  if(active.size<4)     p.set("fsev",[...active].join(","));
+  if(activeKind.size<4) p.set("fkind",[...activeKind].join(","));
+  if(activeOps.size)    p.set("fops",[...activeOps].join(","));
+  if(searchText)        p.set("fq",searchText);
+  history.replaceState(null,"",location.pathname+(p.toString()?"?"+p.toString():""));
+}
+function persistFilters(){ _saveUI(); _syncURL(); }
+function panelToggle(key,isOpen){ panelState[key]=isOpen; _saveUI(); }
+
+// restore filters on load: URL (a shared link) wins, else localStorage, else defaults
+function applyStoredFilters(){
+  const p=new URLSearchParams(location.search);
+  let src;
+  if(["fsev","fkind","fops","fq"].some(k=>p.has(k))){
+    src={sev:p.get("fsev"), kind:p.get("fkind"), ops:p.get("fops"), q:p.get("fq")};
+  }else{
+    try{ const ls=JSON.parse(localStorage.getItem(LS_KEY)||"{}");
+      src={sev:ls.sev&&ls.sev.join(","), kind:ls.kind&&ls.kind.join(","),
+           ops:ls.ops&&ls.ops.join(","), q:ls.q}; }catch(e){ src={}; }
+  }
+  const apply=(set,val)=>{ if(val!=null){ set.clear(); val.split(",").filter(Boolean).forEach(x=>set.add(x)); } };
+  apply(active, src.sev); apply(activeKind, src.kind); apply(activeOps, src.ops);
+  if(typeof src.q==="string") searchText=src.q;
+}
+
+// path-relative base so it works at "/" or under a sub-path like "/lenscheck"; token from URL
+const BASE=location.pathname.endsWith("/")?location.pathname:location.pathname+"/";
+const TOKEN=new URLSearchParams(location.search).get("token")||"";
+function apiURL(p,params){params=Object.assign({},params||{});if(TOKEN)params.token=TOKEN;
+  const q=qs(params);return BASE+p+(q?"?"+q:"");}
+
+// on load: prefill the (auto-detected) repo and, if the server was started with a target
+// (lenscheck serve --pr / --commit / --base --head), open that review straight away.
+fetch(apiURL("api/config")).then(r=>r.json()).then(c=>{
+  if(c.repo) document.getElementById("repo").value=c.repo;
+  const p=c.preload||{};
+  if(p.pr) document.getElementById("prnum").value=p.pr;
+  if(p.commit) document.getElementById("commit").value=p.commit;
+  if(p.base) document.getElementById("base").value=p.base;
+  if(p.head) document.getElementById("head").value=p.head;
+  if(p.merge) document.getElementById("pr").value="merge:"+p.merge;
+  if(p.pr||p.commit||p.merge||(p.base&&p.head)) review();
+  else if(c.repo) loadRepo();   // no preload: fill the PR / branch / commit pickers for this repo
+}).catch(()=>{});
+
+function qs(o){return Object.entries(o).filter(([,v])=>v).map(([k,v])=>k+"="+encodeURIComponent(v)).join("&");}
+function status(s){document.getElementById("status").textContent=s;}
+
+// robust: never blow up on a non-JSON response (proxy/Render 404 etc.) — surface it clearly
+async function getJSON(url){
+  const r=await fetch(url);
+  const t=await r.text();
+  let d; try{d=JSON.parse(t);}catch(_){throw new Error(`HTTP ${r.status}: ${t.slice(0,140)}`);}
+  if(!r.ok||d.error) throw new Error(d.error||`HTTP ${r.status}`);
+  return d;
+}
+async function postJSON(url,body){
+  const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body||{})});
+  const t=await r.text();
+  let d; try{d=JSON.parse(t);}catch(_){throw new Error(`HTTP ${r.status}: ${t.slice(0,140)}`);}
+  if(!r.ok||d.error) throw new Error(d.error||`HTTP ${r.status}`);
+  return d;
+}
+
+// ⚖ Invariants — discover candidate rules and confirm them into the corpus (the moat, in the UI)
+async function loadInvariants(){
+  const repo=val("repo").trim();
+  if(!repo){status("Enter a local repo path first.");return;}
+  status("Discovering invariants… (samples git history — the first run can take a moment)");
+  try{
+    const d=await getJSON(apiURL("api/invariants",{repo}));
+    renderInvPanel(d);
+    status(`${(d.candidates||[]).length} candidate invariant(s).`+
+           (d.can_confirm?" Confirm the ones that are intentional.":
+            " (read-only — start `lenscheck serve --invariants <path>` to confirm)"));
+    document.getElementById("invpanel").scrollIntoView({behavior:"smooth",block:"nearest"});
+  }catch(e){status("Error: "+e);}
+}
+function renderInvPanel(d){
+  const confirmed=new Set(d.confirmed_ids||[]);
+  const rows=(d.candidates||[]).map(c=>{
+    const obs=c.observed||{};
+    const held=obs.ratio!=null?`holds ${obs.ok}/${obs.total} (${Math.round(obs.ratio*100)}%)`:"";
+    const exc=c.baseline_exceptions||[];
+    const excHtml=exc.length?`<div class="det">${exc.length} exception(s): ${esc(exc.slice(0,4).map(e=>e.route).join(", "))}${exc.length>4?" …":""}</div>`:"";
+    const act=confirmed.has(c.id)?`<span class="det" style="color:var(--low)">✓ confirmed</span>`
+      :d.can_confirm?`<button onclick="confirmInv('${esc(c.id)}')">Confirm</button>`
+      :`<span class="det">read-only</span>`;
+    const canBlame=c.id==="auth-before-write"||c.id==="pii-egress-authed"||c.id.indexOf("auth-group:")===0;
+    const blame=canBlame?` <button onclick="blameInv('${esc(c.id)}')" title="Which commit first broke this rule?">🩸 Blame</button>`:"";
+    return `<div class="row"><div><b>${esc(c.severity||"")} ${esc(c.statement)}</b> <span class="det">[${esc(c.kind||"")}]</span></div>`+
+      (held?`<div class="det">${esc(held)}</div>`:"")+excHtml+
+      `<div style="margin-top:6px">${act}${blame}</div><div class="det mono" id="blame-${esc(c.id).replace(/[^a-z-]/gi,'_')}"></div></div>`;
+  }).join("");
+  document.getElementById("invpanel").innerHTML=
+    panel("inv-discovery", "", true, "⚖ Invariants — confirm the rules this codebase already follows",
+      rows||`<div class="det">no candidate invariants discovered</div>`);
+}
+async function confirmInv(id){
+  const repo=val("repo").trim();
+  status(`Confirming ${id}…`);
+  try{
+    await postJSON(apiURL("api/invariants/confirm"),{repo,id});
+    await loadInvariants();                 // refresh so it shows ✓ confirmed
+    status(`Confirmed “${id}” — it will now be enforced on every review.`);
+  }catch(e){status("Error: "+e);}
+}
+async function blameInv(id){
+  const repo=val("repo").trim();
+  const slot=document.getElementById("blame-"+id.replace(/[^a-z-]/gi,'_'));
+  if(slot) slot.textContent="🩸 blaming… (walks git history — a moment)";
+  try{
+    const d=await getJSON(apiURL("api/blame",{repo,id,exact:"1"}));
+    if(slot) slot.textContent=d.text;
+  }catch(e){ if(slot) slot.textContent="Error: "+e; }
+}
+// Gap #4 — one-click "review current branch vs. the default branch" (backend auto-detects)
+function reviewDefault(){
+  const repo=val("repo").trim();
+  if(!repo){status("Enter a local repo path first.");return;}
+  setVal("pr",""); clearRefs(); review();   // no refs sent → /api/review auto-detects branch↔default
+}
+
+function val(id){return document.getElementById(id).value;}
+function setVal(id,v){document.getElementById(id).value=v;}
+
+// Load everything the pickers need from one local repo: merged PRs, branches, recent commits.
+async function loadRepo(){
+  const repo=val("repo").trim();
+  if(!repo){status("Enter a local repo path first.");return;}
+  status("Loading repo…");
+  try{
+    const [prs,refs]=await Promise.all([
+      getJSON(apiURL("api/prs",{repo})).catch(()=>({prs:[]})),  // a repo may simply have no merges
+      getJSON(apiURL("api/refs",{repo})),
+    ]);
+    REFS=refs;
+    fillPRs(prs.prs||[]);
+    fillRefs(refs.branches||[], refs.commits||[]);
+    status(`Loaded ${(prs.prs||[]).length} PRs · ${(refs.branches||[]).length} branches · `+
+           `${(refs.commits||[]).length} commits. Pick a PR, or compare branches/commits.`);
+  }catch(e){status("Error: "+e);}
+}
+
+function fillPRs(prs){
+  const el=document.getElementById("pr");
+  el.innerHTML='<option value="">— pick a merged PR —</option>'+prs.map(p=>{
+    const v=p.number?`pr:${p.number}`:`merge:${p.sha}`;
+    const meta=p.sha?` · ${p.sha}`:"";
+    return `<option value="${esc(v)}">${esc(p.title)}${esc(meta)}</option>`;}).join("");
+}
+
+function fillRefs(branches, commits){
+  const bopt=branches.map(b=>`<option value="${esc(b)}">${esc(b)}</option>`).join("");
+  document.getElementById("baseBranch").innerHTML='<option value="">— base branch —</option>'+bopt;
+  document.getElementById("headBranch").innerHTML='<option value="">— compare branch —</option>'+bopt;
+  // single-branch "review vs default" picker — defaults to the repo's checked-out branch
+  const cur=(REFS&&REFS.current)||"", def=(REFS&&REFS.default)||"";
+  document.getElementById("curBranch").innerHTML='<option value="">— current branch —</option>'+bopt;
+  if(cur) setVal("curBranch", cur);
+  document.getElementById("defBranch").textContent = def || "default (auto)";
+  const copt=commits.map(c=>`<option value="${esc(c.sha)}">${esc(c.sha)} · ${esc(clip(c.title,52))}</option>`).join("");
+  document.getElementById("baseCommit").innerHTML='<option value="">— base commit —</option>'+copt;
+  document.getElementById("headCommit").innerHTML='<option value="">— compare commit —</option>'+copt;
+  // handy default: newest commit compared against the one before it
+  if(commits[1]) setVal("baseCommit", commits[1].sha);
+  if(commits[0]) setVal("headCommit", commits[0].sha);
+}
+
+// blank every entry point but the one being used, so the backend gets an unambiguous request
+function clearRefs(){["prnum","commit","base","head"].forEach(id=>setVal(id,""));}
+
+function reviewPR(){
+  if(!val("pr")){status("Pick a PR from the list first.");return;}
+  clearRefs(); review();
+}
+// review the *selected* branch against the repo's default branch (switch which branch is "current")
+function reviewCurrentBranch(){
+  const h=val("curBranch");
+  if(!h){status("Pick a branch to review.");return;}
+  const def=(REFS&&REFS.default)||"";
+  setVal("pr",""); clearRefs();
+  if(!def){status("Couldn't detect the default branch — use the branches row to pick base + head.");return;}
+  if(def===h||def.endsWith("/"+h)){status(`“${h}” is the default branch — pick a feature branch to review.`);return;}
+  setVal("base",def); setVal("head",h); review();
+}
+function compareBranches(){
+  const b=val("baseBranch"), h=val("headBranch");
+  if(!b||!h){status("Pick a base and a compare branch.");return;}
+  if(b===h){status("Pick two different branches.");return;}
+  setVal("pr",""); clearRefs(); setVal("base",b); setVal("head",h); review();
+}
+function compareCommits(){
+  const b=val("baseCommit"), h=val("headCommit");
+  if(!b||!h){status("Pick a base and a compare commit.");return;}
+  if(b===h){status("Pick two different commits.");return;}
+  setVal("pr",""); clearRefs(); setVal("base",b); setVal("head",h); review();
+}
+
+async function review(){
+  const repo=document.getElementById("repo").value.trim();
+  const picked=document.getElementById("pr").value;
+  const pickedPR=picked.startsWith("pr:")?picked.slice(3):"";
+  const merge=(!pickedPR && picked)?(picked.startsWith("merge:")?picked.slice(6):picked):"";
+  const pr=document.getElementById("prnum").value.trim()||pickedPR;
+  const commit=document.getElementById("commit").value.trim();
+  const base=document.getElementById("base").value.trim();
+  const head=document.getElementById("head").value.trim();
+  if(!repo||(!merge&&!pr&&!commit&&!(base&&head))){status("Need a repo and (a PR, PR #, commit sha, or base+head).");return;}
+  status(pr?`Fetching GitHub PR #${pr} and analyzing…`:commit?`Reviewing commit ${commit}…`:"Analyzing snapshots… (a few seconds)");
+  try{
+    const d=await getJSON(apiURL("api/review",{repo,merge,pr,commit,base,head}));
+    DATA=d; sel=null; render();
+    status(`${DATA.base} → ${DATA.head} · ${DATA.shortstat||""}`);
+  }catch(e){status("Error: "+e);}
+}
+
+// a collapsible summary panel (native <details>); `open` sets the default state
+function panel(key, cls, open, title, body){
+  const isOpen = (key in panelState) ? panelState[key] : open;   // remembered collapse state
+  return `<details class="inv${cls?" "+cls:""}" data-pk="${key}"${isOpen?" open":""}`+
+    ` ontoggle="panelToggle('${key}',this.open)"><summary>${title}</summary>${body}</details>`;
+}
+
+function render(){
+  document.body.classList.add("loaded");   // swap the welcome screen for the results layout
+  applyStoredFilters();                     // restore filters from URL / localStorage (sticky across reviews)
+  document.getElementById("summary").textContent = DATA.summary || "";
+  const counts={}; DATA.changes.forEach(c=>counts[c.sev]=(counts[c.sev]||0)+1);
+  document.getElementById("tally").innerHTML=
+    ["🔴","🟠","🟡","🟢"].filter(s=>counts[s]).map(s=>`<b>${s} ${counts[s]}</b>`).join("&nbsp;&nbsp;")
+    +`<span style="color:var(--mut)">${DATA.changes.length} semantic changes</span>`;
+  const contra=DATA.contradictions||[];         // intent-vs-behavior (feature #4)
+  const contraHtml = contra.length ?
+    panel("contra", "", true, `🎭 Intent vs. behavior — PR describes itself as “${esc(contra[0].claim)}”, but the facts disagree`,
+      contra.map(c=>`<div class="row"><div>${c.sev} ${esc(c.why).replace(/\x60/g,"")}</div></div>`).join("")) : "";
+  const deps=(DATA.dependencies||[]).filter(d=>(d.gained&&d.gained.length)||d.unresolved);   // feature #5
+  const depsHtml = deps.length ?
+    panel("deps", "", false, `📦 Dependency capability changes (${deps.length})`,
+      deps.map(d=>`<div class="row"><div>${d.unresolved?"⚠":d.sev} <b>${esc(d.name)} ${esc(d.old||"(new)")}→${esc(d.new)}</b> — ${esc(d.why)}</div></div>`).join("")) : "";
+  const alerts=(DATA.invariants||[]).filter(f=>["NEW VIOLATION","WEAKENING"].includes(f.kind));
+  const invHtml = alerts.length ?
+    panel("alerts", "", true, `🛡 ${alerts.length} invariant alert(s) — a confirmed property is affected by this PR`,
+      alerts.map(f=>`<div class="row"><div><b>${f.sev} ${f.kind}</b> — ${esc(f.stmt)}</div>`+
+      (f.detail?`<div class="det">${esc(f.detail)}</div>`:"")+
+      (f.locs||[]).map(l=>`<div class="det mono">${esc(l)}</div>`).join("")+`</div>`).join("")) : "";
+  const egress=(DATA.egress||[]);              // #4 — endpoints funnelling through one destination
+  const routeIdx={}; DATA.changes.forEach((c,i)=>{routeIdx[c.route]=i;});
+  const eflag={partial:" · ⚠ partial (host has a runtime placeholder)",
+               unresolved:" · ? destination unresolved",ok:""};
+  const chip=r=>routeIdx[r]!==undefined
+    ? `<a href="#" onclick="selectChange(${routeIdx[r]});return false">${esc(r)}</a>`
+    : `<span class="mono" style="color:var(--mut)">${esc(r)}</span>`;
+  const egressHtml = egress.length ?
+    panel("egress", "info", false, `🌐 Shared egress — ${egress.length} destination(s) reached by multiple endpoints (verify once, not per route)`,
+      egress.map(g=>`<div class="row"><div><b>${g.count} endpoints → <span class="mono">${esc(g.dest)}</span></b>`+
+      `<span style="color:var(--mut)">${eflag[g.status]||""}</span></div>`+
+      `<div class="det">`+g.routes.map(chip).join(", ")+`</div></div>`).join("")) : "";
+  const bg=DATA.blast_graph;                   // whole-PR blast radius
+  const blastHtml=(bg&&bg.endpoints>=2)?
+    panel("blast","",bg.shared>0,`🧨 Blast radius — ${bg.endpoints} changed endpoints`+
+      (bg.shared?`, ${bg.shared} shared resource${bg.shared>1?'s':''}`:", none shared"),
+      `<div style="padding:10px 14px 4px;overflow-x:auto">${drawBlast(bg)}</div>`):"";
+  document.getElementById("invwrap").innerHTML = contraHtml + depsHtml + invHtml + blastHtml + egressHtml;
+  renderFilters();
+  document.getElementById("detail").innerHTML='<div class="empty">Select a change.</div>';
+  // deep links: ?open=N selects a change (shows its flow graph), ?invariants=1 opens the panel
+  const P=new URLSearchParams(location.search);
+  if(P.has("open")){const i=+P.get("open")||0, c=DATA.changes[i]; if(c){sel=i;renderList();renderDetail(c);}}
+  if(P.get("invariants")==="1") loadInvariants();
+}
+
+function selectChange(i){   // jump from a shared-egress route chip to that endpoint's flow graph
+  const c=DATA.changes[i];
+  if(!c) return;
+  active.add(c.sev); activeKind.add(kindKey(c.kind)); activeOps.clear();  // unhide it if filtered out
+  sel=i; renderFilters(); renderDetail(c);
+  document.getElementById("detail").scrollIntoView({behavior:"smooth",block:"nearest"});
+}
+
+function kindKey(k){return k.split(" ")[0];}   // "NEW ENDPOINT"→"NEW", "CHANGED"→"CHANGED", …
+function passFilters(c){
+  if(searchText && !c.route.toLowerCase().includes(searchText.toLowerCase())) return false;   // route search
+  if(!active.has(c.sev)) return false;                 // severity bar
+  if(!activeKind.has(kindKey(c.kind))) return false;   // change-kind bar
+  if(activeOps.size){                                  // touches bar (additive; empty = off)
+    const o=c.ops||{}; let hit=false; activeOps.forEach(k=>{ if(o[k]) hit=true; });
+    if(!hit) return false;
+  }
+  return true;
+}
+
+// three filter bars: severity + change-kind (both default all-on), and touches (additive, default off)
+function renderFilters(){
+  const fb=document.getElementById("filters"); fb.innerHTML="";
+  const sv={}, kd={}, op={read:0,write:0,external:0,async:0,cache:0};
+  DATA.changes.forEach(c=>{
+    sv[c.sev]=(sv[c.sev]||0)+1;
+    const k=kindKey(c.kind); kd[k]=(kd[k]||0)+1;
+    const o=c.ops||{}; ["read","write","external","async","cache"].forEach(x=>{ if(o[x]) op[x]++; });
+  });
+  const mk=(label,off,fn)=>{const b=document.createElement("button");if(off)b.className="off";b.textContent=label;b.onclick=fn;return b;};
+  const sep=()=>{const s=document.createElement("span");s.className="fsep";fb.appendChild(s);};
+  const lbl=t=>{const s=document.createElement("span");s.className="flbl";s.textContent=t;fb.appendChild(s);};
+  const toggle=(set,key)=>{set.has(key)?set.delete(key):set.add(key);persistFilters();renderFilters();};
+  const search=document.createElement("input");     // route search — filters the list, keeps focus
+  search.type="search"; search.placeholder="🔎 route…"; search.value=searchText; search.className="fsearch";
+  search.oninput=()=>{ searchText=search.value.trim(); persistFilters(); renderList(); };
+  fb.appendChild(search); sep();
+  ["🔴","🟠","🟡","🟢"].forEach(s=>fb.appendChild(mk(`${s} ${sv[s]||0}`, !active.has(s), ()=>toggle(active,s))));
+  sep();
+  [["NEW","🆕 new"],["CHANGED","✳ changed"],["REMOVED","➖ removed"],["REFACTOR","♻ refactor"]].forEach(([k,t])=>{
+    if(!kd[k]) return;                                 // only offer kinds that are present
+    fb.appendChild(mk(`${t} ${kd[k]}`, !activeKind.has(k), ()=>toggle(activeKind,k)));
+  });
+  sep(); lbl("touches");
+  [["read","📖 read"],["write","✏ write"],["external","🌐 external"],["async","⏱ async"],["cache","🗄 cache"]].forEach(([k,t])=>{
+    fb.appendChild(mk(`${t} ${op[k]}`, !activeOps.has(k), ()=>toggle(activeOps,k)));
+  });
+  renderList();
+}
+
+function renderList(){
+  const box=document.getElementById("items"); box.innerHTML=""; let shown=0;
+  DATA.changes.forEach((c,idx)=>{ if(!passFilters(c))return; shown++;
+    const d=document.createElement("div"); d.className="item"+(sel===idx?" sel":"");
+    d.innerHTML=`<span class="dot" style="background:${COL[SEV[c.sev]]}"></span>`+
+      `<div><div class="kind">${c.kind}</div><div class="route mono">${esc(c.route)}</div></div>`;
+    d.onclick=()=>{sel=idx;renderList();renderDetail(c);}; box.appendChild(d);});
+  if(!shown) box.innerHTML='<div class="empty">No endpoints match the current filters.</div>';
+}
+
+function renderDetail(c){
+  const d=document.getElementById("detail");
+  d.innerHTML=`<h2>${c.sev} ${esc(c.route)}<span class="badge">${c.kind}</span><span class="badge">${esc(c.auth)}</span></h2>`+
+    `<div>${esc(c.why)}</div>`+(c.detail?`<div style="color:var(--mut)">${esc(c.detail)}</div>`:"")+
+    `<div class="tabs"><button id="tg" class="${tab==='graph'?'on':''}" onclick="setTab('graph')">Flow graph</button>`+
+    `<button id="tw" class="${tab==='where'?'on':''}" onclick="setTab('where')">Where to look</button></div>`+
+    `<div id="tabbody"></div>`;
+  renderTab(c);
+}
+function setTab(t){tab=t;document.getElementById("tg").className=t==='graph'?'on':'';
+  document.getElementById("tw").className=t==='where'?'on':'';renderTab(DATA.changes[sel]);}
+function zoomGraph(f){graphZoom=Math.min(3,Math.max(0.4,graphZoom*f));renderTab(DATA.changes[sel]);}
+
+function renderTab(c){
+  const b=document.getElementById("tabbody");
+  if(tab==="where"){
+    const invest=c.investigate.map(i=>`<li><span class="where mono">${esc(i.where)}</span><span class="fact">${esc(i.fact)}</span></li>`).join("");
+    const unk=(c.unknowns||[]).map(u=>`<div class="unk">${esc(u)}</div>`).join("");
+    b.innerHTML=`<ul class="invest">${invest}</ul>`+(unk?`<div style="margin-top:10px">${unk}</div>`:"");
+  }else{
+    b.innerHTML=`<div class="legend"><span class="lg-handler">handler</span><span class="lg-read">table read</span>`+
+      `<span class="lg-write">table write</span><span class="lg-ext">external</span><span class="lg-async">async</span><span class="lg-cache">cache</span><span class="lg-dbtable">SQL table</span></div>`+
+      `<div class="gtools"><span style="font-size:11.5px;color:var(--mut)">before → after: `+
+      `<span style="color:var(--low);font-weight:700">+ new</span> · `+
+      `<span style="color:var(--crit);font-weight:700">− removed</span> · `+
+      `<span style="opacity:.5">unchanged (dimmed)</span></span>`+
+      `<span class="zoom"><button onclick="zoomGraph(1/1.2)" title="Zoom out">−</button>`+
+      `<span class="zpct">${Math.round(graphZoom*100)}%</span>`+
+      `<button onclick="zoomGraph(1.2)" title="Zoom in">+</button></span></div>`+
+      drawGraph(c.graph)+
+      `<div id="snippet" class="snippet"><div class="snhead">↑ click any block to see its source</div></div>`;
+  }
+}
+
+// fetch and show the source lines behind a clicked flow-graph block (reveals real cache keys, etc.)
+async function showSource(loc){
+  const i=loc.lastIndexOf(":"), path=i>0?loc.slice(0,i):loc, line=i>0?(+loc.slice(i+1)||1):1;
+  const box=document.getElementById("snippet"); if(!box) return;
+  const repo=val("repo").trim(), ref=(DATA&&DATA.head)||"";
+  box.innerHTML=`<div class="snhead mono">${esc(path)}:${line} <span class="mut">loading…</span></div>`;
+  try{
+    const d=await getJSON(apiURL("api/source",{repo,ref,path,line}));
+    if(!d.found){ box.innerHTML=`<div class="snhead mono">${esc(path)}:${line} — source not available at ${esc(ref||"HEAD")}</div>`; return; }
+    const rows=d.lines.map((ln,k)=>{ const n=d.start+k;
+      return `<div class="snline${n===d.line?' hl':''}"><span class="snn">${n}</span><span class="snc">${esc(ln)||" "}</span></div>`;}).join("");
+    box.innerHTML=`<div class="snhead mono">${esc(path)}:${line}</div><div class="sncode mono">${rows}</div>`;
+  }catch(e){ box.innerHTML=`<div class="snhead mono">${esc(path)}:${line} — ${esc(String(e))}</div>`; }
+}
+
+// ---- SVG node-link graph (layered: route → handler → leaves) ----
+function drawGraph(g){
+  const byType=t=>g.nodes.filter(n=>n.type===t);
+  const route=byType("route"), handler=byType("handler");
+  const leaves=g.nodes.filter(n=>!["route","handler","dbtable"].includes(n.type));
+  const dbt=byType("dbtable");
+  const rowH=44, top=24, colR=16, boxH=26, LABELGAP=130;
+  const w=(lbl)=>Math.min(260,Math.max(90,clip(lbl,34).length*7.2+22));  // wider boxes
+  const maxW=list=>list.reduce((m,n)=>Math.max(m,w(n.label)),90);
+  // columns are spaced by content, with a fixed gap so the route→handler method
+  // label always has room between the two boxes
+  const colH=colR+maxW(route)+LABELGAP;
+  const colL=colH+maxW(handler)+90;
+  const rows=Math.max(route.length, handler.length, leaves.length, 1);
+  const H=rows*rowH+top*2;
+  const yMid=H/2;
+  const pos={};
+  // center each column vertically; if a column has several nodes (e.g. a renamed
+  // handler = old+new), stack them so their boxes never overlap
+  const place=(list,x)=>{const s=yMid-(list.length-1)*rowH/2; list.forEach((n,i)=>pos[n.id]=[x,s+i*rowH]);};
+  place(route,colR); place(handler,colH); place(leaves,colL);
+  // dbtable nodes sit in a 4th column, each aligned to its parent model's row (Model → table)
+  const colT=colL+maxW(leaves)+90;
+  dbt.forEach(n=>{ const pe=g.edges.find(e=>e.to===n.id);
+    pos[n.id]=[colT, (pe&&pos[pe.from])?pos[pe.from][1]:yMid]; });
+  function nodeSvg(n){
+    const [x,y]=pos[n.id], ww=w(n.label);
+    let stroke="#6e7681";
+    if(n.type==="handler")stroke="var(--link)";
+    else if(n.type==="external")stroke="var(--crit)";
+    else if(n.type==="async")stroke="var(--purple)";
+    else if(n.type==="cache")stroke="#39c5cf";
+    else if(n.type==="dbtable")stroke=n.explicit===false?"#8b6f3f":"#57ab5a";  // declared=green, convention=muted
+    else if(n.type==="table")stroke=(n.kind||"").includes("write")?"var(--high)":"#6e7681";
+    else if(n.type==="route")stroke="#8b949e";
+    const st=n.state||"same";
+    const op=st==="same"?0.45:(st==="removed"?0.62:1);        // new pops, unchanged dims (still legible)
+    const sw=st==="added"?2.4:1.6;
+    const dash=st==="removed"?'stroke-dasharray="4 3"':"";
+    const mark=st==="added"?`<text x="${x-11}" y="${y+4}" fill="var(--low)" font-weight="700">+</text>`
+             :st==="removed"?`<text x="${x-11}" y="${y+4}" fill="var(--crit)" font-weight="700">−</text>`:"";
+    const pii=n.pii?`<circle cx="${x+ww-8}" cy="${y-boxH/2+2}" r="5" fill="var(--crit)"><title>PII source</title></circle>`:"";
+    const tip=[n.label, n.type==="handler"&&n.auth?n.auth:"", n.loc||"", n.loc?"(click for code)":""].filter(Boolean).join("  ·  ");
+    const click=n.loc?`onclick="showSource('${esc(n.loc).replace(/'/g,'')}')" style="cursor:pointer"`:"";
+    return `<g opacity="${op}" ${click}><title>${esc(tip)}</title>${mark}<rect x="${x}" y="${y-boxH/2}" width="${ww}" height="${boxH}" rx="6" `+
+      `fill="var(--panel)" stroke="${stroke}" stroke-width="${sw}" ${dash}/>`+
+      `<text x="${x+9}" y="${y+4}">${esc(clip(n.label,34))}</text>${pii}</g>`;
+  }
+  function edgeSvg(e){
+    const s=pos[e.from], t=pos[e.to]; if(!s||!t)return"";
+    const x1=s[0]+w(g.nodes.find(n=>n.id===e.from).label), y1=s[1], x2=t[0], y2=t[1];
+    const mx=(x1+x2)/2;
+    const col=e.kind&&e.kind.includes("write")?"var(--high)":
+      e.kind==="calls"?"var(--crit)":e.kind==="dispatches"?"var(--purple)":
+      (e.kind&&e.kind.startsWith("table"))?"#57ab5a":"#6e7681";
+    const st=e.state||"same";
+    const lineOp=st==="same"?0.3:(st==="removed"?0.55:0.95);
+    const labelOp=st==="same"?0.7:(st==="removed"?0.75:1);
+    const sw=st==="added"?1.9:1.3;
+    const dash=st==="removed"?'stroke-dasharray="5 4"':"";
+    // horizontal edges (route → handler): centre the label above the connector.
+    // fanning edges (handler → leaf): put it just before the target, on that row — no pile-up.
+    const horiz=Math.abs(y1-y2)<8;
+    const lx=horiz?(x1+x2)/2:x2-8, ly=horiz?y1-9:y2-6, anchor=horiz?"middle":"end";
+    return `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" fill="none" stroke="${col}" stroke-width="${sw}" opacity="${lineOp}" ${dash}/>`+
+      `<text class="elabel" x="${lx}" y="${ly}" text-anchor="${anchor}" opacity="${labelOp}">${esc(e.kind||"")}</text>`;
+  }
+  const width=(dbt.length?colT+maxW(dbt):colL+maxW(leaves))+24;
+  return `<svg width="100%" viewBox="0 0 ${width} ${H}" style="width:${Math.round(100*graphZoom)}%;max-width:${Math.round(width*graphZoom)}px">`+
+    g.edges.map(edgeSvg).join("")+g.nodes.map(nodeSvg).join("")+`</svg>`;
+}
+
+// whole-PR blast radius: changed endpoints (left) ↔ the tables/hosts/jobs they touch (right).
+// A resource shared by 2+ endpoints is highlighted — that's the radius.
+function drawBlast(g){
+  const eps=g.nodes.filter(n=>n.type==="endpoint");
+  const res=g.nodes.filter(n=>n.type!=="endpoint").sort((a,b)=>(b.shared||0)-(a.shared||0));
+  const rowH=40, top=24, boxH=26;
+  const w=lbl=>Math.min(320,Math.max(120,clip(lbl,44).length*7+26));
+  const eW=eps.reduce((m,n)=>Math.max(m,w(n.label)),120);
+  const rW=res.reduce((m,n)=>Math.max(m,w(n.label)),120);
+  const colE=16, colR=colE+eW+150, pos={};
+  const rows=Math.max(eps.length,res.length,1), H=rows*rowH+top*2;
+  const place=(list,x)=>list.forEach((n,i)=>pos[n.id]=[x,top+boxH/2+i*rowH]);
+  place(eps,colE); place(res,colR);
+  const sevCol={"🔴":"var(--crit)","🟠":"var(--high)","🟡":"#d0b429","🟢":"var(--low)"};
+  function node(n){
+    const [x,y]=pos[n.id], ww=n.type==="endpoint"?eW:rW;
+    let stroke="#57ab5a", sw=1.6;
+    if(n.type==="endpoint")stroke=sevCol[n.sev]||"#6e7681";
+    else if(n.type==="external")stroke="var(--crit)";
+    else if(n.type==="async")stroke="var(--purple)";
+    if(n.shared){stroke="#e3b341";sw=2.6;}
+    const badge=n.shared?`<text x="${x+ww+7}" y="${y+4}" fill="#e3b341" font-weight="700">×${n.shared}</text>`:"";
+    return `<g><title>${esc(n.label)}${n.shared?" · shared by "+n.shared+" changed endpoints":""}</title>`+
+      `<rect x="${x}" y="${y-boxH/2}" width="${ww}" height="${boxH}" rx="6" fill="var(--panel)" stroke="${stroke}" stroke-width="${sw}"/>`+
+      `<text x="${x+9}" y="${y+4}">${esc(clip(n.label,44))}</text>${badge}</g>`;
+  }
+  function edge(e){
+    const s=pos[e.from], t=pos[e.to]; if(!s||!t)return"";
+    const x1=s[0]+eW, y1=s[1], x2=t[0], y2=t[1], mx=(x1+x2)/2;
+    const col=(e.kind||"").includes("write")?"var(--high)":e.kind==="calls"?"var(--crit)":
+      e.kind==="dispatches"?"var(--purple)":"#57ab5a";
+    return `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" fill="none" stroke="${col}" stroke-width="1.3" opacity=".5"/>`;
+  }
+  const width=colR+rW+60;
+  return `<svg width="100%" viewBox="0 0 ${width} ${H}" style="max-width:${width}px">`+
+    g.edges.map(edge).join("")+g.nodes.map(node).join("")+`</svg>`;
+}
+
+function clip(s,n){return s.length>n?s.slice(0,n-1)+"…":s;}
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+</script>
+</body>
+</html>

@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lenscheck — Backend Map</title>
+<style>
+:root{--bg:#0d1117;--panel:#161b22;--line:#30363d;--fg:#e6edf3;--mut:#8b949e;--link:#58a6ff;
+--crit:#f85149;--high:#db8f2b;--purple:#a855f7;--low:#3fb950}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);
+font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif}
+a{color:var(--link)}
+header{position:sticky;top:0;background:#0d1117ee;backdrop-filter:blur(6px);border-bottom:1px solid var(--line);
+padding:12px 20px;z-index:5}
+.top{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.brand{font-weight:800;font-size:16px;display:flex;align-items:center;gap:8px}
+.brand .tri{color:var(--low)}
+input,select{background:var(--panel);border:1px solid var(--line);color:var(--fg);border-radius:7px;
+padding:7px 10px;font:13px ui-monospace,Menlo,monospace}
+#repo{min-width:340px}#q{min-width:220px}
+button{background:var(--panel);border:1px solid var(--line);color:var(--fg);border-radius:7px;
+padding:7px 12px;cursor:pointer;font-size:13px}button:hover{border-color:var(--link)}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.chip{border:1px solid var(--line);border-radius:2em;padding:3px 11px;font-size:12.5px;cursor:pointer;color:var(--mut)}
+.chip.on{background:var(--panel);color:var(--fg);border-color:var(--link)}
+main{padding:18px 20px;max-width:1200px;margin:auto}
+.sub{color:var(--mut);margin:0 0 16px}
+.app{border:1px solid var(--line);border-radius:10px;margin-bottom:12px;overflow:hidden;background:var(--panel)}
+.app>summary{list-style:none;cursor:pointer;padding:12px 16px;display:flex;align-items:center;gap:12px;
+font-weight:700;font-size:15px}
+.app>summary::-webkit-details-marker{display:none}
+.app>summary::before{content:"▸";color:var(--mut);font-size:10px}
+.app[open]>summary::before{content:"▾"}
+.count{color:var(--mut);font-weight:500;font-size:13px;margin-left:auto;font-family:ui-monospace,monospace}
+.eps{border-top:1px solid var(--line)}
+.ep{border-bottom:1px solid #21262d}
+.ep>summary{list-style:none;cursor:pointer;padding:9px 16px 9px 20px;display:flex;align-items:center;gap:10px}
+.ep>summary::-webkit-details-marker{display:none}
+.ep:hover{background:#1c2230}
+.route{font-family:ui-monospace,Menlo,monospace;font-size:13px}
+.auth{color:var(--mut);font-size:12px;font-family:ui-monospace,monospace}
+.tags{margin-left:auto;display:flex;gap:5px;flex-wrap:wrap}
+.tag{font-size:11px;color:var(--mut);border:1px solid var(--line);border-radius:3px;padding:0 6px}
+.tag.open,.tag.write,.tag.pii{color:#f0b9b4;border-color:#5a2a28}
+.detail{padding:6px 16px 16px 20px;background:#0f141b}
+.why{color:#f0b9b4;font-size:13px;margin:4px 0 10px}
+.wtl{margin-top:10px}.wtl h4{margin:0 0 6px;color:var(--mut);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+.fact{font-family:ui-monospace,monospace;font-size:12.5px;padding:2px 0;color:#c9d1d9}
+.fact .loc{color:var(--link);margin-right:10px}
+svg text{fill:var(--fg);font:12px ui-monospace,Menlo,monospace}
+svg .elabel{fill:#adbac7;font-size:10.5px}
+.empty{color:var(--mut);padding:40px;text-align:center}
+.posture{display:flex;gap:9px;flex-wrap:wrap;margin:-6px 0 18px}
+.posture .p{cursor:pointer;border:1px solid var(--line);border-radius:2em;padding:3px 11px;font-size:12.5px;color:var(--mut)}
+.posture .p:hover{border-color:var(--link)}.posture .p.on{background:var(--panel);border-color:var(--link);color:var(--fg)}
+.posture .p b{color:var(--fg)}.posture .p.risk b{color:#f0b9b4}
+body.static .live-only{display:none}
+.fact.clk{cursor:pointer}.fact.clk:hover .loc{text-decoration:underline}
+.snippet{margin-top:10px;border:1px solid var(--line);border-radius:7px;overflow:hidden;background:#0d1117}
+.snhead{padding:6px 10px;font:12px ui-monospace,monospace;color:var(--mut);border-bottom:1px solid var(--line)}
+.sncode{font:12.5px/1.55 ui-monospace,Menlo,monospace;padding:6px 0}
+.snline{display:flex;padding:0 10px;white-space:pre}
+.snline.hl{background:#2d2a12}
+.snn{color:#586069;width:42px;text-align:right;margin-right:14px;user-select:none;flex:none}
+.snc{color:#c9d1d9}
+</style></head>
+<body>
+<header>
+  <div class="top">
+    <span class="brand"><span class="tri">◆</span> Lenscheck <span style="color:var(--mut);font-weight:500">· backend map</span></span>
+    <input id="repo" class="live-only" placeholder="/path/to/repo or github url">
+    <button class="live-only" onclick="load()"><b>Map</b></button>
+    <input id="q" placeholder="search route, handler, table, host…" oninput="render()">
+    <a href="#" onclick="downloadSeed();return false" style="margin-left:auto;font-size:13px"
+       title="A starter invariant corpus from this repo's current state — confirm the real rules, then enforce on every PR">⚖ invariant seed</a>
+    <a href="/app.html" style="font-size:13px">← review a PR</a>
+  </div>
+  <div class="chips" id="chips"></div>
+</header>
+<main>
+  <div class="sub" id="summary">Enter a repo and hit <b>Map</b> — every endpoint, grouped by app, worst-first.</div>
+  <div class="posture" id="posture"></div>
+  <div id="apps"></div>
+</main>
+<script>
+const $=s=>document.querySelector(s), esc=s=>(s||"").replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const clip=(s,n)=>{s=s||"";return s.length>n?s.slice(0,n-1)+"…":s;};
+const graphZoom=1;
+let DATA=null, filter="all", REPO=null;
+const SEV=["🔴","🟠","🟡","🟢"];
+const FILTERS=[["all","all"],["🔴","🔴"],["🟠","🟠"],["open","open"],["write","write"],["pii","pii"],["external","external"]];
+
+$("#chips").innerHTML=FILTERS.map(([k,l])=>`<span class="chip${k==='all'?' on':''}" data-k="${k}" onclick="setFilter('${k}')">${l}</span>`).join("");
+function setFilter(k){filter=k;document.querySelectorAll('.chip').forEach(c=>c.classList.toggle('on',c.dataset.k===k));render();}
+
+function downloadSeed(){
+  if(!DATA||!DATA.seed||!DATA.seed.length){ alert("Map a repo first — then this downloads its starter invariant corpus."); return; }
+  const blob=new Blob([JSON.stringify(DATA.seed,null,2)],{type:"application/json"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+  a.download="lenscheck-invariants.seed.json"; a.click(); URL.revokeObjectURL(a.href);
+}
+async function boot(){
+  if(window.__MAP_EMBEDDED__){ DATA=window.__MAP_EMBEDDED__; document.body.classList.add("static"); render(); return; }
+  const urlRepo=new URLSearchParams(location.search).get("repo");
+  if(urlRepo){ $("#repo").value=urlRepo; load(); return; }
+  try{const c=await (await fetch("/api/config")).json(); if(c.repo){$("#repo").value=c.repo; load();}}catch(e){}
+}
+async function load(){
+  const repo=$("#repo").value.trim(); if(!repo)return;
+  REPO=repo;
+  $("#summary").textContent="Analyzing "+repo+" …"; $("#apps").innerHTML="";
+  try{
+    const r=await fetch("/api/map?repo="+encodeURIComponent(repo));
+    DATA=await r.json();
+    if(DATA.error){$("#summary").textContent="Error: "+DATA.error;return;}
+    render();
+  }catch(e){$("#summary").textContent="Failed: "+e;}
+}
+
+function epMatches(e){
+  const q=$("#q").value.trim().toLowerCase();
+  if(filter==="🔴"&&e.sev!=="🔴")return false;
+  if(filter==="🟠"&&e.sev!=="🟠")return false;
+  if(filter==="unauth-write"&&!(e.tags.includes("open")&&e.tags.includes("write")))return false;
+  if(filter==="pii-egress"&&!(e.tags.includes("pii")&&e.tags.includes("external")))return false;
+  if(["open","write","pii","external"].includes(filter)&&!e.tags.includes(filter))return false;
+  if(!q)return true;
+  const hay=(e.route+" "+e.handler+" "+e.auth+" "+e.tags.join(" ")+" "+
+    e.graph.nodes.map(n=>n.label).join(" ")).toLowerCase();
+  return hay.includes(q);
+}
+
+function render(){
+  if(!DATA)return;
+  const apps=DATA.apps.map(a=>({...a,eps:a.endpoints.filter(epMatches)})).filter(a=>a.eps.length);
+  const shown=apps.reduce((n,a)=>n+a.eps.length,0);
+  $("#summary").innerHTML=`<b>${DATA.total}</b> endpoints · <b>${DATA.apps.length}</b> apps`+
+    (shown!==DATA.total?` · showing <b>${shown}</b>`:"")+` · <span style="color:var(--mut)">worst-first</span>`;
+  // repo-wide posture — from ALL endpoints, one glance at security exposure. Click to filter.
+  const all=DATA.apps.flatMap(a=>a.endpoints), has=(e,...t)=>t.every(x=>e.tags.includes(x));
+  const P=[["🔴","critical",all.filter(e=>e.sev==="🔴").length,1],
+           ["🟠","high",all.filter(e=>e.sev==="🟠").length,1],
+           ["unauth-write","unauth-write",all.filter(e=>has(e,"open","write")).length,1],
+           ["pii-egress","PII-egress",all.filter(e=>has(e,"pii","external")).length,1],
+           ["open","public",all.filter(e=>e.tags.includes("open")).length,0],
+           ["external","external",all.filter(e=>e.tags.includes("external")).length,0]];
+  $("#posture").innerHTML=P.map(([k,l,n,risk])=>
+    `<span class="p${risk?' risk':''}${filter===k?' on':''}" onclick="setFilter('${k}')"><b>${n}</b> ${l}</span>`).join("");
+  $("#apps").innerHTML = apps.length? apps.map(appHtml).join("") :
+    `<div class="empty">No endpoints match.</div>`;
+}
+function counts(c){return SEV.filter(s=>c[s]).map(s=>s+c[s]).join(" ");}
+function appHtml(a){
+  const open = a.worst==="🔴"||a.worst==="🟠" || $("#q").value.trim() || filter!=="all";
+  return `<details class="app"${open?" open":""}><summary>${a.worst} <span>${esc(a.app)}</span>`+
+    `<span class="count">${a.eps.length} endpoints &nbsp; ${counts(a.counts)}</span></summary>`+
+    `<div class="eps">${a.eps.map(epHtml).join("")}</div></details>`;
+}
+function epHtml(e){
+  const tags=e.tags.map(t=>`<span class="tag ${t}">${t}</span>`).join("");
+  return `<details class="ep" ontoggle="if(this.open)drawEp(this)"><summary>${e.sev} `+
+    `<span class="route">${esc(e.route)}</span> <span class="auth">${esc(e.auth)}</span>`+
+    `<span class="tags">${tags}</span></summary>`+
+    `<div class="detail" data-ep='${esc(JSON.stringify(e)).replace(/'/g,"&#39;")}'></div></details>`;
+}
+function drawEp(det){
+  const box=det.querySelector(".detail"); if(box.dataset.drawn)return; box.dataset.drawn="1";
+  const e=JSON.parse(box.getAttribute("data-ep").replace(/&#39;/g,"'"));
+  const facts=e.graph.nodes.filter(n=>n.loc).map(n=>
+    `<div class="fact clk" onclick="showSource('${esc(n.loc).replace(/'/g,'')}',this)"><span class="loc">${esc(n.loc)}</span>${esc(n.label)} <span style="color:var(--mut)">${esc(n.kind||n.type)}</span></div>`).join("");
+  const unk=(e.unknowns||[]).map(u=>`<div class="fact" style="color:#d0b429">⚠ ${esc(u)}</div>`).join("");
+  box.innerHTML=(e.sev==="🔴"||e.sev==="🟠"?`<div class="why">${e.sev} ${esc(e.why)}</div>`:"")+
+    drawGraph(e.graph)+
+    `<div class="wtl"><h4>Where to look</h4>${facts||'<div class="fact" style="color:var(--mut)">—</div>'}${unk}</div>`;
+}
+
+/* ---- click a node or fact → show its source (live server only) ---- */
+async function showSource(loc, el){
+  const det=el.closest(".detail"); if(!det)return;
+  let box=det.querySelector(".snippet");
+  if(!box){ box=document.createElement("div"); box.className="snippet"; det.appendChild(box); }
+  const i=loc.lastIndexOf(":"), path=i>0?loc.slice(0,i):loc, line=i>0?(+loc.slice(i+1)||1):1;
+  if(!REPO){ box.innerHTML=`<div class="snhead">${esc(path)}:${line} — source view needs the live server</div>`; return; }
+  box.innerHTML=`<div class="snhead">${esc(path)}:${line} · loading…</div>`;
+  try{
+    const d=await (await fetch(`/api/source?repo=${encodeURIComponent(REPO)}&ref=WORKTREE&path=${encodeURIComponent(path)}&line=${line}`)).json();
+    if(!d.found){ box.innerHTML=`<div class="snhead">${esc(path)}:${line} — not found at HEAD</div>`; return; }
+    const rows=d.lines.map((ln,k)=>{const n=d.start+k;
+      return `<div class="snline${n===d.line?' hl':''}"><span class="snn">${n}</span><span class="snc">${esc(ln)||' '}</span></div>`;}).join("");
+    box.innerHTML=`<div class="snhead">${esc(path)}:${line}</div><div class="sncode">${rows}</div>`;
+    box.scrollIntoView({block:"nearest"});
+  }catch(e){ box.innerHTML=`<div class="snhead">${esc(path)}:${line} — ${esc(String(e))}</div>`; }
+}
+
+/* ---- flow graph (ported from the review UI) ---- */
+function drawGraph(g){
+  const byType=t=>g.nodes.filter(n=>n.type===t);
+  const route=byType("route"), handler=byType("handler");
+  const leaves=g.nodes.filter(n=>!["route","handler","dbtable"].includes(n.type));
+  const dbt=byType("dbtable");
+  const rowH=44, top=24, colR=16, boxH=26, LABELGAP=130;
+  const w=lbl=>Math.min(260,Math.max(90,clip(lbl,34).length*7.2+22));
+  const maxW=list=>list.reduce((m,n)=>Math.max(m,w(n.label)),90);
+  const colH=colR+maxW(route)+LABELGAP, colL=colH+maxW(handler)+90;
+  const rows=Math.max(route.length,handler.length,leaves.length,1), H=rows*rowH+top*2, yMid=H/2, pos={};
+  const place=(list,x)=>{const s=yMid-(list.length-1)*rowH/2;list.forEach((n,i)=>pos[n.id]=[x,s+i*rowH]);};
+  place(route,colR);place(handler,colH);place(leaves,colL);
+  const colT=colL+maxW(leaves)+90;
+  dbt.forEach(n=>{const pe=g.edges.find(e=>e.to===n.id);pos[n.id]=[colT,(pe&&pos[pe.from])?pos[pe.from][1]:yMid];});
+  function nodeSvg(n){
+    const [x,y]=pos[n.id],ww=w(n.label);let stroke="#6e7681";
+    if(n.type==="handler")stroke="var(--link)";else if(n.type==="external")stroke="var(--crit)";
+    else if(n.type==="async")stroke="var(--purple)";else if(n.type==="cache")stroke="#39c5cf";
+    else if(n.type==="dbtable")stroke=n.explicit===false?"#8b6f3f":"#57ab5a";
+    else if(n.type==="table")stroke=(n.kind||"").includes("write")?"var(--high)":"#6e7681";
+    else if(n.type==="route")stroke="#8b949e";
+    const pii=n.pii?`<circle cx="${x+ww-8}" cy="${y-boxH/2+2}" r="5" fill="var(--crit)"><title>PII source</title></circle>`:"";
+    const tip=[n.label,n.type==="handler"&&n.auth?n.auth:"",n.loc||"",n.loc?"(click for source)":""].filter(Boolean).join("  ·  ");
+    const click=n.loc?`onclick="showSource('${esc(n.loc).replace(/'/g,'')}',this)" style="cursor:pointer"`:"";
+    return `<g ${click}><title>${esc(tip)}</title><rect x="${x}" y="${y-boxH/2}" width="${ww}" height="${boxH}" rx="6" `+
+      `fill="var(--panel)" stroke="${stroke}" stroke-width="1.8"/>`+
+      `<text x="${x+9}" y="${y+4}">${esc(clip(n.label,34))}</text>${pii}</g>`;
+  }
+  function edgeSvg(e){
+    const s=pos[e.from],t=pos[e.to];if(!s||!t)return"";
+    const x1=s[0]+w(g.nodes.find(n=>n.id===e.from).label),y1=s[1],x2=t[0],y2=t[1],mx=(x1+x2)/2;
+    const col=e.kind&&e.kind.includes("write")?"var(--high)":e.kind==="calls"?"var(--crit)":
+      e.kind==="dispatches"?"var(--purple)":(e.kind&&e.kind.startsWith("table"))?"#57ab5a":"#6e7681";
+    const horiz=Math.abs(y1-y2)<8,lx=horiz?(x1+x2)/2:x2-8,ly=horiz?y1-9:y2-6,anchor=horiz?"middle":"end";
+    return `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" fill="none" stroke="${col}" stroke-width="1.4" opacity=".55"/>`+
+      `<text class="elabel" x="${lx}" y="${ly}" text-anchor="${anchor}" opacity=".85">${esc(e.kind||"")}</text>`;
+  }
+  const width=(dbt.length?colT+maxW(dbt):colL+maxW(leaves))+24;
+  return `<svg width="100%" viewBox="0 0 ${width} ${H}" style="max-width:${width}px">`+
+    g.edges.map(edgeSvg).join("")+g.nodes.map(nodeSvg).join("")+`</svg>`;
+}
+boot();
+</script>
+</body></html>
