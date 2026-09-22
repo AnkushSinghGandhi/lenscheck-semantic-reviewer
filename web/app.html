@@ -246,6 +246,12 @@
   .demo-stat .chip b{color:var(--fg)}.demo-stat .chip.crit b{color:var(--crit)}
   .demo-stat .rawbtn{border:1px solid var(--line);border-radius:20px;padding:3px 11px;background:var(--panel);color:var(--fg);cursor:pointer}
   .demo-stat .rawbtn:hover{border-color:var(--acc)}
+  .demo-switch{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:10px}
+  .demo-switch .sw-lbl{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);font-weight:700}
+  .demo-switch .sw{border:1px solid var(--line);background:var(--panel);color:var(--mut);border-radius:20px;
+    padding:4px 12px;font-size:12px;font-family:ui-monospace,Menlo,monospace;cursor:pointer}
+  .demo-switch .sw:hover{color:var(--fg);border-color:var(--acc)}
+  .demo-switch .sw.on{color:#fff;background:rgba(124,116,240,.16);border-color:var(--acc)}
   #rawdiff{margin:0 20px 8px;max-height:300px;overflow:auto;background:var(--bg);border:1px solid var(--line);border-radius:10px;
     padding:12px 14px;font:12px/1.5 ui-monospace,Menlo,monospace;color:var(--mut);white-space:pre}
   #rawdiff .a{color:var(--low)}#rawdiff .r{color:var(--crit)}#rawdiff .h{color:var(--link)}
@@ -482,10 +488,12 @@ fetch(apiURL("api/config")).then(r=>r.json()).then(c=>{
 }).catch(()=>{});
 
 // ---- hosted demo: pre-baked example reviews (no clone, no key) ----
+let LC_DEMOS=[];               // the pre-baked list (for the welcome chips + the in-review switcher)
 async function setupDemoBar(){
   try{
     const {demos}=await getJSON(apiURL("api/demos"));
     if(!demos||!demos.length) return;
+    LC_DEMOS=demos;
     document.getElementById("demoChips").innerHTML = demos.map(d=>
       `<button class="demochip" onclick="loadDemo('${d.id}')">`+
       `<span class="dc-play">▶</span><span class="dc-title">${d.title}</span>`+
@@ -498,7 +506,9 @@ async function loadDemo(id){
   status("Loading example…");
   try{
     const d=await getJSON(apiURL("api/review",{demo:id}));
-    LC_DEMO=id; DATA=d; sel=null; capDismissed=false; render();
+    LC_DEMO=id; DATA=d; sel=null; capDismissed=false;
+    try{ history.replaceState(null,"","?demo="+encodeURIComponent(id)); }catch(_){}
+    render();
     status("Example: "+id+" — this is a pre-baked review");
   }catch(e){status("Error: "+e);}
 }
@@ -758,7 +768,12 @@ function renderDemoHeader(counts){
     `<div class="demo-cap">👀 <span>A real <b>${lines}-line</b> PR. Lenscheck found the <b>${crit}</b> `+
     `that could leak data or drop auth — <b>click one</b> below.</span>`+
     `<button class="x" onclick="this.parentNode.remove();capDismissed=true">✕</button></div>`;
-  h.innerHTML = cap +
+  const sw = (LC_DEMOS.length>1) ?
+    `<div class="demo-switch"><span class="sw-lbl">Example:</span>`+
+    LC_DEMOS.map(d=>`<button class="sw${d.id===LC_DEMO?' on':''}" onclick="loadDemo('${d.id}')" `+
+      `title="${d.title.replace(/"/g,'&quot;')}">${d.repo||d.id}${d.pr?" #"+d.pr:""}</button>`).join("")+
+    `</div>` : "";
+  h.innerHTML = cap + sw +
     `<div class="demo-stat">`+
     `<span class="chip"><b>${lines}</b> lines changed</span>`+
     `<span class="chip"><b>${n}</b> things that matter</span>`+
