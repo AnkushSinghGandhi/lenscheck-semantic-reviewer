@@ -4,11 +4,19 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Lenscheck — Semantic PR Review</title>
+<script>try{document.documentElement.setAttribute("data-theme",localStorage.getItem("lenscheck.theme")||"dark")}catch(e){}</script>
 <style>
   :root{--bg:#0a0d13;--panel:#141922;--sidebar:#0d1119;--card:#11151d;--line:#232a36;
     --fg:#e6edf3;--mut:#8b93a3;--faint:#5b6473;
     --crit:#f85149;--high:#db8f2b;--med:#d0b429;--low:#3fb950;--link:#7aa2ff;--purple:#bc8cff;
     --acc:#7c74f0;--acc2:#6d64f5;}
+  [data-theme="light"]{--bg:#f5f6f9;--panel:#ffffff;--sidebar:#eef0f4;--card:#ffffff;--line:#e2e5ec;
+    --fg:#1b2130;--mut:#5b6572;--faint:#98a1ad;
+    --crit:#d1242f;--high:#b06a00;--med:#8a7200;--low:#1a7f37;--link:#2f5bd8;--purple:#7c3aed;
+    --acc:#6d64f5;--acc2:#5a50e8;}
+  [data-theme="light"] .item.sel{background:#eaecfb}
+  [data-theme="light"] .blast-row>summary:hover{background:rgba(0,0,0,.04)}
+  [data-theme="light"] svg .elabel{fill:#6b7280}
   *{box-sizing:border-box}
   html,body{height:100%}
   body{margin:0;background:var(--bg);color:var(--fg);
@@ -224,6 +232,7 @@
   <div class="spacer"></div>
   <button class="navbtn on" title="The review workspace">☑ Review</button>
   <button class="navbtn" onclick="openMap()" title="Every endpoint in the repo, grouped by app">🗺 Repo Map</button>
+  <button class="navbtn" id="themeBtn" onclick="toggleTheme()" title="Toggle light / dark">☀</button>
   <a class="domain" href="https://api.lenscheck.dev" target="_blank" rel="noopener" title="Lenscheck — visit the site">🌐 <b>api.lenscheck.dev</b></a>
   <div class="sep"></div>
   <span class="who">by <a href="https://warriorwhocodes.com" target="_blank" rel="noopener">Ankush Singh Gandhi</a></span>
@@ -401,6 +410,15 @@ function openMap(){
   const r=val("repo").trim();
   location.href=BASE+"map"+(r?("?repo="+encodeURIComponent(r)):"")+(TOKEN?((r?"&":"?")+"token="+TOKEN):"");
 }
+
+// light / dark theme — persisted; the head script sets it pre-paint, this syncs the button + toggles
+function applyTheme(t){
+  document.documentElement.setAttribute("data-theme",t);
+  const b=document.getElementById("themeBtn"); if(b) b.textContent = t==="light" ? "🌙" : "☀";
+  try{ localStorage.setItem("lenscheck.theme",t); }catch(e){}
+}
+function toggleTheme(){ applyTheme(document.documentElement.getAttribute("data-theme")==="light"?"dark":"light"); }
+applyTheme(document.documentElement.getAttribute("data-theme")||"dark");
 
 // run mode: switch which picker the sidebar shows (PR / branch compare / commit compare)
 function setMode(m){
