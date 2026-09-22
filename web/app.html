@@ -223,6 +223,17 @@
   .zoom button{width:26px;height:24px;padding:0;font-size:15px;line-height:1;
     display:flex;align-items:center;justify-content:center}
   .zpct{font-size:11px;color:var(--mut);min-width:36px;text-align:center;user-select:none}
+
+  /* try-an-example bar on the welcome screen (hosted demo) */
+  .demobar{margin:0 auto 30px;max-width:560px;text-align:left}
+  .demobar-lbl{display:block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);font-weight:700;margin-bottom:10px}
+  .demobar-chips{display:flex;flex-direction:column;gap:8px}
+  .demochip{display:flex;align-items:center;gap:10px;padding:11px 14px;border:1px solid var(--line);border-radius:10px;
+    background:var(--card);color:var(--fg);cursor:pointer;text-align:left;transition:border-color .15s,transform .15s;width:100%}
+  .demochip:hover{border-color:var(--acc);transform:translateY(-1px)}
+  .demochip .dc-play{color:var(--acc);font-size:13px;flex:none}
+  .demochip .dc-title{font-weight:600;font-size:13.5px}
+  .demochip .dc-repo{color:var(--mut);font-size:12px;margin-left:auto;font-family:ui-monospace,Menlo,monospace}
 </style>
 </head>
 <body>
@@ -306,6 +317,11 @@
       <p class="lede">Point Lenscheck at a <b>local repo</b>, pick a merged PR or compare two branches/commits.
         It traces every change through 7 semantic edges — route, auth, DB, external calls, async, PII egress,
         cache — and reports <b>exact file:line</b> locations.</p>
+
+      <div id="demoBar" class="demobar" hidden>
+        <span class="demobar-lbl">▶ Try a live example — no install</span>
+        <div id="demoChips" class="demobar-chips"></div>
+      </div>
 
       <div class="cardz">
         <div class="card">
@@ -430,6 +446,9 @@ function setMode(m){
 // on load: prefill the (auto-detected) repo and, if the server was started with a target
 // (lenscheck serve --pr / --commit / --base --head), open that review straight away.
 fetch(apiURL("api/config")).then(r=>r.json()).then(c=>{
+  if(c.has_demos) setupDemoBar();             // hosted demo: show the "try an example" chips
+  const demoId=new URLSearchParams(location.search).get("demo");
+  if(demoId){ loadDemo(demoId); return; }     // deep-link: /?demo=<id> opens that review straight away
   if(c.repo) document.getElementById("repo").value=c.repo;
   const p=c.preload||{};
   if(p.pr) document.getElementById("prnum").value=p.pr;
@@ -441,6 +460,27 @@ fetch(apiURL("api/config")).then(r=>r.json()).then(c=>{
   if(p.pr||p.commit||p.merge||(p.base&&p.head)) review();
   else if(c.repo) loadRepo();   // no preload: fill the PR / branch / commit pickers for this repo
 }).catch(()=>{});
+
+// ---- hosted demo: pre-baked example reviews (no clone, no key) ----
+async function setupDemoBar(){
+  try{
+    const {demos}=await getJSON(apiURL("api/demos"));
+    if(!demos||!demos.length) return;
+    document.getElementById("demoChips").innerHTML = demos.map(d=>
+      `<button class="demochip" onclick="loadDemo('${d.id}')">`+
+      `<span class="dc-play">▶</span><span class="dc-title">${d.title}</span>`+
+      (d.repo?`<span class="dc-repo">${d.repo}${d.pr?" #"+d.pr:""}</span>`:"")+`</button>`).join("");
+    document.getElementById("demoBar").hidden=false;
+  }catch(_){/* not a demo deploy */}
+}
+async function loadDemo(id){
+  status("Loading example…");
+  try{
+    const d=await getJSON(apiURL("api/review",{demo:id}));
+    DATA=d; sel=null; render();
+    status("Example: "+id+" — this is a pre-baked review");
+  }catch(e){status("Error: "+e);}
+}
 
 function qs(o){return Object.entries(o).filter(([,v])=>v).map(([k,v])=>k+"="+encodeURIComponent(v)).join("&");}
 function status(s){document.getElementById("status").textContent=s;}
