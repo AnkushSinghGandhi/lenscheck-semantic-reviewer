@@ -3,40 +3,62 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Semantic Review</title>
+<title>Lenscheck — Semantic Review</title>
 <style>
-  :root{
-    --bg:#0d1117; --panel:#161b22; --line:#30363d; --fg:#e6edf3; --mut:#8b949e;
-    --crit:#f85149; --high:#db8f2b; --med:#d0b429; --low:#3fb950; --link:#58a6ff;
-  }
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--fg);
-       font:14px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  :root{--bg:#0a0d13;--panel:#141922;--sidebar:#0d1119;--card:#11151d;--line:#232a36;
+    --fg:#e6edf3;--mut:#8b93a3;--faint:#5b6473;
+    --crit:#f85149;--high:#db8f2b;--med:#d0b429;--low:#3fb950;--link:#7aa2ff;--purple:#bc8cff;
+    --acc:#7c74f0;--acc2:#6d64f5;}
+  *{box-sizing:border-box}html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--fg);display:flex;flex-direction:column;overflow:hidden;
+    font:14px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
   code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-  header{padding:16px 22px;border-bottom:1px solid var(--line)}
+  a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline}
+
+  /* ---- top nav (matches the live UI) ---- */
+  nav.top{display:flex;align-items:center;gap:14px;height:54px;flex:none;padding:0 18px;
+    border-bottom:1px solid var(--line);background:var(--sidebar)}
+  nav.top .brand{display:flex;align-items:center;gap:9px;font-weight:800;letter-spacing:.3px}
+  nav.top .brand .lens{font-size:17px}
+  nav.top .brand .g{background:linear-gradient(90deg,var(--acc),var(--purple),var(--link));
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  nav.top small{color:var(--mut);font-weight:400;font-size:12.5px}
+  nav.top .spacer{flex:1}
+  nav.top .domain{display:inline-flex;align-items:center;gap:6px;font-family:ui-monospace,Menlo,monospace;
+    font-size:11.5px;color:var(--mut);padding:5px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
+  nav.top .domain:hover{border-color:var(--acc);color:var(--fg);text-decoration:none}
+  nav.top .domain b{color:var(--acc);font-weight:700}
+  nav.top .sep{width:1px;height:26px;background:var(--line)}
+  nav.top .who{font-size:12px;color:var(--mut)}nav.top .who a{font-weight:600}
+
+  header{padding:16px 22px;border-bottom:1px solid var(--line);flex:none}
   header h1{margin:0 0 4px;font-size:17px}
   header .sub{color:var(--mut);font-size:12.5px}
   .summary{margin-top:10px;font-size:14px;font-weight:600;line-height:1.4}
   .summary:empty{display:none}
   .tally{margin-top:8px;display:flex;gap:14px;font-size:12.5px}
   .tally b{font-weight:600}
-  .inv{margin:14px 22px 0;border:1px solid var(--crit);border-radius:8px;
-       background:rgba(248,81,73,.08)}
+
+  #invwrap{flex:none;max-height:34vh;overflow:auto}
+  .inv{margin:14px 22px 0;border:1px solid var(--crit);border-radius:10px;background:rgba(248,81,73,.08)}
+  .inv.info{border-color:var(--line);background:var(--card)}
   .inv h2{margin:0;padding:10px 14px;font-size:13.5px;border-bottom:1px solid var(--line)}
   .inv .row{padding:9px 14px;border-bottom:1px solid var(--line)}
   .inv .row:last-child{border-bottom:0}
   .inv .stmt{font-weight:600}
   .inv .det{color:var(--mut);font-size:12.5px;margin-top:2px}
-  main{display:grid;grid-template-columns:minmax(340px,420px) 1fr;gap:0;
-       height:calc(100vh - 150px)}
+
+  main{display:grid;grid-template-columns:minmax(340px,420px) 1fr;gap:0;flex:1;min-height:0}
   #list{border-right:1px solid var(--line);overflow:auto}
-  .filters{padding:10px 14px;border-bottom:1px solid var(--line);display:flex;gap:6px;flex-wrap:wrap}
+  .filters{padding:10px 14px;border-bottom:1px solid var(--line);display:flex;gap:6px;flex-wrap:wrap;
+    position:sticky;top:0;background:var(--bg)}
   .filters button{background:var(--panel);color:var(--fg);border:1px solid var(--line);
     border-radius:14px;padding:3px 10px;cursor:pointer;font-size:12px}
+  .filters button:hover{border-color:var(--acc)}
   .filters button.off{opacity:.4}
   .item{padding:11px 14px;border-bottom:1px solid var(--line);cursor:pointer;display:flex;gap:9px}
   .item:hover{background:var(--panel)}
-  .item.sel{background:#1f2937;border-left:3px solid var(--link);padding-left:11px}
+  .item.sel{background:#1a2130;border-left:3px solid var(--acc);padding-left:11px}
   .dot{width:9px;height:9px;border-radius:50%;margin-top:6px;flex:0 0 auto}
   .item .kind{font-size:10.5px;letter-spacing:.4px;color:var(--mut);text-transform:uppercase}
   .item .route{word-break:break-all}
@@ -46,7 +68,7 @@
   .badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;
     border:1px solid var(--line);margin-left:6px;vertical-align:middle}
   .sec{margin-top:20px}
-  .sec .h{font-size:11px;letter-spacing:.6px;color:var(--mut);text-transform:uppercase;margin-bottom:7px}
+  .sec .h{font-size:11px;letter-spacing:.06em;color:var(--faint);text-transform:uppercase;margin-bottom:7px;font-weight:700}
   .flow{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
   .flow .node{background:var(--panel);border:1px solid var(--line);border-radius:6px;
     padding:3px 9px}.flow .arr{color:var(--mut)}
@@ -57,9 +79,39 @@
   .unk{color:var(--high);font-size:12.5px;background:rgba(219,143,43,.08);
     border:1px solid rgba(219,143,43,.3);border-radius:6px;padding:8px 10px;margin-bottom:6px}
   .why{font-size:14.5px}
+
+  /* blast radius — ranked "which resource does this PR concentrate risk in" list */
+  .blast-note{color:var(--mut);font-size:12.5px;padding:11px 14px 6px;line-height:1.55}
+  .blast-note b{color:var(--fg)}
+  .blast-list{padding:2px 14px 12px}
+  .blast-row{border:1px solid var(--line);border-radius:8px;margin-bottom:7px;overflow:hidden;background:var(--bg)}
+  .blast-row>summary{list-style:none;cursor:pointer;padding:8px 12px;display:flex;align-items:center;gap:11px}
+  .blast-row>summary::-webkit-details-marker{display:none}
+  .blast-row>summary:hover{background:rgba(255,255,255,.03)}
+  .blast-ico{flex:none;width:18px;text-align:center}
+  .blast-name{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;flex:none;min-width:150px;max-width:230px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .blast-track{flex:1;height:8px;border-radius:5px;background:var(--panel);overflow:hidden;min-width:50px}
+  .blast-fill{display:block;height:100%;border-radius:5px}
+  .blast-count{flex:none;font-size:12px;color:var(--fg);font-weight:700;min-width:96px;text-align:right}
+  .blast-eps{padding:2px 12px 10px 41px;display:flex;flex-wrap:wrap;gap:6px}
+  .blast-ep{display:inline-flex;align-items:center;gap:6px;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;
+    border:1px solid var(--line);border-radius:6px;padding:3px 8px;cursor:pointer;color:var(--mut)}
+  .blast-ep:hover{border-color:var(--acc);color:var(--fg)}
+  .blast-ep .bdot{width:7px;height:7px;border-radius:50%;flex:none}
+  .blast-more{color:var(--link);cursor:pointer;font-size:12px;padding:6px 2px}
+  .blast-more:hover{text-decoration:underline}
 </style>
 </head>
 <body>
+<nav class="top">
+  <div class="brand"><span class="lens">🔬</span> <span class="g">Lenscheck</span></div>
+  <small>semantic review</small>
+  <div class="spacer"></div>
+  <a class="domain" href="https://api.lenscheck.dev" target="_blank" rel="noopener" title="Lenscheck — visit the site">🌐 <b>api.lenscheck.dev</b></a>
+  <div class="sep"></div>
+  <span class="who">by <a href="https://warriorwhocodes.com" target="_blank" rel="noopener">Ankush Singh Gandhi</a></span>
+</nav>
 <header>
   <h1 id="title"></h1>
   <div class="sub" id="sub"></div>
@@ -101,7 +153,7 @@ if(contra.length){
 const deps = (DATA.dependencies||[]).filter(d=>(d.gained&&d.gained.length)||d.unresolved);
 if(deps.length){
   document.getElementById("invwrap").innerHTML +=
-    `<div class="inv"><h2>📦 Dependency capability changes</h2>`+
+    `<div class="inv info"><h2>📦 Dependency capability changes</h2>`+
     deps.map(d=>`<div class="row"><div class="stmt">${d.unresolved?"⚠":d.sev} ${esc(d.name)} ${esc(d.old||"(new)")}→${esc(d.new)} — ${esc(d.why)}</div></div>`).join("")
     + `</div>`;
 }
@@ -114,6 +166,16 @@ if(alerts.length){
       (f.detail?`<div class="det">${esc(f.detail)}</div>`:"")+
       (f.locs||[]).map(l=>`<div class="det mono">${esc(l)}</div>`).join("")+`</div>`).join("")
     + `</div>`;
+}
+
+// blast radius panel — a ranked list of the resources multiple changed endpoints share
+const bg = DATA.blast_graph;
+if(bg && bg.endpoints>=2){
+  const title = bg.shared
+    ? `🧨 Blast radius — ${bg.shared} resource${bg.shared>1?'s':''} shared across ${bg.endpoints} changed endpoints`
+    : `🧨 Blast radius — ${bg.endpoints} changed endpoints, none shared`;
+  document.getElementById("invwrap").innerHTML +=
+    `<div class="inv info"><h2>${title}</h2>${drawBlast(bg)}</div>`;
 }
 
 // filters
@@ -148,6 +210,49 @@ function renderDetail(c){
     `<div class="sec"><div class="h">How it flows</div><div class="flow">${flowNodes}</div></div>`+
     `<div class="sec"><div class="h">Where to look</div><ul class="invest">${invest}</ul></div>`+
     (unk?`<div class="sec"><div class="h">Unknown (unresolved edges)</div>${unk}</div>`:"");
+}
+// jump from a blast-radius endpoint chip to that change's detail
+function jumpRoute(route){
+  const i=DATA.changes.findIndex(c=>c.route===route); if(i<0) return;
+  sel=i; active.add(DATA.changes[i].sev); renderList(); renderDetail(DATA.changes[i]);
+  document.getElementById("detail").scrollTop=0;
+}
+
+// ranked blast-radius list (shared resources first) — see the live UI for the same view
+function drawBlast(g){
+  const eps={}; g.nodes.forEach(n=>{ if(n.type==="endpoint") eps[n.id]={route:n.label,sev:n.sev}; });
+  const byRes={}; g.edges.forEach(e=>{ (byRes[e.to]=byRes[e.to]||new Set()).add(e.from); });
+  const res=g.nodes.filter(n=>n.type!=="endpoint"&&(n.shared||0)>=2)
+    .map(n=>({label:n.label,type:n.type,shared:n.shared,users:[...(byRes[n.id]||[])]}))
+    .sort((a,b)=>b.shared-a.shared);
+  if(!res.length)
+    return `<div class="blast-note">No table, service, or job is touched by <b>2+</b> of the changed `+
+           `endpoints — the changes don't overlap, so there's no shared blast radius to worry about.</div>`;
+  const max=res[0].shared;
+  const ICON={table:"🗄",external:"🌐",async:"⏱"}, FILL={table:"#57ab5a",external:"var(--crit)",async:"var(--purple)"};
+  const WORD={table:"DB table",external:"external service",async:"async job"};
+  const sevRank=s=>["🔴","🟠","🟡","🟢"].indexOf(s);
+  const CAP=8;
+  const row=r=>{
+    const list=r.users.map(id=>eps[id]).filter(Boolean).sort((a,b)=>sevRank(a.sev)-sevRank(b.sev));
+    const chips=list.map(e=>`<span class="blast-ep" onclick="jumpRoute('${esc(e.route).replace(/'/g,'')}')">`+
+      `<span class="bdot" style="background:${COL[SEV[e.sev]]||'#6e7681'}"></span>${esc(e.route)}</span>`).join("");
+    const pct=Math.max(6,Math.round(r.shared/max*100));
+    return `<details class="blast-row"><summary>`+
+      `<span class="blast-ico" title="${WORD[r.type]||''}">${ICON[r.type]||"•"}</span>`+
+      `<span class="blast-name" title="${esc(r.label)} · ${WORD[r.type]||''}">${esc(r.label)}</span>`+
+      `<span class="blast-track"><span class="blast-fill" style="width:${pct}%;background:${FILL[r.type]||'#6e7681'}"></span></span>`+
+      `<span class="blast-count">×${r.shared} endpoints</span></summary>`+
+      `<div class="blast-eps">${chips}</div></details>`;
+  };
+  const head=`<div class="blast-note">Each row is a table, service, or job touched by <b>2+</b> of the changed `+
+    `endpoints. The count is how many changed endpoints reach it — the bigger it is, the more of this PR breaks `+
+    `if that one thing goes wrong. Click a row to see which endpoints; click an endpoint to jump to it.</div>`;
+  window.BLAST_REST = res.length>CAP ? res.slice(CAP).map(row).join("") : "";
+  const more=res.length>CAP
+    ? `<div class="blast-more" onclick="this.outerHTML=window.BLAST_REST">+ ${res.length-CAP} more shared resource${res.length-CAP>1?'s':''}</div>`
+    : "";
+  return head+`<div class="blast-list">${res.slice(0,CAP).map(row).join("")}${more}</div>`;
 }
 function esc(s){return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
 renderList();
