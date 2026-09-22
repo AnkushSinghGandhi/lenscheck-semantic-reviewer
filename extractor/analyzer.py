@@ -152,7 +152,7 @@ class RepoIndex:
                 m = _class_meta_model(child)                  # DRF/Django `class Meta: model = X`
                 if m:
                     self.class_models[child.name] = m
-                t = _class_db_table(child)                    # Django `class Meta: db_table = '...'`
+                t = _class_db_table(child) or _class_tablename(child)   # Django Meta.db_table / SQLAlchemy __tablename__
                 if t:
                     self.model_tables[child.name] = t
                 self._index_defs(child, path)                 # into class body (methods, Meta)
@@ -337,6 +337,24 @@ class FactCollector(ast.NodeVisitor):
             if who and who.endswith(NON_MODEL_SUFFIXES):     # a serializer/form we couldn't map → unknown
                 who = None
             self.db.append((who or "<instance>", "write", fl, ln))
+        # SQLAlchemy (Flask/FastAPI stacks) — high-signal patterns, never a false ✓:
+        #   session.query(Model) / db.session.query(Model)  → read
+        if isinstance(f, ast.Attribute) and f.attr == "query" and node.args \
+                and isinstance(node.args[0], ast.Name) and node.args[0].id[:1].isupper():
+            self.db.append((node.args[0].id, "read", fl, ln))
+        #   session.add(obj) / db.session.add(obj) / .delete(obj) / .merge(obj)  → write
+        if isinstance(f, ast.Attribute) and f.attr in {"add", "delete", "merge"} \
+                and _is_session_receiver(f.value):
+            who = self.var_types.get(_root_name(node.args[0])) if node.args else None
+            self.db.append((who or "<instance>", "write", fl, ln))
+        #   session.execute(select(Model) / insert(Model) / update(Model) / delete(Model))  (SQLAlchemy 2.x)
+        if isinstance(f, ast.Attribute) and f.attr == "execute" and node.args \
+                and isinstance(node.args[0], ast.Call) and isinstance(node.args[0].func, ast.Name):
+            stmt = node.args[0].func.id
+            marg = node.args[0].args[0] if node.args[0].args else None
+            if stmt in {"select", "insert", "update", "delete"} \
+                    and isinstance(marg, ast.Name) and marg.id[:1].isupper():
+                self.db.append((marg.id, "read" if stmt == "select" else "write", fl, ln))
         # cache read / mutate (E7): cache.get(k) / cache.set(k, …) / cache.delete(k) / caches['x'].clear()
         if isinstance(f, ast.Attribute) and _is_cache_receiver(f.value) \
                 and f.attr in (CACHE_READ | CACHE_WRITE):
@@ -384,6 +402,9 @@ class FactCollector(ast.NodeVisitor):
     def visit_Attribute(self, node: ast.Attribute):
         if node.attr in SENSITIVE:
             self.pii.append((node.attr, self.file, getattr(node, "lineno", 0)))
+        # SQLAlchemy declarative query: `Model.query.filter(...)` → a read of Model
+        if node.attr == "query" and isinstance(node.value, ast.Name) and node.value.id[:1].isupper():
+            self.db.append((node.value.id, "read", self.file, getattr(node, "lineno", 0)))
         self.generic_visit(node)
 
     def visit_Assign(self, node: ast.Assign):
@@ -511,6 +532,16 @@ def _orm_model_method(f):
     if isinstance(cur, ast.Attribute) and cur.attr == "objects" and isinstance(cur.value, ast.Name):
         return cur.value.id, method
     return None, None
+
+
+def _is_session_receiver(node) -> bool:
+    """A SQLAlchemy Session-like receiver: `session`, `db.session`, `async_session`, `*_session`.
+    Used to tell `session.add(obj)` (a DB write) apart from Django's m2m `related.add(obj)`."""
+    if isinstance(node, ast.Name):
+        return node.id == "session" or node.id.endswith("_session")
+    if isinstance(node, ast.Attribute):
+        return node.attr == "session" or node.attr.endswith("_session")
+    return False
 
 
 def _is_non_orm_receiver(node) -> bool:
@@ -697,6 +728,16 @@ def _class_db_table(classdef):
     return None
 
 
+def _class_tablename(classdef):
+    """SQLAlchemy's `__tablename__ = '...'` class attribute — the real SQL table name for a
+    declarative model (Flask-SQLAlchemy / SQLAlchemy). Returns the string or None."""
+    for s in classdef.body:
+        if isinstance(s, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == "__tablename__" for t in s.targets):
+            return _const_str(s.value)
+    return None
+
+
 def _app_label(path):
     """Django app label from a file path: the segment right under an `apps/` directory, else None."""
     parts = path.replace("\\", "/").split("/")
@@ -854,20 +895,29 @@ def analyze_handler(name: str, index: RepoIndex) -> Endpoint:
         ep.e2_auth = Edge(UNKNOWN, note="no permission_classes and no DRF default resolvable")
 
     # walk methods with 1-level follow into self-methods and module funcs
-    owner_rel = _rel(index, owner_file)
-    agg = FactCollector(owner_rel)
-    followed = set()
     same_module_classmethods = {m.name: m for m in (cls.body if cls else []) if isinstance(m, ast.FunctionDef)}
-    for m in methods:
-        _walk_follow(m, agg, index, owner_file, same_module_classmethods, followed, depth=0,
-                     self_type=(name if cls is not None else None))
+    build_edges(ep, methods, index, owner_file,
+                self_type=(name if cls is not None else None),
+                class_methods=same_module_classmethods)
+    return ep
 
+
+def build_edges(ep, method_nodes, index, owner_file, self_type=None, class_methods=None):
+    """Fill an Endpoint's behaviour edges (E3–E7 + resolved tables) by walking the handler's
+    function bodies, following 1–2 levels into helpers. Framework-agnostic — Django resolves a
+    class/func handler upstream and passes its methods here; Flask/FastAPI pass the single
+    decorated function. The FactCollector + scorers below are pure Python analysis."""
+    agg = FactCollector(_rel(index, owner_file))
+    followed = set()
+    for m in method_nodes:
+        _walk_follow(m, agg, index, owner_file, class_methods or {}, followed, depth=0,
+                     self_type=self_type)
     ep.e3_db_tables = _score_db(agg)
     ep.e4_external = _score_external(agg)
     ep.e5_async = _score_async(agg)
     ep.e6_pii = _score_pii(agg)
     ep.e7_cache = _score_cache(agg)
-    # resolve each touched model to its real SQL table (declared db_table, else app convention)
+    # resolve each touched model to its real SQL table (declared db_table/__tablename__, else convention)
     for model in {m for m, _k, _f, _l in agg.db if m and m != "<instance>"}:
         tbl, explicit = index.table_for(model)
         if tbl:
@@ -1050,13 +1100,30 @@ def _rel(index, path):
 
 def analyze_repo(root: str):
     index = RepoIndex(root)
-    endpoints = parse_endpoints(index)
     results = []
-    for route, handler in endpoints:
+    # Django / DRF — routes come from urls.py, handlers resolved by name
+    for route, handler in parse_endpoints(index):
         ep = analyze_handler(handler, index)
         ep.route = route
         results.append(ep)
-    return results
+    # Flask / FastAPI — routes come from decorators on the handler function itself
+    try:
+        import frameworks
+        results.extend(frameworks.discover(index))
+    except Exception:
+        try:
+            from extractor import frameworks   # packaged import path
+            results.extend(frameworks.discover(index))
+        except Exception:
+            pass                                # decorator frameworks are additive; never break Django
+    # dedupe by (route, handler, file) — a repo could mix frameworks
+    seen, out = set(), []
+    for ep in results:
+        key = (ep.route, ep.handler, ep.file)
+        if key not in seen:
+            seen.add(key)
+            out.append(ep)
+    return out
 
 
 def to_dict(ep: Endpoint) -> dict:
