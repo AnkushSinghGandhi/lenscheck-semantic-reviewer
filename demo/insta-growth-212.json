@@ -1,0 +1,929 @@
+{
+  "title": "This PR adds 5 endpoints, 2 new DB writes to `AdImpression`, `User`, 2 new external calls to `httpx.post -> https://moderate.visionapi.io/scan`, `requests.post -> https://ads.growthly.io/track` and 4 new PII signals and removes 1 endpoint.",
+  "base": "main",
+  "head": "#212 add discovery, ads, billing & growth",
+  "shortstat": "3 files changed, 63 insertions(+), 8 deletions(-)",
+  "summary": "This PR adds 5 endpoints, 2 new DB writes to `AdImpression`, `User`, 2 new external calls to `httpx.post -> https://moderate.visionapi.io/scan`, `requests.post -> https://ads.growthly.io/track` and 4 new PII signals and removes 1 endpoint.",
+  "invariants": [],
+  "contradictions": [],
+  "dependencies": [],
+  "egress": [],
+  "blast_graph": {
+    "nodes": [
+      {
+        "id": "ep:discover/users",
+        "label": "discover/users",
+        "type": "endpoint",
+        "sev": "\ud83d\udd34",
+        "kind": "NEW ENDPOINT"
+      },
+      {
+        "id": "table:User",
+        "label": "User",
+        "type": "table",
+        "shared": 2
+      },
+      {
+        "id": "ep:account/delete",
+        "label": "account/delete",
+        "type": "endpoint",
+        "sev": "\ud83d\udd34",
+        "kind": "NEW ENDPOINT"
+      },
+      {
+        "id": "ep:posts",
+        "label": "posts",
+        "type": "endpoint",
+        "sev": "\ud83d\udd34",
+        "kind": "CHANGED"
+      },
+      {
+        "id": "table:Post",
+        "label": "Post",
+        "type": "table",
+        "shared": 3
+      },
+      {
+        "id": "ext:https://ads.growthly.io/track",
+        "label": "https://ads.growthly.io/track",
+        "type": "external"
+      },
+      {
+        "id": "ext:https://moderate.visionapi.io/scan",
+        "label": "https://moderate.visionapi.io/scan",
+        "type": "external"
+      },
+      {
+        "id": "async:notify_followers",
+        "label": "notify_followers",
+        "type": "async"
+      },
+      {
+        "id": "ep:stories",
+        "label": "stories",
+        "type": "endpoint",
+        "sev": "\ud83d\udd34",
+        "kind": "CHANGED"
+      },
+      {
+        "id": "table:Story",
+        "label": "Story",
+        "type": "table"
+      },
+      {
+        "id": "ep:ads/click",
+        "label": "ads/click",
+        "type": "endpoint",
+        "sev": "\ud83d\udfe1",
+        "kind": "NEW ENDPOINT"
+      },
+      {
+        "id": "table:AdImpression",
+        "label": "AdImpression",
+        "type": "table"
+      },
+      {
+        "id": "ep:notifications",
+        "label": "notifications",
+        "type": "endpoint",
+        "sev": "\ud83d\udfe1",
+        "kind": "REMOVED ENDPOINT"
+      },
+      {
+        "id": "ep:feed",
+        "label": "feed",
+        "type": "endpoint",
+        "sev": "\ud83d\udfe2",
+        "kind": "CHANGED"
+      },
+      {
+        "id": "ep:trending",
+        "label": "trending",
+        "type": "endpoint",
+        "sev": "\ud83d\udfe2",
+        "kind": "CHANGED"
+      },
+      {
+        "id": "ep:health",
+        "label": "health",
+        "type": "endpoint",
+        "sev": "\ud83d\udfe2",
+        "kind": "NEW ENDPOINT"
+      },
+      {
+        "id": "ep:billing/subscribe",
+        "label": "billing/subscribe",
+        "type": "endpoint",
+        "sev": "\ud83d\udfe2",
+        "kind": "NEW ENDPOINT"
+      }
+    ],
+    "edges": [
+      {
+        "from": "ep:discover/users",
+        "to": "table:User",
+        "kind": "read"
+      },
+      {
+        "from": "ep:account/delete",
+        "to": "table:User",
+        "kind": "read"
+      },
+      {
+        "from": "ep:account/delete",
+        "to": "table:User",
+        "kind": "write"
+      },
+      {
+        "from": "ep:posts",
+        "to": "table:Post",
+        "kind": "write"
+      },
+      {
+        "from": "ep:posts",
+        "to": "ext:https://ads.growthly.io/track",
+        "kind": "calls"
+      },
+      {
+        "from": "ep:posts",
+        "to": "ext:https://moderate.visionapi.io/scan",
+        "kind": "calls"
+      },
+      {
+        "from": "ep:posts",
+        "to": "async:notify_followers",
+        "kind": "dispatches"
+      },
+      {
+        "from": "ep:stories",
+        "to": "table:Story",
+        "kind": "read"
+      },
+      {
+        "from": "ep:ads/click",
+        "to": "table:AdImpression",
+        "kind": "write"
+      },
+      {
+        "from": "ep:feed",
+        "to": "table:Post",
+        "kind": "read"
+      },
+      {
+        "from": "ep:trending",
+        "to": "table:Post",
+        "kind": "read"
+      }
+    ],
+    "endpoints": 10,
+    "shared": 2
+  },
+  "changed_lines": {},
+  "changes": [
+    {
+      "sev": "\ud83d\udd34",
+      "kind": "NEW ENDPOINT",
+      "route": "discover/users",
+      "why": "new endpoint exposes a PII path with open/unspecified auth",
+      "detail": "auth: open (AllowAny)",
+      "auth": "open (AllowAny)",
+      "flow": "discover/users \u2192 DiscoverUsersView \u2192 {User:read}",
+      "blast": 2,
+      "ops": {
+        "read": true,
+        "write": false,
+        "external": false,
+        "async": false,
+        "cache": false
+      },
+      "investigate": [
+        {
+          "where": "feed/views.py:97",
+          "fact": "handler DiscoverUsersView (GET)"
+        },
+        {
+          "where": "feed/views.py:102",
+          "fact": "email"
+        },
+        {
+          "where": "feed/views.py:102",
+          "fact": "phone"
+        },
+        {
+          "where": "feed/views.py:100",
+          "fact": "reads User"
+        }
+      ],
+      "unknowns": [
+        "pii ?: email, phone, reads User \u2014 PII source read; downstream egress not proven"
+      ],
+      "graph": {
+        "nodes": [
+          {
+            "id": "route:discover/users",
+            "label": "discover/users",
+            "type": "route",
+            "state": "added"
+          },
+          {
+            "id": "handler:DiscoverUsersView",
+            "label": "DiscoverUsersView",
+            "type": "handler",
+            "loc": "feed/views.py:97",
+            "auth": "open (AllowAny)",
+            "pii": true,
+            "state": "added"
+          },
+          {
+            "id": "table:User",
+            "label": "User",
+            "type": "table",
+            "loc": "feed/views.py:100",
+            "kind": "read",
+            "state": "added"
+          }
+        ],
+        "edges": [
+          {
+            "from": "route:discover/users",
+            "to": "handler:DiscoverUsersView",
+            "kind": "GET",
+            "state": "added"
+          },
+          {
+            "from": "handler:DiscoverUsersView",
+            "to": "table:User",
+            "kind": "read",
+            "state": "added"
+          }
+        ]
+      }
+    },
+    {
+      "sev": "\ud83d\udd34",
+      "kind": "NEW ENDPOINT",
+      "route": "account/delete",
+      "why": "new endpoint exposes a PII path with open/unspecified auth",
+      "detail": "auth: open (AllowAny)",
+      "auth": "open (AllowAny)",
+      "flow": "account/delete \u2192 AccountDeleteView \u2192 {User:read, User:write}",
+      "blast": 2,
+      "ops": {
+        "read": true,
+        "write": true,
+        "external": false,
+        "async": false,
+        "cache": false
+      },
+      "investigate": [
+        {
+          "where": "feed/views.py:125",
+          "fact": "handler AccountDeleteView (POST)"
+        },
+        {
+          "where": "feed/views.py:128",
+          "fact": "reads User"
+        },
+        {
+          "where": "feed/views.py:128",
+          "fact": "User:write"
+        }
+      ],
+      "unknowns": [
+        "pii ?: reads User \u2014 PII source read; downstream egress not proven"
+      ],
+      "graph": {
+        "nodes": [
+          {
+            "id": "route:account/delete",
+            "label": "account/delete",
+            "type": "route",
+            "state": "added"
+          },
+          {
+            "id": "handler:AccountDeleteView",
+            "label": "AccountDeleteView",
+            "type": "handler",
+            "loc": "feed/views.py:125",
+            "auth": "open (AllowAny)",
+            "pii": true,
+            "state": "added"
+          },
+          {
+            "id": "table:User",
+            "label": "User",
+            "type": "table",
+            "loc": "feed/views.py:128",
+            "kind": "write",
+            "state": "added"
+          }
+        ],
+        "edges": [
+          {
+            "from": "route:account/delete",
+            "to": "handler:AccountDeleteView",
+            "kind": "POST",
+            "state": "added"
+          },
+          {
+            "from": "handler:AccountDeleteView",
+            "to": "table:User",
+            "kind": "write",
+            "state": "added"
+          },
+          {
+            "from": "handler:AccountDeleteView",
+            "to": "table:User",
+            "kind": "read",
+            "state": "added"
+          }
+        ]
+      }
+    },
+    {
+      "sev": "\ud83d\udd34",
+      "kind": "CHANGED",
+      "route": "posts",
+      "why": "new external call: httpx.post -> https://moderate.visionapi.io/scan, requests.post -> https://ads.growthly.io/track; new async dispatch: celery.delay -> notify_followers; new PII signal: email, email \u2192 requests.post",
+      "detail": "",
+      "auth": "permission_classes=['IsAuthenticated']",
+      "flow": "posts \u2192 PostCreateView \u2192 {Post:write} \u2192 ext: httpx.post -> https://moderate.visionapi.io/scan, requests.post -> https://ads.growthly.io/track",
+      "blast": 2,
+      "ops": {
+        "read": false,
+        "write": true,
+        "external": true,
+        "async": true,
+        "cache": false
+      },
+      "investigate": [
+        {
+          "where": "feed/views.py:30",
+          "fact": "handler PostCreateView (POST)"
+        },
+        {
+          "where": "feed/views.py:34",
+          "fact": "httpx.post -> https://moderate.visionapi.io/scan"
+        },
+        {
+          "where": "feed/views.py:39",
+          "fact": "requests.post -> https://ads.growthly.io/track"
+        },
+        {
+          "where": "feed/views.py:38",
+          "fact": "celery.delay -> notify_followers"
+        },
+        {
+          "where": "feed/views.py:39",
+          "fact": "email \u2192 requests.post"
+        },
+        {
+          "where": "feed/views.py:39",
+          "fact": "email"
+        }
+      ],
+      "unknowns": [
+        "async \u26a0: celery.delay -> notify_followers \u2014 pattern-detected; not in a Celery-only view"
+      ],
+      "graph": {
+        "nodes": [
+          {
+            "id": "route:posts",
+            "label": "posts",
+            "type": "route",
+            "state": "same"
+          },
+          {
+            "id": "handler:PostCreateView",
+            "label": "PostCreateView",
+            "type": "handler",
+            "loc": "feed/views.py:30",
+            "auth": "permission_classes=['IsAuthenticated']",
+            "pii": true,
+            "state": "same"
+          },
+          {
+            "id": "table:Post",
+            "label": "Post",
+            "type": "table",
+            "loc": "feed/views.py:35",
+            "kind": "write",
+            "state": "same"
+          },
+          {
+            "id": "external:https://moderate.visionapi.io/scan",
+            "label": "https://moderate.visionapi.io/scan",
+            "type": "external",
+            "loc": "feed/views.py:34",
+            "kind": "calls",
+            "state": "added"
+          },
+          {
+            "id": "external:https://ads.growthly.io/track",
+            "label": "https://ads.growthly.io/track",
+            "type": "external",
+            "loc": "feed/views.py:39",
+            "kind": "calls",
+            "state": "added"
+          },
+          {
+            "id": "async:notify_followers",
+            "label": "notify_followers",
+            "type": "async",
+            "loc": "feed/views.py:38",
+            "kind": "dispatches",
+            "state": "added"
+          }
+        ],
+        "edges": [
+          {
+            "from": "route:posts",
+            "to": "handler:PostCreateView",
+            "kind": "POST",
+            "state": "same"
+          },
+          {
+            "from": "handler:PostCreateView",
+            "to": "table:Post",
+            "kind": "write",
+            "state": "same"
+          },
+          {
+            "from": "handler:PostCreateView",
+            "to": "external:https://moderate.visionapi.io/scan",
+            "kind": "calls",
+            "state": "added"
+          },
+          {
+            "from": "handler:PostCreateView",
+            "to": "external:https://ads.growthly.io/track",
+            "kind": "calls",
+            "state": "added"
+          },
+          {
+            "from": "handler:PostCreateView",
+            "to": "async:notify_followers",
+            "kind": "dispatches",
+            "state": "added"
+          }
+        ]
+      }
+    },
+    {
+      "sev": "\ud83d\udd34",
+      "kind": "CHANGED",
+      "route": "stories",
+      "why": "auth WEAKENED: permission_classes=['IsAuthenticated'] \u2192 open (AllowAny)",
+      "detail": "",
+      "auth": "open (AllowAny)",
+      "flow": "stories \u2192 StoriesView \u2192 {Story:read}",
+      "blast": 0,
+      "ops": {
+        "read": true,
+        "write": false,
+        "external": false,
+        "async": false,
+        "cache": false
+      },
+      "investigate": [
+        {
+          "where": "feed/views.py:74",
+          "fact": "handler StoriesView (GET)"
+        }
+      ],
+      "unknowns": [],
+      "graph": {
+        "nodes": [
+          {
+            "id": "route:stories",
+            "label": "stories",
+            "type": "route",
+            "state": "same"
+          },
+          {
+            "id": "handler:StoriesView",
+            "label": "StoriesView",
+            "type": "handler",
+            "loc": "feed/views.py:74",
+            "auth": "open (AllowAny)",
+            "pii": false,
+            "state": "same"
+          },
+          {
+            "id": "table:Story",
+            "label": "Story",
+            "type": "table",
+            "loc": "feed/views.py:78",
+            "kind": "read",
+            "state": "same"
+          }
+        ],
+        "edges": [
+          {
+            "from": "route:stories",
+            "to": "handler:StoriesView",
+            "kind": "GET",
+            "state": "same"
+          },
+          {
+            "from": "handler:StoriesView",
+            "to": "table:Story",
+            "kind": "read",
+            "state": "same"
+          }
+        ]
+      }
+    },
+    {
+      "sev": "\ud83d\udfe1",
+      "kind": "NEW ENDPOINT",
+      "route": "ads/click",
+      "why": "new endpoint with a DB write / external call",
+      "detail": "auth: permission_classes=['IsAuthenticated']",
+      "auth": "permission_classes=['IsAuthenticated']",
+      "flow": "ads/click \u2192 AdClickView \u2192 {AdImpression:write}",
+      "blast": 0,
+      "ops": {
+        "read": false,
+        "write": true,
+        "external": false,
+        "async": false,
+        "cache": false
+      },
+      "investigate": [
+        {
+          "where": "feed/views.py:105",
+          "fact": "handler AdClickView (POST)"
+        },
+        {
+          "where": "feed/views.py:108",
+          "fact": "AdImpression:write"
+        }
+      ],
+      "unknowns": [],
+      "graph": {
+        "nodes": [
+          {
+            "id": "route:ads/click",
+            "label": "ads/click",
+            "type": "route",
+            "state": "added"
+          },
+          {
+            "id": "handler:AdClickView",
+            "label": "AdClickView",
+            "type": "handler",
+            "loc": "feed/views.py:105",
+            "auth": "permission_classes=['IsAuthenticated']",
+            "pii": false,
+            "state": "added"
+          },
+          {
+            "id": "table:AdImpression",
+            "label": "AdImpression",
+            "type": "table",
+            "loc": "feed/views.py:108",
+            "kind": "write",
+            "state": "added"
+          }
+        ],
+        "edges": [
+          {
+            "from": "route:ads/click",
+            "to": "handler:AdClickView",
+            "kind": "POST",
+            "state": "added"
+          },
+          {
+            "from": "handler:AdClickView",
+            "to": "table:AdImpression",
+            "kind": "write",
+            "state": "added"
+          }
+        ]
+      }
+    },
+    {
+      "sev": "\ud83d\udfe1",
+      "kind": "REMOVED ENDPOINT",
+      "route": "notifications",
+      "why": "endpoint no longer routed",
+      "detail": "was: NotificationsView",
+      "auth": "permission_classes=['IsAuthenticated']",
+      "flow": "notifications \u2192 NotificationsView",
+      "blast": 0,
+      "ops": {
+        "read": false,
+        "write": false,
+        "external": false,
+        "async": false,
+        "cache": false
+      },
+      "investigate": [
+        {
+          "where": "feed/views.py:81",
+          "fact": "handler NotificationsView (GET)"
+        }
+      ],
+      "unknowns": [],
+      "graph": {
+        "nodes": [
+          {
+            "id": "route:notifications",
+            "label": "notifications",
+            "type": "route",
+            "state": "removed"
+          },
+          {
+            "id": "handler:NotificationsView",
+            "label": "NotificationsView",
+            "type": "handler",
+            "loc": "feed/views.py:81",
+            "auth": "permission_classes=['IsAuthenticated']",
+            "pii": false,
+            "state": "removed"
+          }
+        ],
+        "edges": [
+          {
+            "from": "route:notifications",
+            "to": "handler:NotificationsView",
+            "kind": "GET",
+            "state": "removed"
+          }
+        ]
+      }
+    },
+    {
+      "sev": "\ud83d\udfe2",
+      "kind": "CHANGED",
+      "route": "feed",
+      "why": "new cache invalidation/write: read get {?}, write set {?}",
+      "detail": "",
+      "auth": "permission_classes=['IsAuthenticated']",
+      "flow": "feed \u2192 FeedView \u2192 {Post:read} \u2192 cache: read get {?}, write set {?}",
+      "blast": 2,
+      "ops": {
+        "read": true,
+        "write": false,
+        "external": false,
+        "async": false,
+        "cache": true
+      },
+      "investigate": [
+        {
+          "where": "feed/views.py:17",
+          "fact": "handler FeedView (GET)"
+        },
+        {
+          "where": "feed/views.py:21",
+          "fact": "read get {?}"
+        },
+        {
+          "where": "feed/views.py:26",
+          "fact": "write set {?}"
+        }
+      ],
+      "unknowns": [
+        "cache \u26a0: read get {?}, write set {?}"
+      ],
+      "graph": {
+        "nodes": [
+          {
+            "id": "route:feed",
+            "label": "feed",
+            "type": "route",
+            "state": "same"
+          },
+          {
+            "id": "handler:FeedView",
+            "label": "FeedView",
+            "type": "handler",
+            "loc": "feed/views.py:17",
+            "auth": "permission_classes=['IsAuthenticated']",
+            "pii": false,
+            "state": "same"
+          },
+          {
+            "id": "table:Post",
+            "label": "Post",
+            "type": "table",
+            "loc": "feed/views.py:24",
+            "kind": "read",
+            "state": "same"
+          },
+          {
+            "id": "cache:get {?}",
+            "label": "get {?}",
+            "type": "cache",
+            "loc": "feed/views.py:21",
+            "kind": "read",
+            "state": "added"
+          },
+          {
+            "id": "cache:set {?}",
+            "label": "set {?}",
+            "type": "cache",
+            "loc": "feed/views.py:26",
+            "kind": "write",
+            "state": "added"
+          }
+        ],
+        "edges": [
+          {
+            "from": "route:feed",
+            "to": "handler:FeedView",
+            "kind": "GET",
+            "state": "same"
+          },
+          {
+            "from": "handler:FeedView",
+            "to": "table:Post",
+            "kind": "read",
+            "state": "same"
+          },
+          {
+            "from": "handler:FeedView",
+            "to": "cache:get {?}",
+            "kind": "read",
+            "state": "added"
+          },
+          {
+            "from": "handler:FeedView",
+            "to": "cache:set {?}",
+            "kind": "write",
+            "state": "added"
+          }
+        ]
+      }
+    },
+    {
+      "sev": "\ud83d\udfe2",
+      "kind": "CHANGED",
+      "route": "trending",
+      "why": "auth changed: open (AllowAny) \u2192 permission_classes=['IsAuthenticated']",
+      "detail": "",
+      "auth": "permission_classes=['IsAuthenticated']",
+      "flow": "trending \u2192 TrendingView \u2192 {Post:read}",
+      "blast": 2,
+      "ops": {
+        "read": true,
+        "write": false,
+        "external": false,
+        "async": false,
+        "cache": false
+      },
+      "investigate": [
+        {
+          "where": "feed/views.py:90",
+          "fact": "handler TrendingView (GET)"
+        }
+      ],
+      "unknowns": [],
+      "graph": {
+        "nodes": [
+          {
+            "id": "route:trending",
+            "label": "trending",
+            "type": "route",
+            "state": "same"
+          },
+          {
+            "id": "handler:TrendingView",
+            "label": "TrendingView",
+            "type": "handler",
+            "loc": "feed/views.py:90",
+            "auth": "permission_classes=['IsAuthenticated']",
+            "pii": false,
+            "state": "same"
+          },
+          {
+            "id": "table:Post",
+            "label": "Post",
+            "type": "table",
+            "loc": "feed/views.py:94",
+            "kind": "read",
+            "state": "same"
+          }
+        ],
+        "edges": [
+          {
+            "from": "route:trending",
+            "to": "handler:TrendingView",
+            "kind": "GET",
+            "state": "same"
+          },
+          {
+            "from": "handler:TrendingView",
+            "to": "table:Post",
+            "kind": "read",
+            "state": "same"
+          }
+        ]
+      }
+    },
+    {
+      "sev": "\ud83d\udfe2",
+      "kind": "NEW ENDPOINT",
+      "route": "health",
+      "why": "new read-only endpoint",
+      "detail": "auth: open (AllowAny)",
+      "auth": "open (AllowAny)",
+      "flow": "health \u2192 HealthView",
+      "blast": 0,
+      "ops": {
+        "read": false,
+        "write": false,
+        "external": false,
+        "async": false,
+        "cache": false
+      },
+      "investigate": [
+        {
+          "where": "feed/views.py:112",
+          "fact": "handler HealthView (GET)"
+        }
+      ],
+      "unknowns": [],
+      "graph": {
+        "nodes": [
+          {
+            "id": "route:health",
+            "label": "health",
+            "type": "route",
+            "state": "added"
+          },
+          {
+            "id": "handler:HealthView",
+            "label": "HealthView",
+            "type": "handler",
+            "loc": "feed/views.py:112",
+            "auth": "open (AllowAny)",
+            "pii": false,
+            "state": "added"
+          }
+        ],
+        "edges": [
+          {
+            "from": "route:health",
+            "to": "handler:HealthView",
+            "kind": "GET",
+            "state": "added"
+          }
+        ]
+      }
+    },
+    {
+      "sev": "\ud83d\udfe2",
+      "kind": "NEW ENDPOINT",
+      "route": "billing/subscribe",
+      "why": "new read-only endpoint",
+      "detail": "auth: permission_classes=['IsAuthenticated']",
+      "auth": "permission_classes=['IsAuthenticated']",
+      "flow": "billing/subscribe \u2192 SubscribeView",
+      "blast": 0,
+      "ops": {
+        "read": false,
+        "write": false,
+        "external": false,
+        "async": false,
+        "cache": false
+      },
+      "investigate": [
+        {
+          "where": "feed/views.py:118",
+          "fact": "handler SubscribeView (POST)"
+        }
+      ],
+      "unknowns": [],
+      "graph": {
+        "nodes": [
+          {
+            "id": "route:billing/subscribe",
+            "label": "billing/subscribe",
+            "type": "route",
+            "state": "added"
+          },
+          {
+            "id": "handler:SubscribeView",
+            "label": "SubscribeView",
+            "type": "handler",
+            "loc": "feed/views.py:118",
+            "auth": "permission_classes=['IsAuthenticated']",
+            "pii": false,
+            "state": "added"
+          }
+        ],
+        "edges": [
+          {
+            "from": "route:billing/subscribe",
+            "to": "handler:SubscribeView",
+            "kind": "POST",
+            "state": "added"
+          }
+        ]
+      }
+    }
+  ],
+  "markdown": "# Semantic Review \u2014 This PR adds 5 endpoints, 2 new DB writes to `AdImpression`, `User`, 2 new external calls to `httpx.post -> https://moderate.visionapi.io/scan`, `requests.post -> https://ads.growthly.io/track` and 4 new PII signals and removes 1 endpoint.\n\n`HEAD^` \u2192 `HEAD`  |  line diff: \n\n**10 semantic changes** \u2014 \ud83d\udd34 4  \ud83d\udfe1 2  \ud83d\udfe2 4\n\n| | change | route |\n|--|--------|-------|\n| \ud83d\udd34 | NEW ENDPOINT | `discover/users` |\n| \ud83d\udd34 | NEW ENDPOINT | `account/delete` |\n| \ud83d\udd34 | CHANGED | `posts` |\n| \ud83d\udd34 | CHANGED | `stories` |\n| \ud83d\udfe1 | NEW ENDPOINT | `ads/click` |\n| \ud83d\udfe1 | REMOVED ENDPOINT | `notifications` |\n| \ud83d\udfe2 | CHANGED | `feed` |\n| \ud83d\udfe2 | CHANGED | `trending` |\n| \ud83d\udfe2 | NEW ENDPOINT | `health` |\n| \ud83d\udfe2 | NEW ENDPOINT | `billing/subscribe` |\n\n### \ud83d\udd00 Flow (before \u2192 after)\n\n```mermaid\nsequenceDiagram\n    participant Client\n    participant NDiscoverUsersView as DiscoverUsersView\n    Client->>NDiscoverUsersView: \ud83c\udd95 GET discover/users\n    NDiscoverUsersView->>Database: read User\n    participant NAccountDeleteView as AccountDeleteView\n    Client->>NAccountDeleteView: \ud83c\udd95 POST account/delete\n    NAccountDeleteView->>Database: read User\n    NAccountDeleteView->>Database: write User\n    participant NPostCreateView as PostCreateView\n    Client->>NPostCreateView: \ud83d\udd34 POST posts\n    NPostCreateView->>Database: write Post\n    NPostCreateView->>External: https://moderate.visionapi.io/scan\n    NPostCreateView->>External: https://ads.growthly.io/track\n    participant NStoriesView as StoriesView\n    Client->>NStoriesView: \ud83d\udd34 GET stories\n    NStoriesView->>Database: read Story\n    participant NAdClickView as AdClickView\n    Client->>NAdClickView: \ud83c\udd95 POST ads/click\n    NAdClickView->>Database: write AdImpression\n    participant NNotificationsView as NotificationsView\n    Client->>NNotificationsView: \u2796 GET notifications\n    participant NFeedView as FeedView\n    Client->>NFeedView: \ud83d\udfe2 GET feed\n    NFeedView->>Database: read Post\n    participant NTrendingView as TrendingView\n    Client->>NTrendingView: \ud83d\udfe2 GET trending\n    NTrendingView->>Database: read Post\n    participant NHealthView as HealthView\n    Client->>NHealthView: \ud83c\udd95 GET health\n    participant NSubscribeView as SubscribeView\n    Client->>NSubscribeView: \ud83c\udd95 POST billing/subscribe\n```\n\n---\n\n### \ud83d\udd34 NEW ENDPOINT \u2014 `discover/users`\n- **why:** new endpoint exposes a PII path with open/unspecified auth\n- auth: open (AllowAny)\n- **flow:** discover/users \u2192 DiscoverUsersView \u2192 {User:read}\n- **blast radius:** shares data/services with 2 other endpoint(s)\n- **investigate:**\n    - `feed/views.py:97` \u2014 handler `DiscoverUsersView` (GET)\n    - `feed/views.py:102` \u2014 email\n    - `feed/views.py:102` \u2014 phone\n    - `feed/views.py:100` \u2014 reads User\n- **unknown:** pii ?: email, phone, reads User \u2014 PII source read; downstream egress not proven\n\n### \ud83d\udd34 NEW ENDPOINT \u2014 `account/delete`\n- **why:** new endpoint exposes a PII path with open/unspecified auth\n- auth: open (AllowAny)\n- **flow:** account/delete \u2192 AccountDeleteView \u2192 {User:read, User:write}\n- **blast radius:** shares data/services with 2 other endpoint(s)\n- **investigate:**\n    - `feed/views.py:125` \u2014 handler `AccountDeleteView` (POST)\n    - `feed/views.py:128` \u2014 reads User\n    - `feed/views.py:128` \u2014 User:write\n- **unknown:** pii ?: reads User \u2014 PII source read; downstream egress not proven\n\n### \ud83d\udd34 CHANGED \u2014 `posts`\n- **why:** new external call: httpx.post -> https://moderate.visionapi.io/scan, requests.post -> https://ads.growthly.io/track; new async dispatch: celery.delay -> notify_followers; new PII signal: email, email \u2192 requests.post\n- **flow:** posts \u2192 PostCreateView \u2192 {Post:write} \u2192 ext: httpx.post -> https://moderate.visionapi.io/scan, requests.post -> https://ads.growthly.io/track\n- **blast radius:** shares data/services with 2 other endpoint(s)\n- **investigate:**\n    - `feed/views.py:30` \u2014 handler `PostCreateView` (POST)\n    - `feed/views.py:34` \u2014 httpx.post -> https://moderate.visionapi.io/scan\n    - `feed/views.py:39` \u2014 requests.post -> https://ads.growthly.io/track\n    - `feed/views.py:38` \u2014 celery.delay -> notify_followers\n    - `feed/views.py:39` \u2014 email \u2192 requests.post\n    - `feed/views.py:39` \u2014 email\n- **unknown:** async \u26a0: celery.delay -> notify_followers \u2014 pattern-detected; not in a Celery-only view\n\n### \ud83d\udd34 CHANGED \u2014 `stories`\n- **why:** auth WEAKENED: permission_classes=['IsAuthenticated'] \u2192 open (AllowAny)\n- **flow:** stories \u2192 StoriesView \u2192 {Story:read}\n- **investigate:**\n    - `feed/views.py:74` \u2014 handler `StoriesView` (GET)\n\n### \ud83d\udfe1 NEW ENDPOINT \u2014 `ads/click`\n- **why:** new endpoint with a DB write / external call\n- auth: permission_classes=['IsAuthenticated']\n- **flow:** ads/click \u2192 AdClickView \u2192 {AdImpression:write}\n- **investigate:**\n    - `feed/views.py:105` \u2014 handler `AdClickView` (POST)\n    - `feed/views.py:108` \u2014 AdImpression:write\n\n### \ud83d\udfe1 REMOVED ENDPOINT \u2014 `notifications`\n- **why:** endpoint no longer routed\n- was: NotificationsView\n- **flow:** notifications \u2192 NotificationsView\n- **investigate:**\n    - `feed/views.py:81` \u2014 handler `NotificationsView` (GET)\n\n### \ud83d\udfe2 CHANGED \u2014 `feed`\n- **why:** new cache invalidation/write: read get {?}, write set {?}\n- **flow:** feed \u2192 FeedView \u2192 {Post:read} \u2192 cache: read get {?}, write set {?}\n- **blast radius:** shares data/services with 2 other endpoint(s)\n- **investigate:**\n    - `feed/views.py:17` \u2014 handler `FeedView` (GET)\n    - `feed/views.py:21` \u2014 read get {?}\n    - `feed/views.py:26` \u2014 write set {?}\n- **unknown:** cache \u26a0: read get {?}, write set {?}\n\n### \ud83d\udfe2 CHANGED \u2014 `trending`\n- **why:** auth changed: open (AllowAny) \u2192 permission_classes=['IsAuthenticated']\n- **flow:** trending \u2192 TrendingView \u2192 {Post:read}\n- **blast radius:** shares data/services with 2 other endpoint(s)\n- **investigate:**\n    - `feed/views.py:90` \u2014 handler `TrendingView` (GET)\n\n### \ud83d\udfe2 NEW ENDPOINT \u2014 `health`\n- **why:** new read-only endpoint\n- auth: open (AllowAny)\n- **flow:** health \u2192 HealthView\n- **investigate:**\n    - `feed/views.py:112` \u2014 handler `HealthView` (GET)\n\n### \ud83d\udfe2 NEW ENDPOINT \u2014 `billing/subscribe`\n- **why:** new read-only endpoint\n- auth: permission_classes=['IsAuthenticated']\n- **flow:** billing/subscribe \u2192 SubscribeView\n- **investigate:**\n    - `feed/views.py:118` \u2014 handler `SubscribeView` (POST)\n\n---\n_Blindspot: this diff sees routing, auth, db tables (+ their SQL table), external calls, async, cache, and PII at the endpoint lens; it does not see logic inside a function, ordering, concurrency, or off-by-one._"
+}
