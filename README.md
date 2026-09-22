@@ -145,6 +145,18 @@ action.yml     # the published GitHub Action
 
 The ranking / diff / invariant engine runs in the **Lenscheck cloud**, not in this package.
 
+## Contributing & community
+
+**Found a bug or a rough edge? [Open an issue](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer/issues/new).**
+No agreement needed — bug reports and feedback are the most useful thing you can do in the beta, and
+everyone who files a valid one gets their **name + GitHub on the Wall of Fame** at
+[lenscheck.dev](https://lenscheck.dev). Merged fixes earn **stickers**.
+
+Code contributions to this Elastic-2.0 repo require a one-time [CLA](CLA.md) (a bot walks you through
+it on your first PR). Prefer no CLA? The MIT sibling
+[`lenscheck-contract`](https://github.com/AnkushSinghGandhi/lenscheck-contract) takes PRs freely. See
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## License
 
 [Elastic License 2.0](LICENSE) — free to use, self-host internally, and modify; you may **not**
