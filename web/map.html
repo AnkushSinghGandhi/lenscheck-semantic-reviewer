@@ -1,80 +1,123 @@
 <!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Lenscheck — Backend Map</title>
+<title>Lenscheck — Repo Map</title>
 <style>
-:root{--bg:#0d1117;--panel:#161b22;--line:#30363d;--fg:#e6edf3;--mut:#8b949e;--link:#58a6ff;
---crit:#f85149;--high:#db8f2b;--purple:#a855f7;--low:#3fb950}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);
-font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif}
-a{color:var(--link)}
-header{position:sticky;top:0;background:#0d1117ee;backdrop-filter:blur(6px);border-bottom:1px solid var(--line);
-padding:12px 20px;z-index:5}
-.top{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-.brand{font-weight:800;font-size:16px;display:flex;align-items:center;gap:8px}
-.brand .tri{color:var(--low)}
-input,select{background:var(--panel);border:1px solid var(--line);color:var(--fg);border-radius:7px;
-padding:7px 10px;font:13px ui-monospace,Menlo,monospace}
-#repo{min-width:340px}#q{min-width:220px}
-button{background:var(--panel);border:1px solid var(--line);color:var(--fg);border-radius:7px;
-padding:7px 12px;cursor:pointer;font-size:13px}button:hover{border-color:var(--link)}
-.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+:root{--bg:#0a0d13;--panel:#141922;--sidebar:#0d1119;--card:#11151d;--line:#232a36;
+  --fg:#e6edf3;--mut:#8b93a3;--faint:#5b6473;
+  --crit:#f85149;--high:#db8f2b;--med:#d0b429;--low:#3fb950;--link:#7aa2ff;--purple:#bc8cff;
+  --acc:#7c74f0;--acc2:#6d64f5;}
+*{box-sizing:border-box}html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif}
+a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline}
+code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+
+/* ---- top nav (matches the review UI) ---- */
+nav.top{display:flex;align-items:center;gap:14px;height:54px;padding:0 18px;
+  border-bottom:1px solid var(--line);background:var(--sidebar);position:sticky;top:0;z-index:10}
+nav.top .brand{display:flex;align-items:center;gap:9px;font-weight:800;letter-spacing:.3px}
+nav.top .brand .lens{font-size:17px}
+nav.top .brand .g{background:linear-gradient(90deg,var(--acc),var(--purple),var(--link));
+  -webkit-background-clip:text;background-clip:text;color:transparent}
+nav.top small{color:var(--mut);font-weight:400;font-size:12.5px}
+nav.top .spacer{flex:1}
+nav.top .navbtn{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:8px;
+  border:1px solid var(--line);background:var(--panel);color:var(--fg);font-size:12.5px;font-weight:600;
+  cursor:pointer;transition:border-color .15s,transform .15s}
+nav.top .navbtn:hover{transform:translateY(-1px);border-color:var(--acc);text-decoration:none}
+nav.top .navbtn.on{border-color:var(--acc);color:#fff;background:rgba(124,116,240,.14)}
+nav.top .sep{width:1px;height:26px;background:var(--line)}
+nav.top .who{font-size:12px;color:var(--mut)}nav.top .who a{font-weight:600}
+nav.top .domain{display:inline-flex;align-items:center;gap:6px;font-family:ui-monospace,Menlo,monospace;
+  font-size:11.5px;color:var(--mut);padding:5px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
+nav.top .domain:hover{border-color:var(--acc);color:var(--fg);text-decoration:none}
+nav.top .domain b{color:var(--acc);font-weight:700}
+
+/* ---- controls bar ---- */
+.controls{position:sticky;top:54px;background:#0a0d13ee;backdrop-filter:blur(6px);
+  border-bottom:1px solid var(--line);padding:12px 20px;z-index:5}
+.crow{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+input,select,button{background:var(--panel);border:1px solid var(--line);color:var(--fg);border-radius:8px;
+  padding:8px 11px;font-size:13px;font-family:inherit}
+input.mono{font-family:ui-monospace,Menlo,monospace;font-size:12.5px}
+#repo{min-width:320px}#q{min-width:240px;flex:1;max-width:420px}
+button{cursor:pointer}button:hover{border-color:var(--acc)}
+button.primary{font-weight:700;color:#fff;background:linear-gradient(180deg,var(--acc),var(--acc2));border-color:transparent}
+button.primary:hover{filter:brightness(1.08)}
+.seed{margin-left:auto;font-size:12.5px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
 .chip{border:1px solid var(--line);border-radius:2em;padding:3px 11px;font-size:12.5px;cursor:pointer;color:var(--mut)}
-.chip.on{background:var(--panel);color:var(--fg);border-color:var(--link)}
-main{padding:18px 20px;max-width:1200px;margin:auto}
-.sub{color:var(--mut);margin:0 0 16px}
-.app{border:1px solid var(--line);border-radius:10px;margin-bottom:12px;overflow:hidden;background:var(--panel)}
-.app>summary{list-style:none;cursor:pointer;padding:12px 16px;display:flex;align-items:center;gap:12px;
-font-weight:700;font-size:15px}
+.chip:hover{border-color:var(--acc)}
+.chip.on{background:rgba(124,116,240,.16);color:#fff;border-color:var(--acc)}
+
+/* ---- main ---- */
+main{padding:20px;max-width:1200px;margin:auto}
+.sub{color:var(--mut);margin:0 0 16px}.sub b{color:var(--fg)}
+.posture{display:flex;gap:9px;flex-wrap:wrap;margin:-4px 0 20px}
+.posture .p{cursor:pointer;border:1px solid var(--line);border-radius:2em;padding:4px 12px;font-size:12.5px;color:var(--mut);
+  background:var(--card)}
+.posture .p:hover{border-color:var(--acc)}
+.posture .p.on{background:rgba(124,116,240,.16);border-color:var(--acc);color:#fff}
+.posture .p b{color:var(--fg)}.posture .p.risk b{color:#f0b9b4}
+
+.app{border:1px solid var(--line);border-radius:12px;margin-bottom:12px;overflow:hidden;background:var(--card)}
+.app>summary{list-style:none;cursor:pointer;padding:13px 16px;display:flex;align-items:center;gap:12px;
+  font-weight:700;font-size:15px}
 .app>summary::-webkit-details-marker{display:none}
-.app>summary::before{content:"▸";color:var(--mut);font-size:10px}
+.app>summary::before{content:"▸";color:var(--faint);font-size:10px}
 .app[open]>summary::before{content:"▾"}
+.app[open]>summary{border-bottom:1px solid var(--line)}
+.app>summary:hover{background:rgba(255,255,255,.02)}
 .count{color:var(--mut);font-weight:500;font-size:13px;margin-left:auto;font-family:ui-monospace,monospace}
-.eps{border-top:1px solid var(--line)}
-.ep{border-bottom:1px solid #21262d}
-.ep>summary{list-style:none;cursor:pointer;padding:9px 16px 9px 20px;display:flex;align-items:center;gap:10px}
+.eps{}
+.ep{border-bottom:1px solid var(--line)}.ep:last-child{border-bottom:0}
+.ep>summary{list-style:none;cursor:pointer;padding:10px 16px 10px 20px;display:flex;align-items:center;gap:10px}
 .ep>summary::-webkit-details-marker{display:none}
-.ep:hover{background:#1c2230}
+.ep:hover{background:var(--panel)}
 .route{font-family:ui-monospace,Menlo,monospace;font-size:13px}
 .auth{color:var(--mut);font-size:12px;font-family:ui-monospace,monospace}
 .tags{margin-left:auto;display:flex;gap:5px;flex-wrap:wrap}
-.tag{font-size:11px;color:var(--mut);border:1px solid var(--line);border-radius:3px;padding:0 6px}
-.tag.open,.tag.write,.tag.pii{color:#f0b9b4;border-color:#5a2a28}
-.detail{padding:6px 16px 16px 20px;background:#0f141b}
+.tag{font-size:11px;color:var(--mut);border:1px solid var(--line);border-radius:4px;padding:0 6px}
+.tag.open,.tag.write,.tag.pii{color:#f0b9b4;border-color:#5a2a28;background:rgba(248,81,73,.06)}
+.detail{padding:8px 16px 16px 20px;background:var(--panel)}
 .why{color:#f0b9b4;font-size:13px;margin:4px 0 10px}
-.wtl{margin-top:10px}.wtl h4{margin:0 0 6px;color:var(--mut);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+.wtl{margin-top:10px}.wtl h4{margin:0 0 6px;color:var(--faint);font-size:11px;text-transform:uppercase;letter-spacing:.06em;font-weight:700}
 .fact{font-family:ui-monospace,monospace;font-size:12.5px;padding:2px 0;color:#c9d1d9}
 .fact .loc{color:var(--link);margin-right:10px}
 svg text{fill:var(--fg);font:12px ui-monospace,Menlo,monospace}
 svg .elabel{fill:#adbac7;font-size:10.5px}
-.empty{color:var(--mut);padding:40px;text-align:center}
-.posture{display:flex;gap:9px;flex-wrap:wrap;margin:-6px 0 18px}
-.posture .p{cursor:pointer;border:1px solid var(--line);border-radius:2em;padding:3px 11px;font-size:12.5px;color:var(--mut)}
-.posture .p:hover{border-color:var(--link)}.posture .p.on{background:var(--panel);border-color:var(--link);color:var(--fg)}
-.posture .p b{color:var(--fg)}.posture .p.risk b{color:#f0b9b4}
+.empty{color:var(--mut);padding:48px;text-align:center}
 body.static .live-only{display:none}
 .fact.clk{cursor:pointer}.fact.clk:hover .loc{text-decoration:underline}
-.snippet{margin-top:10px;border:1px solid var(--line);border-radius:7px;overflow:hidden;background:#0d1117}
+.snippet{margin-top:10px;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--bg)}
 .snhead{padding:6px 10px;font:12px ui-monospace,monospace;color:var(--mut);border-bottom:1px solid var(--line)}
 .sncode{font:12.5px/1.55 ui-monospace,Menlo,monospace;padding:6px 0}
 .snline{display:flex;padding:0 10px;white-space:pre}
-.snline.hl{background:#2d2a12}
-.snn{color:#586069;width:42px;text-align:right;margin-right:14px;user-select:none;flex:none}
+.snline.hl{background:rgba(210,180,41,.16)}
+.snn{color:var(--faint);width:42px;text-align:right;margin-right:14px;user-select:none;flex:none}
 .snc{color:#c9d1d9}
 </style></head>
 <body>
-<header>
-  <div class="top">
-    <span class="brand"><span class="tri">◆</span> Lenscheck <span style="color:var(--mut);font-weight:500">· backend map</span></span>
-    <input id="repo" class="live-only" placeholder="/path/to/repo or github url">
-    <button class="live-only" onclick="load()"><b>Map</b></button>
-    <input id="q" placeholder="search route, handler, table, host…" oninput="render()">
-    <a href="#" onclick="downloadSeed();return false" style="margin-left:auto;font-size:13px"
+<nav class="top">
+  <div class="brand"><span class="lens">🔬</span> <span class="g">Lenscheck</span></div>
+  <small>repo map</small>
+  <div class="spacer"></div>
+  <a class="navbtn live-only" href="/" title="Review a PR, branch, or commit">☑ Review</a>
+  <button class="navbtn on" title="Every endpoint in the repo, grouped by app">🗺 Repo Map</button>
+  <a class="domain" href="https://api.lenscheck.dev" target="_blank" rel="noopener" title="Lenscheck — visit the site">🌐 <b>api.lenscheck.dev</b></a>
+  <div class="sep"></div>
+  <span class="who">by <a href="https://warriorwhocodes.com" target="_blank" rel="noopener">Ankush Singh Gandhi</a></span>
+</nav>
+<div class="controls">
+  <div class="crow">
+    <input id="repo" class="mono live-only" placeholder="/path/to/repo or github url">
+    <button class="primary live-only" onclick="load()">Map</button>
+    <input id="q" class="mono" placeholder="🔎 search route, handler, table, host…" oninput="render()">
+    <a class="seed" href="#" onclick="downloadSeed();return false"
        title="A starter invariant corpus from this repo's current state — confirm the real rules, then enforce on every PR">⚖ invariant seed</a>
-    <a href="/app.html" style="font-size:13px">← review a PR</a>
   </div>
   <div class="chips" id="chips"></div>
-</header>
+</div>
 <main>
   <div class="sub" id="summary">Enter a repo and hit <b>Map</b> — every endpoint, grouped by app, worst-first.</div>
   <div class="posture" id="posture"></div>
