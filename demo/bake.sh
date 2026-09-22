@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Pre-bake the demo reviews once, so the hosted UI can serve them instantly (no cloning, no key).
-# Needs LENSCHECK_API_KEY set (same as the CLI) and `gh` authed to resolve PR refs.
+# Bake a review of a real PR into a demo JSON. Needs LENSCHECK_API_KEY + `gh`.
 #
-# IMPORTANT: `--pr N` is only a *label* — it does NOT set the diff. A review compares --base..--head,
-# so we resolve the PR's real base/head SHAs and clone with history. And pick PRs that actually change
-# the *semantic surface* (a new route, an auth change, a new external call, a model/field change) —
-# a big line-count refactor with no surface change reviews as "no changes".
+# `--pr N` is only a *label* — a review compares --base..--head, so we resolve the PR's real base/head
+# SHAs and clone with history. And only PRs that change the SEMANTIC SURFACE the extractor can see
+# (routes, DRF permission_classes / Flask decorators / FastAPI Depends, external calls, models) produce
+# findings — a big refactor, or auth via a framework the extractor doesn't recognize, reviews as empty.
+#
+# The shipped hero demo (demo/shop-scary-128.json) is purpose-built and always lights up; rebuild it
+# from demo/src/shop-demo.bundle (see demo/src/README.md).
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -19,14 +21,9 @@ bake() {                      # bake <owner/repo> <pr-number> <demo-id>
   git -C "$dir" fetch --quiet origin "$head" || true
   lenscheck review "$dir" --base "$base" --head "$head" --pr "$pr" --json "$id.json"
   rm -rf "$dir"
+  python3 -c "import json;print('  findings:',len(json.load(open('$id.json'))['changes']))"
 }
 
-# Edit these to your chosen PRs (see manifest.json). Keep only reviews that surface real findings.
-bake Netflix/dispatch          6205  dispatch-6205
-bake django-oscar/django-oscar 4570  oscar-4570
-bake netbox-community/netbox   23207 netbox-23207
-
-echo
-echo "baked $(ls -1 *-*.json 2>/dev/null | wc -l) reviews. serve them with:"
-echo "    lenscheck serve --demo-dir demo               # pre-baked only (no key needed)"
-echo "    lenscheck serve --demo-dir demo --public      # + let visitors paste a public repo"
+# Add famous PRs here once you find ones that produce findings, then list them in manifest.json.
+# (Tip: pick PRs that add a route / change permission_classes / add a requests/stripe/httpx call.)
+# bake owner/repo <pr> <id>
