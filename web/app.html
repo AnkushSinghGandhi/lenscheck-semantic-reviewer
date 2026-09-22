@@ -234,6 +234,24 @@
   .demochip .dc-play{color:var(--acc);font-size:13px;flex:none}
   .demochip .dc-title{font-weight:600;font-size:13.5px}
   .demochip .dc-repo{color:var(--mut);font-size:12px;margin-left:auto;font-family:ui-monospace,Menlo,monospace}
+
+  /* demo header: intro caption + "N lines → M findings" stat + raw-diff toggle */
+  #demohdr{padding:14px 20px 0}
+  .demo-cap{display:flex;align-items:center;gap:10px;background:rgba(124,116,240,.10);border:1px solid rgba(124,116,240,.32);
+    border-radius:10px;padding:10px 14px;font-size:13.5px;color:var(--fg);margin-bottom:12px}
+  .demo-cap b{color:var(--acc)}
+  .demo-cap .x{margin-left:auto;cursor:pointer;color:var(--mut);border:0;background:none;font-size:15px;line-height:1}
+  .demo-stat{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12.5px;color:var(--mut)}
+  .demo-stat .chip{border:1px solid var(--line);border-radius:20px;padding:3px 11px;background:var(--panel)}
+  .demo-stat .chip b{color:var(--fg)}.demo-stat .chip.crit b{color:var(--crit)}
+  .demo-stat .rawbtn{border:1px solid var(--line);border-radius:20px;padding:3px 11px;background:var(--panel);color:var(--fg);cursor:pointer}
+  .demo-stat .rawbtn:hover{border-color:var(--acc)}
+  #rawdiff{margin:0 20px 8px;max-height:300px;overflow:auto;background:var(--bg);border:1px solid var(--line);border-radius:10px;
+    padding:12px 14px;font:12px/1.5 ui-monospace,Menlo,monospace;color:var(--mut);white-space:pre}
+  #rawdiff .a{color:var(--low)}#rawdiff .r{color:var(--crit)}#rawdiff .h{color:var(--link)}
+  .linkbtn{border:1px solid var(--line);background:var(--panel);color:var(--mut);border-radius:7px;padding:3px 9px;
+    font-size:11.5px;cursor:pointer;margin-left:8px;vertical-align:middle}
+  .linkbtn:hover{border-color:var(--acc);color:var(--fg)}
 </style>
 </head>
 <body>
@@ -363,6 +381,8 @@
     </div>
 
     <div id="results">
+      <div id="demohdr"></div>
+      <pre id="rawdiff" hidden></pre>
       <div class="summary" id="summary"></div>
       <div id="invwrap"></div>
       <div id="invpanel"></div>
@@ -473,11 +493,12 @@ async function setupDemoBar(){
     document.getElementById("demoBar").hidden=false;
   }catch(_){/* not a demo deploy */}
 }
+let LC_DEMO=null;               // id of the demo being shown (for per-finding deep-links)
 async function loadDemo(id){
   status("Loading example…");
   try{
     const d=await getJSON(apiURL("api/review",{demo:id}));
-    DATA=d; sel=null; render();
+    LC_DEMO=id; DATA=d; sel=null; capDismissed=false; render();
     status("Example: "+id+" — this is a pre-baked review");
   }catch(e){status("Error: "+e);}
 }
@@ -715,12 +736,53 @@ function render(){
                :`🧨 Blast radius — ${bg.endpoints} changed endpoints, none shared`,
       drawBlast(bg)):"";
   document.getElementById("invwrap").innerHTML = contraHtml + depsHtml + invHtml + blastHtml + egressHtml;
+  renderDemoHeader(counts);
   renderFilters();
   document.getElementById("detail").innerHTML='<div class="empty">Select a change.</div>';
-  // deep links: ?open=N selects a change (shows its flow graph), ?invariants=1 opens the panel
+  // deep links: ?f=<route> or ?open=N selects a change; ?invariants=1 opens the panel
   const P=new URLSearchParams(location.search);
-  if(P.has("open")){const i=+P.get("open")||0, c=DATA.changes[i]; if(c){sel=i;renderList();renderDetail(c);}}
+  let jump=null;
+  if(P.has("f")){ const i=DATA.changes.findIndex(c=>c.route===P.get("f")); if(i>=0) jump=i; }
+  else if(P.has("open")) jump=+P.get("open")||0;
+  if(jump!==null && DATA.changes[jump]){ sel=jump; renderList(); renderDetail(DATA.changes[jump]); }
   if(P.get("invariants")==="1") loadInvariants();
+}
+
+// the demo-only header: a first-timer caption, the "N lines → M findings" stat, and a raw-diff toggle
+let capDismissed=false;
+function renderDemoHeader(counts){
+  const h=document.getElementById("demohdr");
+  if(!DATA.raw_diff){ h.innerHTML=""; document.getElementById("rawdiff").hidden=true; return; }
+  const crit=counts["🔴"]||0, n=DATA.changes.length, lines=DATA.diff_lines||0;
+  const cap = capDismissed ? "" :
+    `<div class="demo-cap">👀 <span>A real <b>${lines}-line</b> PR. Lenscheck found the <b>${crit}</b> `+
+    `that could leak data or drop auth — <b>click one</b> below.</span>`+
+    `<button class="x" onclick="this.parentNode.remove();capDismissed=true">✕</button></div>`;
+  h.innerHTML = cap +
+    `<div class="demo-stat">`+
+    `<span class="chip"><b>${lines}</b> lines changed</span>`+
+    `<span class="chip"><b>${n}</b> things that matter</span>`+
+    (crit?`<span class="chip crit"><b>${crit}</b> critical</span>`:"")+
+    `<button class="rawbtn" id="rawtoggle" onclick="toggleRawDiff()">📄 Show the raw diff</button>`+
+    `</div>`;
+}
+function toggleRawDiff(){
+  const pre=document.getElementById("rawdiff"), btn=document.getElementById("rawtoggle");
+  if(pre.hidden){
+    pre.innerHTML=(DATA.raw_diff||"").split("\n").map(l=>{
+      const e=esc(l);
+      if(l.startsWith("+")&&!l.startsWith("+++")) return `<span class="a">${e}</span>`;
+      if(l.startsWith("-")&&!l.startsWith("---")) return `<span class="r">${e}</span>`;
+      if(l.startsWith("@@")||l.startsWith("diff ")) return `<span class="h">${e}</span>`;
+      return e;
+    }).join("\n");
+    pre.hidden=false; btn.textContent="📄 Hide the raw diff";
+  }else{ pre.hidden=true; btn.textContent="📄 Show the raw diff"; }
+}
+function copyFindingLink(route){
+  const u=location.origin+location.pathname+"?demo="+encodeURIComponent(LC_DEMO||"")+"&f="+encodeURIComponent(route);
+  navigator.clipboard.writeText(u);
+  status("Link copied: "+u);
 }
 
 function selectChange(i){   // jump from a shared-egress route chip to that endpoint's flow graph
@@ -789,7 +851,8 @@ function renderList(){
 
 function renderDetail(c){
   const d=document.getElementById("detail");
-  d.innerHTML=`<h2>${c.sev} ${esc(c.route)}<span class="badge">${c.kind}</span><span class="badge">${esc(c.auth)}</span></h2>`+
+  const linkBtn = LC_DEMO ? `<button class="linkbtn" onclick="copyFindingLink('${esc(c.route)}')" title="Copy a link to this finding">🔗 link</button>` : "";
+  d.innerHTML=`<h2>${c.sev} ${esc(c.route)}<span class="badge">${c.kind}</span><span class="badge">${esc(c.auth)}</span>${linkBtn}</h2>`+
     `<div>${esc(c.why)}</div>`+(c.detail?`<div style="color:var(--mut)">${esc(c.detail)}</div>`:"")+
     `<div class="tabs"><button id="tg" class="${tab==='graph'?'on':''}" onclick="setTab('graph')">Flow graph</button>`+
     `<button id="tw" class="${tab==='where'?'on':''}" onclick="setTab('where')">Where to look</button></div>`+
