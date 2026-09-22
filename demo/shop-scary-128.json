@@ -1,0 +1,335 @@
+{
+  "title": "This PR adds 1 endpoint, 1 new external call to `requests.post -> https://api.tracksy.io/collect` and 3 new PII signals.",
+  "base": "main",
+  "head": "#128 add customer analytics + export",
+  "shortstat": "3 files changed, +22 \u22125",
+  "summary": "This PR adds 1 endpoint, 1 new external call to `requests.post -> https://api.tracksy.io/collect` and 3 new PII signals.",
+  "invariants": [],
+  "contradictions": [],
+  "dependencies": [],
+  "egress": [],
+  "blast_graph": {
+    "nodes": [
+      {
+        "id": "ep:orders",
+        "label": "orders",
+        "type": "endpoint",
+        "sev": "\ud83d\udd34",
+        "kind": "CHANGED"
+      },
+      {
+        "id": "table:Customer",
+        "label": "Customer",
+        "type": "table",
+        "shared": 2
+      },
+      {
+        "id": "table:Order",
+        "label": "Order",
+        "type": "table",
+        "shared": 2
+      },
+      {
+        "id": "ext:https://api.tracksy.io/collect",
+        "label": "https://api.tracksy.io/collect",
+        "type": "external"
+      },
+      {
+        "id": "ep:customers/export",
+        "label": "customers/export",
+        "type": "endpoint",
+        "sev": "\ud83d\udd34",
+        "kind": "NEW ENDPOINT"
+      },
+      {
+        "id": "ep:orders/list",
+        "label": "orders/list",
+        "type": "endpoint",
+        "sev": "\ud83d\udd34",
+        "kind": "CHANGED"
+      }
+    ],
+    "edges": [
+      {
+        "from": "ep:orders",
+        "to": "table:Customer",
+        "kind": "read"
+      },
+      {
+        "from": "ep:orders",
+        "to": "table:Order",
+        "kind": "write"
+      },
+      {
+        "from": "ep:orders",
+        "to": "ext:https://api.tracksy.io/collect",
+        "kind": "calls"
+      },
+      {
+        "from": "ep:customers/export",
+        "to": "table:Customer",
+        "kind": "read"
+      },
+      {
+        "from": "ep:orders/list",
+        "to": "table:Order",
+        "kind": "read"
+      }
+    ],
+    "endpoints": 3,
+    "shared": 2
+  },
+  "changed_lines": {},
+  "changes": [
+    {
+      "sev": "\ud83d\udd34",
+      "kind": "CHANGED",
+      "route": "orders",
+      "why": "new DB access: Customer:read; new external call: requests.post -> https://api.tracksy.io/collect; new PII signal: email, email \u2192 requests.post, reads Customer",
+      "detail": "",
+      "auth": "permission_classes=['IsAuthenticated']",
+      "flow": "orders \u2192 OrderCreateView \u2192 {Customer:read, Order:write} \u2192 ext: requests.post -> https://api.tracksy.io/collect",
+      "blast": 2,
+      "ops": {
+        "read": true,
+        "write": true,
+        "external": true,
+        "async": false,
+        "cache": false
+      },
+      "investigate": [
+        {
+          "where": "shop/views.py:12",
+          "fact": "handler OrderCreateView (POST)"
+        },
+        {
+          "where": "shop/views.py:19",
+          "fact": "Customer:read"
+        },
+        {
+          "where": "shop/views.py:24",
+          "fact": "requests.post -> https://api.tracksy.io/collect"
+        },
+        {
+          "where": "shop/views.py:24",
+          "fact": "email \u2192 requests.post"
+        },
+        {
+          "where": "shop/views.py:24",
+          "fact": "email"
+        },
+        {
+          "where": "shop/views.py:19",
+          "fact": "reads Customer"
+        }
+      ],
+      "unknowns": [],
+      "graph": {
+        "nodes": [
+          {
+            "id": "route:orders",
+            "label": "orders",
+            "type": "route",
+            "state": "same"
+          },
+          {
+            "id": "handler:OrderCreateView",
+            "label": "OrderCreateView",
+            "type": "handler",
+            "loc": "shop/views.py:12",
+            "auth": "permission_classes=['IsAuthenticated']",
+            "pii": true,
+            "state": "same"
+          },
+          {
+            "id": "table:Customer",
+            "label": "Customer",
+            "type": "table",
+            "loc": "shop/views.py:19",
+            "kind": "read",
+            "state": "added"
+          },
+          {
+            "id": "table:Order",
+            "label": "Order",
+            "type": "table",
+            "loc": "shop/views.py:20",
+            "kind": "write",
+            "state": "same"
+          },
+          {
+            "id": "external:https://api.tracksy.io/collect",
+            "label": "https://api.tracksy.io/collect",
+            "type": "external",
+            "loc": "shop/views.py:24",
+            "kind": "calls",
+            "state": "added"
+          }
+        ],
+        "edges": [
+          {
+            "from": "route:orders",
+            "to": "handler:OrderCreateView",
+            "kind": "POST",
+            "state": "same"
+          },
+          {
+            "from": "handler:OrderCreateView",
+            "to": "table:Customer",
+            "kind": "read",
+            "state": "added"
+          },
+          {
+            "from": "handler:OrderCreateView",
+            "to": "table:Order",
+            "kind": "write",
+            "state": "same"
+          },
+          {
+            "from": "handler:OrderCreateView",
+            "to": "external:https://api.tracksy.io/collect",
+            "kind": "calls",
+            "state": "added"
+          }
+        ]
+      }
+    },
+    {
+      "sev": "\ud83d\udd34",
+      "kind": "NEW ENDPOINT",
+      "route": "customers/export",
+      "why": "new endpoint exposes a PII path with open/unspecified auth",
+      "detail": "auth: open (AllowAny)",
+      "auth": "open (AllowAny)",
+      "flow": "customers/export \u2192 CustomerExportView \u2192 {Customer:read}",
+      "blast": 1,
+      "ops": {
+        "read": true,
+        "write": false,
+        "external": false,
+        "async": false,
+        "cache": false
+      },
+      "investigate": [
+        {
+          "where": "shop/views.py:37",
+          "fact": "handler CustomerExportView (GET)"
+        },
+        {
+          "where": "shop/views.py:42",
+          "fact": "reads Customer"
+        }
+      ],
+      "unknowns": [
+        "pii ?: reads Customer \u2014 PII source read; downstream egress not proven"
+      ],
+      "graph": {
+        "nodes": [
+          {
+            "id": "route:customers/export",
+            "label": "customers/export",
+            "type": "route",
+            "state": "added"
+          },
+          {
+            "id": "handler:CustomerExportView",
+            "label": "CustomerExportView",
+            "type": "handler",
+            "loc": "shop/views.py:37",
+            "auth": "open (AllowAny)",
+            "pii": true,
+            "state": "added"
+          },
+          {
+            "id": "table:Customer",
+            "label": "Customer",
+            "type": "table",
+            "loc": "shop/views.py:42",
+            "kind": "read",
+            "state": "added"
+          }
+        ],
+        "edges": [
+          {
+            "from": "route:customers/export",
+            "to": "handler:CustomerExportView",
+            "kind": "GET",
+            "state": "added"
+          },
+          {
+            "from": "handler:CustomerExportView",
+            "to": "table:Customer",
+            "kind": "read",
+            "state": "added"
+          }
+        ]
+      }
+    },
+    {
+      "sev": "\ud83d\udd34",
+      "kind": "CHANGED",
+      "route": "orders/list",
+      "why": "auth WEAKENED: permission_classes=['IsAuthenticated'] \u2192 open (AllowAny)",
+      "detail": "",
+      "auth": "open (AllowAny)",
+      "flow": "orders/list \u2192 OrderListView \u2192 {Order:read}",
+      "blast": 1,
+      "ops": {
+        "read": true,
+        "write": false,
+        "external": false,
+        "async": false,
+        "cache": false
+      },
+      "investigate": [
+        {
+          "where": "shop/views.py:28",
+          "fact": "handler OrderListView (GET)"
+        }
+      ],
+      "unknowns": [],
+      "graph": {
+        "nodes": [
+          {
+            "id": "route:orders/list",
+            "label": "orders/list",
+            "type": "route",
+            "state": "same"
+          },
+          {
+            "id": "handler:OrderListView",
+            "label": "OrderListView",
+            "type": "handler",
+            "loc": "shop/views.py:28",
+            "auth": "open (AllowAny)",
+            "pii": false,
+            "state": "same"
+          },
+          {
+            "id": "table:Order",
+            "label": "Order",
+            "type": "table",
+            "loc": "shop/views.py:33",
+            "kind": "read",
+            "state": "same"
+          }
+        ],
+        "edges": [
+          {
+            "from": "route:orders/list",
+            "to": "handler:OrderListView",
+            "kind": "GET",
+            "state": "same"
+          },
+          {
+            "from": "handler:OrderListView",
+            "to": "table:Order",
+            "kind": "read",
+            "state": "same"
+          }
+        ]
+      }
+    }
+  ],
+  "markdown": "# Semantic Review \u2014 This PR adds 1 endpoint, 1 new external call to `requests.post -> https://api.tracksy.io/collect` and 3 new PII signals.\n\n`HEAD^` \u2192 `HEAD`  |  line diff: \n\n**3 semantic changes** \u2014 \ud83d\udd34 3\n\n| | change | route |\n|--|--------|-------|\n| \ud83d\udd34 | CHANGED | `orders` |\n| \ud83d\udd34 | NEW ENDPOINT | `customers/export` |\n| \ud83d\udd34 | CHANGED | `orders/list` |\n\n### \ud83d\udd00 Flow (before \u2192 after)\n\n```mermaid\nsequenceDiagram\n    participant Client\n    participant NOrderCreateView as OrderCreateView\n    Client->>NOrderCreateView: \ud83d\udd34 POST orders\n    NOrderCreateView->>Database: read Customer\n    NOrderCreateView->>Database: write Order\n    NOrderCreateView->>External: https://api.tracksy.io/collect\n    participant NCustomerExportView as CustomerExportView\n    Client->>NCustomerExportView: \ud83c\udd95 GET customers/export\n    NCustomerExportView->>Database: read Customer\n    participant NOrderListView as OrderListView\n    Client->>NOrderListView: \ud83d\udd34 GET orders/list\n    NOrderListView->>Database: read Order\n```\n\n---\n\n### \ud83d\udd34 CHANGED \u2014 `orders`\n- **why:** new DB access: Customer:read; new external call: requests.post -> https://api.tracksy.io/collect; new PII signal: email, email \u2192 requests.post, reads Customer\n- **flow:** orders \u2192 OrderCreateView \u2192 {Customer:read, Order:write} \u2192 ext: requests.post -> https://api.tracksy.io/collect\n- **blast radius:** shares data/services with 2 other endpoint(s)\n- **investigate:**\n    - `shop/views.py:12` \u2014 handler `OrderCreateView` (POST)\n    - `shop/views.py:19` \u2014 Customer:read\n    - `shop/views.py:24` \u2014 requests.post -> https://api.tracksy.io/collect\n    - `shop/views.py:24` \u2014 email \u2192 requests.post\n    - `shop/views.py:24` \u2014 email\n    - `shop/views.py:19` \u2014 reads Customer\n\n### \ud83d\udd34 NEW ENDPOINT \u2014 `customers/export`\n- **why:** new endpoint exposes a PII path with open/unspecified auth\n- auth: open (AllowAny)\n- **flow:** customers/export \u2192 CustomerExportView \u2192 {Customer:read}\n- **blast radius:** shares data/services with 1 other endpoint(s)\n- **investigate:**\n    - `shop/views.py:37` \u2014 handler `CustomerExportView` (GET)\n    - `shop/views.py:42` \u2014 reads Customer\n- **unknown:** pii ?: reads Customer \u2014 PII source read; downstream egress not proven\n\n### \ud83d\udd34 CHANGED \u2014 `orders/list`\n- **why:** auth WEAKENED: permission_classes=['IsAuthenticated'] \u2192 open (AllowAny)\n- **flow:** orders/list \u2192 OrderListView \u2192 {Order:read}\n- **blast radius:** shares data/services with 1 other endpoint(s)\n- **investigate:**\n    - `shop/views.py:28` \u2014 handler `OrderListView` (GET)\n\n---\n_Blindspot: this diff sees routing, auth, db tables (+ their SQL table), external calls, async, cache, and PII at the endpoint lens; it does not see logic inside a function, ordering, concurrency, or off-by-one._"
+}
