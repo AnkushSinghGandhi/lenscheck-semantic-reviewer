@@ -5,26 +5,140 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Lenscheck — Semantic PR Review</title>
 <style>
-  :root{--bg:#0d1117;--panel:#161b22;--line:#30363d;--fg:#e6edf3;--mut:#8b949e;
-    --crit:#f85149;--high:#db8f2b;--med:#d0b429;--low:#3fb950;--link:#58a6ff;--purple:#bc8cff;}
+  :root{--bg:#0a0d13;--panel:#141922;--sidebar:#0d1119;--card:#11151d;--line:#232a36;
+    --fg:#e6edf3;--mut:#8b93a3;--faint:#5b6473;
+    --crit:#f85149;--high:#db8f2b;--med:#d0b429;--low:#3fb950;--link:#7aa2ff;--purple:#bc8cff;
+    --acc:#7c74f0;--acc2:#6d64f5;}
   *{box-sizing:border-box}
+  html,body{height:100%}
   body{margin:0;background:var(--bg);color:var(--fg);
     font:14px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
   code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-  header{padding:12px 18px;border-bottom:1px solid var(--line)}
-  header h1{margin:0 0 8px;font-size:16px}
-  .bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline}
+
+  /* ---- top nav ---- */
+  nav.top{display:flex;align-items:center;gap:14px;height:54px;padding:0 18px;
+    border-bottom:1px solid var(--line);background:var(--sidebar)}
+  nav.top .brand{display:flex;align-items:center;gap:9px;font-weight:800;letter-spacing:.3px}
+  nav.top .brand .lens{font-size:17px}
+  nav.top .brand .g{background:linear-gradient(90deg,var(--acc),var(--purple),var(--link));
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  nav.top .brand small{color:var(--mut);font-weight:400;font-size:12.5px}
+  nav.top .spacer{flex:1}
+  nav.top .navbtn{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:8px;
+    border:1px solid var(--line);background:var(--panel);color:var(--fg);font-size:12.5px;font-weight:600;
+    cursor:pointer;transition:border-color .15s,transform .15s}
+  nav.top .navbtn:hover{transform:translateY(-1px);border-color:var(--acc)}
+  nav.top .navbtn.on{border-color:var(--acc);color:#fff;background:rgba(124,116,240,.14)}
+  nav.top .sep{width:1px;height:26px;background:var(--line)}
+  nav.top .who{font-size:12px;color:var(--mut)}
+  nav.top .who a{font-weight:600}
+  nav.top .domain{display:inline-flex;align-items:center;gap:6px;font-family:ui-monospace,Menlo,monospace;
+    font-size:11.5px;color:var(--mut);padding:5px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
+  nav.top .domain:hover{border-color:var(--acc);color:var(--fg);text-decoration:none}
+  nav.top .domain b{color:var(--acc);font-weight:700}
+
+  /* ---- shell ---- */
+  .shell{display:flex;height:calc(100vh - 54px)}
+  aside.side{width:296px;flex:none;border-right:1px solid var(--line);background:var(--sidebar);
+    overflow:auto;padding:16px 16px 24px}
+  .side-lbl{display:block;font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;
+    color:var(--faint);font-weight:700;margin:0 0 7px}
+  .side-sec{margin-top:20px}
+  .side-sec:first-child{margin-top:0}
+
   input,select,button{background:var(--panel);color:var(--fg);border:1px solid var(--line);
-    border-radius:6px;padding:6px 9px;font-size:13px}
-  input{min-width:340px}select{min-width:340px;max-width:520px}
-  button{cursor:pointer}button:hover{border-color:var(--link)}
-  .sub{color:var(--mut);font-size:12.5px;margin-top:8px}
-  .summary{font-size:14px;font-weight:600;line-height:1.4;margin-top:8px}
+    border-radius:8px;padding:8px 10px;font-size:13px;font-family:inherit}
+  input,select{width:100%}
+  button{cursor:pointer}button:hover{border-color:var(--acc)}
+  .repo-row{display:flex;gap:8px}
+  .repo-row input{flex:1;min-width:0}
+  .repo-row .load{flex:none;width:auto;padding:8px 16px;font-weight:700;color:#fff;
+    background:linear-gradient(180deg,var(--acc),var(--acc2));border-color:transparent}
+  .repo-row .load:hover{filter:brightness(1.08)}
+
+  /* segmented run-mode control */
+  .seg{display:flex;background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:3px;gap:2px}
+  .seg button{flex:1;border:0;background:none;border-radius:6px;padding:6px 4px;color:var(--mut);font-weight:600}
+  .seg button:hover{color:var(--fg)}
+  .seg button.on{background:rgba(124,116,240,.18);color:#fff;box-shadow:inset 0 0 0 1px rgba(124,116,240,.35)}
+
+  .mode-block.hidden{display:none}
+  .mode-block .side-lbl{margin-top:14px}
+  select.ref{margin-bottom:2px}
+
+  .run{width:100%;margin-top:16px;padding:11px;font-size:14px;font-weight:700;color:#fff;
+    background:linear-gradient(180deg,var(--acc),var(--acc2));border-color:transparent;border-radius:9px;
+    display:flex;align-items:center;justify-content:center;gap:8px}
+  .run:hover{filter:brightness(1.08);border-color:transparent}
+  .side-links{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap}
+  .side-links button{flex:1;padding:6px 8px;font-size:12px;background:none;border:1px solid var(--line);color:var(--mut)}
+  .side-links button:hover{color:var(--fg)}
+  #status{font-size:11.5px;color:var(--mut);margin-top:12px;line-height:1.45}
+
+  /* severity tally in sidebar */
+  #tally{display:flex;flex-wrap:wrap;gap:10px;font-size:12.5px}
+  #tally .none{color:var(--faint);display:flex;align-items:center;gap:7px}
+  #tally .none::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--faint)}
+
+  /* filters live in the sidebar */
+  #filters{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  #filters button{width:auto;border-radius:14px;padding:3px 10px;font-size:12px}
+  #filters button.off{opacity:.4}
+  #filters .fsep{width:100%;height:0}
+  #filters .fsearch{width:100%;border-radius:8px;padding:5px 10px;font-size:12px;margin-bottom:4px}
+  #filters .flbl{width:100%;color:var(--faint);font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-top:4px}
+
+  /* ---- main content ---- */
+  main.content{flex:1;min-width:0;overflow:auto;position:relative}
+
+  /* welcome / empty state */
+  #welcome{max-width:760px;margin:0 auto;padding:44px 28px 60px;text-align:center}
+  #welcome .mark{width:64px;height:64px;margin:0 auto 20px;border-radius:16px;display:flex;
+    align-items:center;justify-content:center;font-size:30px;
+    background:rgba(124,116,240,.12);border:1px solid rgba(124,116,240,.3)}
+  #welcome h2{font-size:26px;margin:0 0 12px;font-weight:800}
+  #welcome .lede{color:var(--mut);font-size:14.5px;margin:0 auto 30px;max-width:560px}
+  #welcome .lede b{color:var(--fg);font-weight:600}
+  .cardz{max-width:560px;margin:0 auto;text-align:left}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin-bottom:16px}
+  .card h3{margin:0 0 14px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);font-weight:700}
+  .steps{display:flex;flex-direction:column;gap:14px}
+  .step{display:flex;gap:13px;align-items:flex-start}
+  .step .n{flex:none;width:26px;height:26px;border-radius:8px;display:flex;align-items:center;justify-content:center;
+    font-size:12px;font-weight:700;color:var(--acc);background:rgba(124,116,240,.14);border:1px solid rgba(124,116,240,.3)}
+  .step .b{font-weight:600}
+  .step .d{color:var(--mut);font-size:12.5px}
+  .edges{display:grid;grid-template-columns:1fr 1fr;gap:11px 24px}
+  .edge{display:flex;align-items:center;gap:10px;font-size:13px}
+  .edge .e{font-family:ui-monospace,Menlo,monospace;font-size:11px;font-weight:700;color:var(--acc);flex:none;width:16px}
+  #welcome .legend2{display:flex;gap:22px;justify-content:center;font-size:12.5px;color:var(--mut);margin:26px 0 8px}
+  #welcome .legend2 b{color:var(--fg);font-weight:600}
+  #welcome .tag{color:var(--faint);font-size:12.5px;margin-top:4px}
+  #welcome .byline{margin-top:24px;font-size:12.5px;color:var(--mut)}
+  #welcome .byline .wave{display:inline-block;transform-origin:70% 70%;animation:wave 2.2s ease-in-out infinite}
+  #welcome .links{display:flex;gap:10px;justify-content:center;margin-top:12px;flex-wrap:wrap}
+  #welcome .links a{display:inline-flex;align-items:center;gap:6px;padding:6px 13px;border-radius:16px;
+    border:1px solid var(--line);background:var(--panel);color:var(--fg);font-size:12.5px;font-weight:600;
+    transition:border-color .15s,transform .15s}
+  #welcome .links a:hover{transform:translateY(-1px);text-decoration:none}
+  #welcome .links .star:hover{border-color:var(--med);color:var(--med)}
+  #welcome .links .sponsor:hover{border-color:#db61a2;color:#db61a2}
+  #welcome .links .api:hover{border-color:var(--acc);color:var(--acc)}
+  @keyframes wave{0%,60%,100%{transform:rotate(0)}10%{transform:rotate(14deg)}
+    20%{transform:rotate(-8deg)}30%{transform:rotate(14deg)}40%{transform:rotate(-4deg)}50%{transform:rotate(10deg)}}
+  @media (prefers-reduced-motion:reduce){#welcome .byline .wave{animation:none}}
+
+  /* results layout */
+  #results{display:none;flex-direction:column;height:100%}
+  body.loaded #welcome{display:none}
+  body.loaded #results{display:flex}
+  .summary{font-size:14px;font-weight:600;line-height:1.4;padding:14px 20px 0}
   .summary:empty{display:none}
-  .tally{display:flex;gap:12px;margin-top:6px;font-size:12.5px}
-  .inv{margin:12px 18px 0;border:1px solid var(--crit);border-radius:8px;background:rgba(248,81,73,.08)}
+
+  .inv{margin:12px 20px 0;border:1px solid var(--crit);border-radius:10px;background:rgba(248,81,73,.08)}
   .inv.info{border-color:var(--line);background:rgba(88,166,255,.06)}
-  .inv .det a{color:var(--link);text-decoration:none}.inv .det a:hover{text-decoration:underline}
+  .inv .det a{color:var(--link)}
   .inv summary{margin:0;padding:9px 13px;font-size:13px;font-weight:600;cursor:pointer;list-style:none;display:flex;align-items:center;gap:7px}
   .inv summary::-webkit-details-marker{display:none}
   .inv summary::before{content:"▸";color:var(--mut);font-size:9px;flex:none}
@@ -33,25 +147,46 @@
   .inv summary:hover{background:rgba(255,255,255,.03)}
   .inv .row{padding:8px 13px;border-bottom:1px solid var(--line)}.inv .row:last-child{border-bottom:0}
   .inv .det{color:var(--mut);font-size:12px;margin-top:2px}
-  main{display:grid;grid-template-columns:minmax(320px,400px) 1fr;height:calc(100vh - 132px)}
+
+  /* blast radius — ranked "which resource does this PR concentrate risk in" list */
+  .blast-note{color:var(--mut);font-size:12.5px;padding:11px 14px 6px;line-height:1.55}
+  .blast-note b{color:var(--fg)}
+  .blast-list{padding:2px 14px 12px}
+  .blast-row{border:1px solid var(--line);border-radius:8px;margin-bottom:7px;overflow:hidden;background:var(--bg)}
+  .blast-row>summary{list-style:none;cursor:pointer;padding:8px 12px;display:flex;align-items:center;gap:11px}
+  .blast-row>summary::-webkit-details-marker{display:none}
+  .blast-row>summary:hover{background:rgba(255,255,255,.03)}
+  .blast-ico{flex:none;width:18px;text-align:center}
+  .blast-name{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;flex:none;min-width:150px;max-width:230px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .blast-track{flex:1;height:8px;border-radius:5px;background:var(--panel);overflow:hidden;min-width:50px}
+  .blast-fill{display:block;height:100%;border-radius:5px}
+  .blast-count{flex:none;font-size:12px;color:var(--fg);font-weight:700;min-width:96px;text-align:right}
+  .blast-eps{padding:2px 12px 10px 41px;display:flex;flex-wrap:wrap;gap:6px}
+  .blast-ep{display:inline-flex;align-items:center;gap:6px;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;
+    border:1px solid var(--line);border-radius:6px;padding:3px 8px;cursor:pointer;color:var(--mut)}
+  .blast-ep:hover{border-color:var(--acc);color:var(--fg)}
+  .blast-ep .bdot{width:7px;height:7px;border-radius:50%;flex:none}
+  .blast-more{color:var(--link);cursor:pointer;font-size:12px;padding:6px 2px}
+  .blast-more:hover{text-decoration:underline}
+
+  .split{flex:1;min-height:0;display:grid;grid-template-columns:minmax(300px,380px) 1fr}
   #list{border-right:1px solid var(--line);overflow:auto}
-  .filters{padding:9px 13px;border-bottom:1px solid var(--line);display:flex;gap:6px;flex-wrap:wrap;align-items:center}
-  .filters button{border-radius:14px;padding:3px 10px;font-size:12px}.filters button.off{opacity:.4}
-  .filters .fsep{width:1px;align-self:stretch;background:var(--line);margin:0 3px}
-  .filters .fsearch{border-radius:14px;padding:3px 10px;font-size:12px;width:130px}
-  .filters .flbl{color:var(--mut);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em}
-  .item{padding:10px 13px;border-bottom:1px solid var(--line);cursor:pointer;display:flex;gap:9px}
-  .item:hover{background:var(--panel)}.item.sel{background:#1f2937;border-left:3px solid var(--link);padding-left:10px}
+  #list .lhead{padding:10px 14px;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;
+    color:var(--faint);font-weight:700;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg)}
+  .item{padding:11px 14px;border-bottom:1px solid var(--line);cursor:pointer;display:flex;gap:10px}
+  .item:hover{background:var(--panel)}
+  .item.sel{background:#1a2130;border-left:3px solid var(--acc);padding-left:11px}
   .dot{width:9px;height:9px;border-radius:50%;margin-top:6px;flex:0 0 auto}
   .item .kind{font-size:10px;letter-spacing:.4px;color:var(--mut);text-transform:uppercase}
   .item .route{word-break:break-all}
-  #detail{overflow:auto;padding:16px 20px}
-  #detail .empty{color:var(--mut);text-align:center;margin-top:40px}
+  .empty{color:var(--mut);text-align:center;margin-top:40px;padding:0 20px}
+  #detail{overflow:auto;padding:18px 22px}
   #detail h2{font-size:15px;margin:0 0 4px}
   .badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;border:1px solid var(--line);margin-left:6px}
   .tabs{display:flex;gap:6px;margin:14px 0 10px;border-bottom:1px solid var(--line)}
-  .tabs button{border:0;border-bottom:2px solid transparent;border-radius:0;background:none;padding:6px 4px;color:var(--mut)}
-  .tabs button.on{color:var(--fg);border-bottom-color:var(--link)}
+  .tabs button{width:auto;border:0;border-bottom:2px solid transparent;border-radius:0;background:none;padding:6px 4px;color:var(--mut)}
+  .tabs button.on{color:var(--fg);border-bottom-color:var(--acc)}
   .invest{list-style:none;margin:0;padding:0}
   .invest li{padding:7px 10px;border:1px solid var(--line);border-radius:6px;margin-bottom:6px;
     display:flex;justify-content:space-between;gap:12px}
@@ -78,143 +213,146 @@
   .zoom button{width:26px;height:24px;padding:0;font-size:15px;line-height:1;
     display:flex;align-items:center;justify-content:center}
   .zpct{font-size:11px;color:var(--mut);min-width:36px;text-align:center;user-select:none}
-  /* branding */
-  .logo{font-weight:800;letter-spacing:.5px}
-  .logo .g{background:linear-gradient(90deg,var(--crit),var(--high),var(--low),var(--link),var(--purple));
-    -webkit-background-clip:text;background-clip:text;color:transparent}
-  /* right-corner branding — hidden on the welcome screen, shown once a review is loaded */
-  .brand-corner{display:none;margin-left:auto;align-self:center;align-items:center;gap:9px;
-    font-size:12px;color:var(--mut);font-weight:400}
-  .brand-corner a{text-decoration:none}
-  .brand-corner .who{color:var(--link);font-weight:600}
-  .brand-corner .who:hover{text-decoration:underline}
-  .brand-corner .mini{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:14px;
-    border:1px solid var(--line);background:var(--panel);color:var(--fg);font-weight:600;
-    transition:border-color .15s,color .15s,transform .15s}
-  .brand-corner .mini:hover{transform:translateY(-1px)}
-  .brand-corner .mini.star:hover{border-color:var(--med);color:var(--med)}
-  .brand-corner .mini.sponsor:hover{border-color:#db61a2;color:#db61a2}
-  .brand-corner .bwave{display:inline-block;transform-origin:70% 70%;animation:wave 2.2s ease-in-out infinite}
-  body.loaded .brand-corner{display:flex}
-  /* compact labels + compare controls */
-  .bar .lbl{color:var(--mut);min-width:62px;display:inline-block}
-  .bar .arrow{color:var(--mut)}
-  select.ref{min-width:210px;max-width:300px}
-  /* welcome / empty state */
-  #welcome{display:flex;align-items:center;justify-content:center;min-height:calc(100vh - 175px);padding:24px}
-  #welcome .hero{max-width:640px;text-align:center}
-  #welcome .mark{font-size:64px;line-height:1;margin-bottom:14px;
-    background:linear-gradient(135deg,var(--crit),var(--high),var(--low),var(--link),var(--purple));
-    -webkit-background-clip:text;background-clip:text;color:transparent}
-  #welcome h2{font-size:24px;margin:0 0 10px}#welcome h2 em{font-style:normal;color:var(--link)}
-  #welcome p{color:var(--mut);font-size:14.5px;margin:0 auto 18px;max-width:520px}
-  #welcome .chips{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-bottom:16px}
-  #welcome .chips span{background:var(--panel);border:1px solid var(--line);border-radius:14px;
-    padding:4px 11px;font-size:12.5px}
-  #welcome .sev{display:flex;gap:16px;justify-content:center;flex-wrap:wrap;font-size:12.5px;color:var(--mut)}
-  #welcome .sev b{color:var(--fg);font-weight:600}
-  #welcome .byline{margin-top:22px;font-size:12.5px;color:var(--mut)}
-  #welcome .byline a{color:var(--link);text-decoration:none;font-weight:600}
-  #welcome .byline a:hover{text-decoration:underline}
-  #welcome .links{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:12px}
-  #welcome .links .gh{display:inline-flex;align-items:center;gap:6px;padding:6px 13px;border-radius:16px;
-    border:1px solid var(--line);background:var(--panel);color:var(--fg);font-size:12.5px;
-    font-weight:600;text-decoration:none;transition:border-color .15s,transform .15s}
-  #welcome .links .gh:hover{transform:translateY(-1px)}
-  #welcome .links .star:hover{border-color:var(--med);color:var(--med)}
-  #welcome .links .sponsor:hover{border-color:#db61a2;color:#db61a2}
-  #welcome .byline .wave{display:inline-block;transform-origin:70% 70%;
-    animation:wave 2.2s ease-in-out infinite}
-  @keyframes wave{0%,60%,100%{transform:rotate(0)}10%{transform:rotate(14deg)}
-    20%{transform:rotate(-8deg)}30%{transform:rotate(14deg)}40%{transform:rotate(-4deg)}50%{transform:rotate(10deg)}}
-  @media (prefers-reduced-motion:reduce){#welcome .byline .wave,.brand-corner .bwave{animation:none}}
-  body:not(.loaded) main{display:none}
-  body.loaded #welcome{display:none}
 </style>
 </head>
 <body>
-<header>
-  <h1 style="display:flex;align-items:center;gap:10px">
-    <span class="logo">✦ <span class="g">Lenscheck</span></span>
-    <span style="color:var(--mut);font-weight:400;font-size:12.5px">semantic PR review</span>
-    <div class="brand-corner">
-      <span class="bwave">👋</span> by
-      <a class="who" href="https://warriorwhocodes.com" target="_blank" rel="noopener">Ankush Singh Gandhi</a>
-      <a class="mini star" href="https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer" target="_blank" rel="noopener">★ Star</a>
-      <a class="mini sponsor" href="https://github.com/sponsors/AnkushSinghGandhi" target="_blank" rel="noopener">♥ Sponsor</a>
+<nav class="top">
+  <div class="brand"><span class="lens">🔬</span> <span class="g">Lenscheck</span></div>
+  <small>semantic PR review</small>
+  <div class="spacer"></div>
+  <button class="navbtn on" title="The review workspace">☑ Review</button>
+  <button class="navbtn" onclick="openMap()" title="Every endpoint in the repo, grouped by app">🗺 Repo Map</button>
+  <a class="domain" href="https://api.lenscheck.dev" target="_blank" rel="noopener" title="Lenscheck — visit the site">🌐 <b>api.lenscheck.dev</b></a>
+  <div class="sep"></div>
+  <span class="who">by <a href="https://warriorwhocodes.com" target="_blank" rel="noopener">Ankush Singh Gandhi</a></span>
+</nav>
+
+<div class="shell">
+  <aside class="side">
+    <div class="side-sec">
+      <label class="side-lbl">Repo path</label>
+      <div class="repo-row">
+        <input id="repo" placeholder="/path/to/local/repo">
+        <button class="load" onclick="loadRepo()">Load</button>
+      </div>
     </div>
-  </h1>
-  <div class="bar">
-    <span class="lbl mono">repo</span>
-    <input id="repo" style="min-width:440px" placeholder="/path/to/local/repo">
-    <button onclick="loadRepo()"><b>Load</b></button>
-    <button onclick="reviewDefault()" title="Review the current branch vs. the default branch">Branch vs default</button>
-    <button onclick="loadInvariants()" title="Discover & confirm the rules this codebase follows">⚖ Invariants</button>
-    <button onclick="location.href='/map'+(val('repo').trim()?('?repo='+encodeURIComponent(val('repo').trim())):'')" title="Every endpoint in the repo, grouped by app, worst-first">🗺 Backend map</button>
-  </div>
-  <div class="bar">
-    <span class="lbl mono">branch</span>
-    <select id="curBranch" class="ref"><option value="">— current branch —</option></select>
-    <span class="arrow">vs</span>
-    <span class="lbl mono" id="defBranch" title="the branch this is reviewed against">default</span>
-    <button onclick="reviewCurrentBranch()" title="Review the selected branch against the repo's default branch">Review</button>
-  </div>
-  <div class="bar">
-    <span class="lbl mono">PR</span>
-    <select id="pr"><option value="">— pick a merged PR —</option></select>
-    <button onclick="reviewPR()">Review</button>
-  </div>
-  <div class="bar">
-    <span class="lbl mono">branches</span>
-    <select id="baseBranch" class="ref"><option value="">— base branch —</option></select>
-    <span class="arrow">→</span>
-    <select id="headBranch" class="ref"><option value="">— compare branch —</option></select>
-    <button onclick="compareBranches()">Compare</button>
-  </div>
-  <div class="bar">
-    <span class="lbl mono">commits</span>
-    <select id="baseCommit" class="ref"><option value="">— base commit —</option></select>
-    <span class="arrow">→</span>
-    <select id="headCommit" class="ref"><option value="">— compare commit —</option></select>
-    <button onclick="compareCommits()">Compare</button>
-  </div>
-  <!-- hidden refs: canonical review state, also settable via `serve --commit/--base/--head/--pr` -->
-  <input type="hidden" id="prnum"><input type="hidden" id="commit">
-  <input type="hidden" id="base"><input type="hidden" id="head">
-  <div class="sub" id="status">Enter a local repo path and hit Load — then pick a PR, or compare two branches or two commits.</div>
-  <div class="summary" id="summary"></div>
-  <div class="tally" id="tally"></div>
-</header>
-<div id="welcome">
-  <div class="hero">
-    <div class="mark">✦</div>
-    <h2>See what a PR <em>means</em>, not just what changed</h2>
-    <p>Point Lenscheck at a <b>local repo</b>, then pick a merged PR — or compare two branches or two
-      commits. It turns a huge diff into the few changes that matter, with the exact lines to look at.</p>
-    <div class="chips"><span>new endpoints</span><span>DB writes</span><span>SQL tables</span><span>external calls</span>
-      <span>cache</span><span>PII egress</span><span>auth changes</span></div>
-    <div class="sev"><span>🔴 <b>security / data-flow</b></span><span>🟠 money</span>
-      <span>🟡 new write / dependency</span><span>🟢 refactor</span></div>
-    <div class="byline"><span class="wave">👋</span> by <a href="https://warriorwhocodes.com" target="_blank" rel="noopener">Ankush Singh Gandhi</a> · warriorwhocodes.com</div>
-    <div class="links">
-      <a class="gh star" href="https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer" target="_blank" rel="noopener">★ Star on GitHub</a>
-      <a class="gh sponsor" href="https://github.com/sponsors/AnkushSinghGandhi" target="_blank" rel="noopener">♥ Sponsor me</a>
+
+    <div class="side-sec">
+      <label class="side-lbl">Run mode</label>
+      <div class="seg" id="seg">
+        <button data-mode="pr" class="on" onclick="setMode('pr')">PR</button>
+        <button data-mode="branch" onclick="setMode('branch')">Branch</button>
+        <button data-mode="commit" onclick="setMode('commit')">Commit</button>
+      </div>
+
+      <div class="mode-block" id="mode-pr">
+        <label class="side-lbl">Pull Request</label>
+        <select id="pr"><option value="">— pick a merged PR —</option></select>
+      </div>
+      <div class="mode-block hidden" id="mode-branch">
+        <label class="side-lbl">Base branch</label>
+        <select id="baseBranch" class="ref"><option value="">— base branch —</option></select>
+        <label class="side-lbl">Compare branch</label>
+        <select id="headBranch" class="ref"><option value="">— compare branch —</option></select>
+      </div>
+      <div class="mode-block hidden" id="mode-commit">
+        <label class="side-lbl">Base commit</label>
+        <select id="baseCommit" class="ref"><option value="">— base commit —</option></select>
+        <label class="side-lbl">Compare commit</label>
+        <select id="headCommit" class="ref"><option value="">— compare commit —</option></select>
+      </div>
+
+      <button class="run" onclick="runReview()">▶ Run Review</button>
+      <div class="side-links">
+        <button onclick="reviewDefault()" title="Review the current branch vs. the default branch">Branch vs default</button>
+        <button onclick="loadInvariants()" title="Discover &amp; confirm the rules this codebase follows">⚖ Invariants</button>
+      </div>
+      <div id="status">Enter a local repo path and hit Load — then pick a PR, or compare branches or commits.</div>
     </div>
-  </div>
+
+    <div class="side-sec">
+      <label class="side-lbl">Severity tally</label>
+      <div id="tally"><span class="none">No results yet</span></div>
+    </div>
+
+    <div class="side-sec">
+      <label class="side-lbl">Filters</label>
+      <div id="filters"></div>
+    </div>
+
+    <!-- hidden refs: canonical review state, also settable via `serve --commit/--base/--head/--pr` -->
+    <input type="hidden" id="prnum"><input type="hidden" id="commit">
+    <input type="hidden" id="base"><input type="hidden" id="head">
+    <!-- kept for fillRefs()/reviewCurrentBranch() even though not shown in the sidebar -->
+    <select id="curBranch" style="display:none"></select>
+    <span id="defBranch" style="display:none"></span>
+  </aside>
+
+  <main class="content">
+    <div id="welcome">
+      <div class="mark">🔬</div>
+      <h2>Deterministic semantic review</h2>
+      <p class="lede">Point Lenscheck at a <b>local repo</b>, pick a merged PR or compare two branches/commits.
+        It traces every change through 7 semantic edges — route, auth, DB, external calls, async, PII egress,
+        cache — and reports <b>exact file:line</b> locations.</p>
+
+      <div class="cardz">
+        <div class="card">
+          <h3>How it works</h3>
+          <div class="steps">
+            <div class="step"><div class="n">1</div><div><div class="b">Load your repo</div>
+              <div class="d">Enter the path to your local Python backend repository</div></div></div>
+            <div class="step"><div class="n">2</div><div><div class="b">Choose a run mode</div>
+              <div class="d">Review a specific PR, or compare branches or commits</div></div></div>
+            <div class="step"><div class="n">3</div><div><div class="b">Read the report</div>
+              <div class="d">Ranked findings with severity, blast radius, and the 7-edge lens</div></div></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>The 7-edge lens</h3>
+          <div class="edges">
+            <div class="edge"><span class="e">e1</span> route → handler</div>
+            <div class="edge"><span class="e">e2</span> auth / permissions</div>
+            <div class="edge"><span class="e">e3</span> DB tables</div>
+            <div class="edge"><span class="e">e4</span> external calls</div>
+            <div class="edge"><span class="e">e5</span> async tasks</div>
+            <div class="edge"><span class="e">e6</span> PII egress</div>
+            <div class="edge"><span class="e">e7</span> cache</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="legend2"><span>✓ <b>verified</b></span><span>△ <b>potential</b></span><span>? <b>unknown</b></span></div>
+      <div class="tag">No LLM. No guessing. Every finding traces to an exact file:line.</div>
+      <div class="byline"><span class="wave">👋</span> by
+        <a href="https://warriorwhocodes.com" target="_blank" rel="noopener">Ankush Singh Gandhi</a>
+        · <a href="https://api.lenscheck.dev" target="_blank" rel="noopener">api.lenscheck.dev</a></div>
+      <div class="links">
+        <a class="api" href="https://api.lenscheck.dev" target="_blank" rel="noopener">🌐 api.lenscheck.dev</a>
+        <a class="star" href="https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer" target="_blank" rel="noopener">★ Star on GitHub</a>
+        <a class="sponsor" href="https://github.com/sponsors/AnkushSinghGandhi" target="_blank" rel="noopener">♥ Sponsor me</a>
+      </div>
+    </div>
+
+    <div id="results">
+      <div class="summary" id="summary"></div>
+      <div id="invwrap"></div>
+      <div id="invpanel"></div>
+      <div class="split">
+        <div id="list"><div class="lhead">Semantic changes</div><div id="items"></div></div>
+        <div id="detail"><div class="empty">Run a review, then select a change.</div></div>
+      </div>
+    </div>
+  </main>
 </div>
-<div id="invwrap"></div>
-<div id="invpanel"></div>
-<main>
-  <div id="list"><div class="filters" id="filters"></div><div id="items"></div></div>
-  <div id="detail"><div class="empty">Run a review, then select a change.</div></div>
-</main>
 <script>
 const SEV={"🔴":"crit","🟠":"high","🟡":"med","🟢":"low"};
 const COL={crit:"var(--crit)",high:"var(--high)",med:"var(--med)",low:"var(--low)"};
 const active=new Set(["🔴","🟠","🟡","🟢"]);                     // severity (all shown by default)
 const activeKind=new Set(["NEW","CHANGED","REMOVED","REFACTOR"]); // change kind (all shown by default)
 const activeOps=new Set();   // touches: read/write/external/async — empty = no filter (show all)
-let DATA=null, sel=null, tab="graph", graphZoom=1, REFS=null, searchText="";
+let DATA=null, sel=null, tab="graph", graphZoom=1, REFS=null, searchText="", runMode="pr";
 const LS_KEY="lenscheck.ui";
 let panelState={};                                  // panel key -> open(bool), remembered across reviews
 try{ const s=JSON.parse(localStorage.getItem(LS_KEY)||"{}"); if(s.panels) panelState=s.panels; }catch(e){}
@@ -257,6 +395,18 @@ const TOKEN=new URLSearchParams(location.search).get("token")||"";
 function apiURL(p,params){params=Object.assign({},params||{});if(TOKEN)params.token=TOKEN;
   const q=qs(params);return BASE+p+(q?"?"+q:"");}
 
+function openMap(){
+  const r=val("repo").trim();
+  location.href=BASE+"map"+(r?("?repo="+encodeURIComponent(r)):"")+(TOKEN?((r?"&":"?")+"token="+TOKEN):"");
+}
+
+// run mode: switch which picker the sidebar shows (PR / branch compare / commit compare)
+function setMode(m){
+  runMode=m;
+  document.querySelectorAll("#seg button").forEach(b=>b.classList.toggle("on",b.dataset.mode===m));
+  ["pr","branch","commit"].forEach(k=>document.getElementById("mode-"+k).classList.toggle("hidden",k!==m));
+}
+
 // on load: prefill the (auto-detected) repo and, if the server was started with a target
 // (lenscheck serve --pr / --commit / --base --head), open that review straight away.
 fetch(apiURL("api/config")).then(r=>r.json()).then(c=>{
@@ -267,6 +417,7 @@ fetch(apiURL("api/config")).then(r=>r.json()).then(c=>{
   if(p.base) document.getElementById("base").value=p.base;
   if(p.head) document.getElementById("head").value=p.head;
   if(p.merge) document.getElementById("pr").value="merge:"+p.merge;
+  if(p.commit||(p.base&&p.head)) setMode(p.commit?"commit":"branch");
   if(p.pr||p.commit||p.merge||(p.base&&p.head)) review();
   else if(c.repo) loadRepo();   // no preload: fill the PR / branch / commit pickers for this repo
 }).catch(()=>{});
@@ -297,6 +448,7 @@ async function loadInvariants(){
   status("Discovering invariants… (samples git history — the first run can take a moment)");
   try{
     const d=await getJSON(apiURL("api/invariants",{repo}));
+    document.body.classList.add("loaded");
     renderInvPanel(d);
     status(`${(d.candidates||[]).length} candidate invariant(s).`+
            (d.can_confirm?" Confirm the ones that are intentional.":
@@ -387,6 +539,9 @@ function fillRefs(branches, commits){
   document.getElementById("curBranch").innerHTML='<option value="">— current branch —</option>'+bopt;
   if(cur) setVal("curBranch", cur);
   document.getElementById("defBranch").textContent = def || "default (auto)";
+  // handy default for Branch mode: default branch → current branch (== "current vs default")
+  if(def && branches.includes(def)) setVal("baseBranch", def);
+  if(cur && cur!==def) setVal("headBranch", cur);
   const copt=commits.map(c=>`<option value="${esc(c.sha)}">${esc(c.sha)} · ${esc(clip(c.title,52))}</option>`).join("");
   document.getElementById("baseCommit").innerHTML='<option value="">— base commit —</option>'+copt;
   document.getElementById("headCommit").innerHTML='<option value="">— compare commit —</option>'+copt;
@@ -397,6 +552,14 @@ function fillRefs(branches, commits){
 
 // blank every entry point but the one being used, so the backend gets an unambiguous request
 function clearRefs(){["prnum","commit","base","head"].forEach(id=>setVal(id,""));}
+
+// the big "Run Review" button — dispatches on the selected run mode
+function runReview(){
+  if(!val("repo").trim()){status("Enter a local repo path first.");return;}
+  if(runMode==="pr") reviewPR();
+  else if(runMode==="branch") compareBranches();
+  else compareCommits();
+}
 
 function reviewPR(){
   if(!val("pr")){status("Pick a PR from the list first.");return;}
@@ -455,9 +618,10 @@ function render(){
   applyStoredFilters();                     // restore filters from URL / localStorage (sticky across reviews)
   document.getElementById("summary").textContent = DATA.summary || "";
   const counts={}; DATA.changes.forEach(c=>counts[c.sev]=(counts[c.sev]||0)+1);
-  document.getElementById("tally").innerHTML=
-    ["🔴","🟠","🟡","🟢"].filter(s=>counts[s]).map(s=>`<b>${s} ${counts[s]}</b>`).join("&nbsp;&nbsp;")
-    +`<span style="color:var(--mut)">${DATA.changes.length} semantic changes</span>`;
+  const tallyHtml=["🔴","🟠","🟡","🟢"].filter(s=>counts[s]).map(s=>`<b>${s} ${counts[s]}</b>`).join("");
+  document.getElementById("tally").innerHTML = tallyHtml
+    ? tallyHtml+`<span style="color:var(--faint)">${DATA.changes.length} changes</span>`
+    : `<span class="none">No results yet</span>`;
   const contra=DATA.contradictions||[];         // intent-vs-behavior (feature #4)
   const contraHtml = contra.length ?
     panel("contra", "", true, `🎭 Intent vs. behavior — PR describes itself as “${esc(contra[0].claim)}”, but the facts disagree`,
@@ -486,9 +650,10 @@ function render(){
       `<div class="det">`+g.routes.map(chip).join(", ")+`</div></div>`).join("")) : "";
   const bg=DATA.blast_graph;                   // whole-PR blast radius
   const blastHtml=(bg&&bg.endpoints>=2)?
-    panel("blast","",bg.shared>0,`🧨 Blast radius — ${bg.endpoints} changed endpoints`+
-      (bg.shared?`, ${bg.shared} shared resource${bg.shared>1?'s':''}`:", none shared"),
-      `<div style="padding:10px 14px 4px;overflow-x:auto">${drawBlast(bg)}</div>`):"";
+    panel("blast","",bg.shared>0,
+      bg.shared?`🧨 Blast radius — ${bg.shared} resource${bg.shared>1?'s':''} shared across ${bg.endpoints} changed endpoints`
+               :`🧨 Blast radius — ${bg.endpoints} changed endpoints, none shared`,
+      drawBlast(bg)):"";
   document.getElementById("invwrap").innerHTML = contraHtml + depsHtml + invHtml + blastHtml + egressHtml;
   renderFilters();
   document.getElementById("detail").innerHTML='<div class="empty">Select a change.</div>';
@@ -506,6 +671,9 @@ function selectChange(i){   // jump from a shared-egress route chip to that endp
   document.getElementById("detail").scrollIntoView({behavior:"smooth",block:"nearest"});
 }
 
+// jump from a blast-radius endpoint chip to that endpoint's flow graph
+function blastJump(route){ const i=DATA.changes.findIndex(c=>c.route===route); if(i>=0) selectChange(i); }
+
 function kindKey(k){return k.split(" ")[0];}   // "NEW ENDPOINT"→"NEW", "CHANGED"→"CHANGED", …
 function passFilters(c){
   if(searchText && !c.route.toLowerCase().includes(searchText.toLowerCase())) return false;   // route search
@@ -521,6 +689,7 @@ function passFilters(c){
 // three filter bars: severity + change-kind (both default all-on), and touches (additive, default off)
 function renderFilters(){
   const fb=document.getElementById("filters"); fb.innerHTML="";
+  if(!DATA){ fb.innerHTML='<span class="flbl">run a review to filter</span>'; return; }
   const sv={}, kd={}, op={read:0,write:0,external:0,async:0,cache:0};
   DATA.changes.forEach(c=>{
     sv[c.sev]=(sv[c.sev]||0)+1;
@@ -534,14 +703,14 @@ function renderFilters(){
   const search=document.createElement("input");     // route search — filters the list, keeps focus
   search.type="search"; search.placeholder="🔎 route…"; search.value=searchText; search.className="fsearch";
   search.oninput=()=>{ searchText=search.value.trim(); persistFilters(); renderList(); };
-  fb.appendChild(search); sep();
+  fb.appendChild(search);
   ["🔴","🟠","🟡","🟢"].forEach(s=>fb.appendChild(mk(`${s} ${sv[s]||0}`, !active.has(s), ()=>toggle(active,s))));
-  sep();
+  lbl("change");
   [["NEW","🆕 new"],["CHANGED","✳ changed"],["REMOVED","➖ removed"],["REFACTOR","♻ refactor"]].forEach(([k,t])=>{
     if(!kd[k]) return;                                 // only offer kinds that are present
     fb.appendChild(mk(`${t} ${kd[k]}`, !activeKind.has(k), ()=>toggle(activeKind,k)));
   });
-  sep(); lbl("touches");
+  lbl("touches");
   [["read","📖 read"],["write","✏ write"],["external","🌐 external"],["async","⏱ async"],["cache","🗄 cache"]].forEach(([k,t])=>{
     fb.appendChild(mk(`${t} ${op[k]}`, !activeOps.has(k), ()=>toggle(activeOps,k)));
   });
@@ -679,42 +848,45 @@ function drawGraph(g){
     g.edges.map(edgeSvg).join("")+g.nodes.map(nodeSvg).join("")+`</svg>`;
 }
 
-// whole-PR blast radius: changed endpoints (left) ↔ the tables/hosts/jobs they touch (right).
-// A resource shared by 2+ endpoints is highlighted — that's the radius.
+// whole-PR blast radius — a ranked list, not a graph.
+// Each row is a table / service / job that 2+ of the changed endpoints touch; the count is how many
+// changed endpoints reach it (its fan-in). Big fan-in = a change or bug there ripples across the PR.
+// (The old node-link version turned into an unreadable hairball on large diffs — this scales.)
 function drawBlast(g){
-  const eps=g.nodes.filter(n=>n.type==="endpoint");
-  const res=g.nodes.filter(n=>n.type!=="endpoint").sort((a,b)=>(b.shared||0)-(a.shared||0));
-  const rowH=40, top=24, boxH=26;
-  const w=lbl=>Math.min(320,Math.max(120,clip(lbl,44).length*7+26));
-  const eW=eps.reduce((m,n)=>Math.max(m,w(n.label)),120);
-  const rW=res.reduce((m,n)=>Math.max(m,w(n.label)),120);
-  const colE=16, colR=colE+eW+150, pos={};
-  const rows=Math.max(eps.length,res.length,1), H=rows*rowH+top*2;
-  const place=(list,x)=>list.forEach((n,i)=>pos[n.id]=[x,top+boxH/2+i*rowH]);
-  place(eps,colE); place(res,colR);
-  const sevCol={"🔴":"var(--crit)","🟠":"var(--high)","🟡":"#d0b429","🟢":"var(--low)"};
-  function node(n){
-    const [x,y]=pos[n.id], ww=n.type==="endpoint"?eW:rW;
-    let stroke="#57ab5a", sw=1.6;
-    if(n.type==="endpoint")stroke=sevCol[n.sev]||"#6e7681";
-    else if(n.type==="external")stroke="var(--crit)";
-    else if(n.type==="async")stroke="var(--purple)";
-    if(n.shared){stroke="#e3b341";sw=2.6;}
-    const badge=n.shared?`<text x="${x+ww+7}" y="${y+4}" fill="#e3b341" font-weight="700">×${n.shared}</text>`:"";
-    return `<g><title>${esc(n.label)}${n.shared?" · shared by "+n.shared+" changed endpoints":""}</title>`+
-      `<rect x="${x}" y="${y-boxH/2}" width="${ww}" height="${boxH}" rx="6" fill="var(--panel)" stroke="${stroke}" stroke-width="${sw}"/>`+
-      `<text x="${x+9}" y="${y+4}">${esc(clip(n.label,44))}</text>${badge}</g>`;
-  }
-  function edge(e){
-    const s=pos[e.from], t=pos[e.to]; if(!s||!t)return"";
-    const x1=s[0]+eW, y1=s[1], x2=t[0], y2=t[1], mx=(x1+x2)/2;
-    const col=(e.kind||"").includes("write")?"var(--high)":e.kind==="calls"?"var(--crit)":
-      e.kind==="dispatches"?"var(--purple)":"#57ab5a";
-    return `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" fill="none" stroke="${col}" stroke-width="1.3" opacity=".5"/>`;
-  }
-  const width=colR+rW+60;
-  return `<svg width="100%" viewBox="0 0 ${width} ${H}" style="max-width:${width}px">`+
-    g.edges.map(edge).join("")+g.nodes.map(node).join("")+`</svg>`;
+  const eps={}; g.nodes.forEach(n=>{ if(n.type==="endpoint") eps[n.id]={route:n.label,sev:n.sev}; });
+  const byRes={}; g.edges.forEach(e=>{ (byRes[e.to]=byRes[e.to]||new Set()).add(e.from); });   // resource → endpoints
+  const res=g.nodes.filter(n=>n.type!=="endpoint"&&(n.shared||0)>=2)
+    .map(n=>({label:n.label,type:n.type,shared:n.shared,users:[...(byRes[n.id]||[])]}))
+    .sort((a,b)=>b.shared-a.shared);
+  if(!res.length)
+    return `<div class="blast-note">No table, service, or job is touched by <b>2+</b> of the changed `+
+           `endpoints — the changes don't overlap, so there's no shared blast radius to worry about.</div>`;
+  const max=res[0].shared;
+  const ICON={table:"🗄",external:"🌐",async:"⏱"}, FILL={table:"#57ab5a",external:"var(--crit)",async:"var(--purple)"};
+  const WORD={table:"DB table",external:"external service",async:"async job"};
+  const sevRank=s=>["🔴","🟠","🟡","🟢"].indexOf(s);
+  const CAP=8;
+  const row=r=>{
+    const list=r.users.map(id=>eps[id]).filter(Boolean).sort((a,b)=>sevRank(a.sev)-sevRank(b.sev));
+    const chips=list.map(e=>`<span class="blast-ep" onclick="blastJump('${esc(e.route).replace(/'/g,'')}')">`+
+      `<span class="bdot" style="background:${COL[SEV[e.sev]]||'#6e7681'}"></span>${esc(e.route)}</span>`).join("");
+    const pct=Math.max(6,Math.round(r.shared/max*100));
+    return `<details class="blast-row"><summary>`+
+      `<span class="blast-ico" title="${WORD[r.type]||''}">${ICON[r.type]||"•"}</span>`+
+      `<span class="blast-name" title="${esc(r.label)} · ${WORD[r.type]||''}">${esc(r.label)}</span>`+
+      `<span class="blast-track"><span class="blast-fill" style="width:${pct}%;background:${FILL[r.type]||'#6e7681'}"></span></span>`+
+      `<span class="blast-count">×${r.shared} endpoints</span></summary>`+
+      `<div class="blast-eps">${chips}</div></details>`;
+  };
+  const head=`<div class="blast-note">Each row is a table, service, or job touched by <b>2+</b> of the changed `+
+    `endpoints. The count is how many changed endpoints reach it — the bigger it is, the more of this PR breaks `+
+    `if that one thing goes wrong. Click a row to see which endpoints; click an endpoint to jump to it.</div>`;
+  // stash the overflow so "+ N more" can reveal it in place without re-rendering (one blast graph per review)
+  window.BLAST_REST = res.length>CAP ? res.slice(CAP).map(row).join("") : "";
+  const more=res.length>CAP
+    ? `<div class="blast-more" onclick="this.outerHTML=window.BLAST_REST">+ ${res.length-CAP} more shared resource${res.length-CAP>1?'s':''}</div>`
+    : "";
+  return head+`<div class="blast-list">${res.slice(0,CAP).map(row).join("")}${more}</div>`;
 }
 
 function clip(s,n){return s.length>n?s.slice(0,n-1)+"…":s;}
