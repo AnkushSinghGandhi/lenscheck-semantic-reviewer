@@ -47,3 +47,25 @@ def test_delegator_and_closure_collision():
     assert "ModelA" in models, f"delegator hop lost the read: {models}"   # recall (A)
     assert "ModelB" in models, f"deep read lost: {models}"                # recall (A, depth)
     assert "ModelC" not in models, f"closure bound to global resolve(): {models}"  # precision (B)
+
+
+def test_same_name_facade_is_followed():
+    """A facade method `Helper.load()` that delegates to a module `load()` of the *same* name must
+    still be followed — the root fn's own name is not 'local' (regression: cm-directory went empty)."""
+    d = tempfile.mkdtemp()
+    with open(os.path.join(d, "app.py"), "w") as f:
+        f.write(
+            "from fastapi import FastAPI\n"
+            "app = FastAPI()\n"
+            "@app.get('/thing')\n"
+            "def handler():\n"
+            "    return Helper.load()\n"
+            "class Helper:\n"
+            "    @staticmethod\n"
+            "    def load():\n"
+            "        return load()\n"                  # same-name delegation to the module fn below
+            "def load():\n"
+            "    ModelD.objects.all()\n"
+        )
+    models = _models_read(d)
+    assert "ModelD" in models, f"same-name facade dropped: {models}"
