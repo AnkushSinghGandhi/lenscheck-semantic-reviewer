@@ -314,6 +314,8 @@ class FactCollector(ast.NodeVisitor):
         self.str_vars = dict(consts or {})
         self.tainted = {}      # local var name -> {sensitive field labels it carries}
         self.leaks = []        # (field, sink, file, line): a tainted field that reaches an egress sink
+        self.local_names = set()  # names bound *inside* this fn (nested defs/closures, params) —
+                                  # a call to one of these must never resolve to a module-level helper
 
     def _loc(self, node):
         return (self.file, getattr(node, "lineno", 0))
@@ -429,8 +431,10 @@ class FactCollector(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_FunctionDef(self, node):
+        self.local_names.add(node.name)          # a nested def/closure is local, not a module helper
         # a parameter annotated with a model type resolves `param.save()` inside the body
         for a in node.args.posonlyargs + node.args.args + node.args.kwonlyargs:
+            self.local_names.add(a.arg)          # a param (e.g. a callback) shadows any global name
             m = _anno_model(a.annotation)
             if m:
                 self.var_types[a.arg] = m
@@ -925,7 +929,9 @@ def build_edges(ep, method_nodes, index, owner_file, self_type=None, class_metho
     return ep
 
 
-MAX_FOLLOW_DEPTH = 2   # handler(0) → helper(1) → helper's helper(2). Capped: deeper loses precision.
+MAX_FOLLOW_DEPTH = 3   # counts *fact-bearing* hops (pass-through delegators are free — see below).
+FOLLOW_BUDGET = 60     # hard cap on functions followed per endpoint, so a pathological call graph
+                       # can't explode. The `followed` set already prevents re-visiting.
 
 
 def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self_type=None):
@@ -948,7 +954,14 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
         agg.leaks += local.leaks
     else:
         _tag_indirect(agg, local)      # reached via a call → mark it
-    if depth >= MAX_FOLLOW_DEPTH:
+
+    # A pass-through frame — a facade/delegator that carries no facts of its own and just forwards
+    # (e.g. `ClientHelper.entity_search` = `return client_entity_search(...)`) — shouldn't spend a
+    # depth level, or plumbing layers exhaust the budget before the real data logic is reached.
+    contributed = bool(local.db or local.external or local.async_ or local.cache
+                       or local.pii or local.leaks)
+    child_depth = depth + 1 if (depth == 0 or contributed) else depth
+    if child_depth > MAX_FOLLOW_DEPTH or len(followed) >= FOLLOW_BUDGET:
         return
 
     # self.method(...) — resolve against the current class's own methods (same self_type)
@@ -957,17 +970,19 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
         if mname in classmethods and key not in followed:
             followed.add(key)
             _walk_follow(classmethods[mname], agg, index, owner_file, classmethods, followed,
-                         depth + 1, self_type=self_type)
+                         child_depth, self_type=self_type)
 
-    # module-level func(...) defined in the repo (no `self`)
-    for fname in set(local.func_calls):
+    # module-level func(...) defined in the repo (no `self`). Names bound locally — nested
+    # closures, params — are excluded: a call to a local `resolve()` must not bind to a same-named
+    # module function in another app.
+    for fname in set(local.func_calls) - local.local_names:
         key = f"func:{fname}"
         if key in followed:
             continue
         node, ffile = index.find_func(fname, near=owner_file)
         if node is not None:
             followed.add(key)
-            _walk_follow(node, agg, index, ffile, {}, followed, depth + 1)
+            _walk_follow(node, agg, index, ffile, {}, followed, child_depth)
 
     # Model.classmethod(...) / Service().method(...) — recurse with THAT class's methods,
     # so a `self.x()` inside the service resolves correctly at the next level down
@@ -983,7 +998,7 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
             continue
         followed.add(key)
         cls_methods = {m.name: m for m in cls.body if isinstance(m, ast.FunctionDef)}
-        _walk_follow(method, agg, index, cfile, cls_methods, followed, depth + 1, self_type=cname)
+        _walk_follow(method, agg, index, cfile, cls_methods, followed, child_depth, self_type=cname)
 
 
 def _tag_indirect(agg, sub):
