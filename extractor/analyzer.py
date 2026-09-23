@@ -316,6 +316,9 @@ class FactCollector(ast.NodeVisitor):
         self.leaks = []        # (field, sink, file, line): a tainted field that reaches an egress sink
         self.local_names = set()  # names bound *inside* this fn (nested defs/closures, params) —
                                   # a call to one of these must never resolve to a module-level helper
+        self._fn_depth = 0        # nesting level while walking, so we don't treat the root fn's own
+                                  # name as "local" (a facade `X()` that delegates to a module `X` must
+                                  # still be followed — only genuinely nested defs are closures)
 
     def _loc(self, node):
         return (self.file, getattr(node, "lineno", 0))
@@ -431,7 +434,9 @@ class FactCollector(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_FunctionDef(self, node):
-        self.local_names.add(node.name)          # a nested def/closure is local, not a module helper
+        self._fn_depth += 1
+        if self._fn_depth > 1:                   # a genuinely nested def/closure — local, not a helper
+            self.local_names.add(node.name)
         # a parameter annotated with a model type resolves `param.save()` inside the body
         for a in node.args.posonlyargs + node.args.args + node.args.kwonlyargs:
             self.local_names.add(a.arg)          # a param (e.g. a callback) shadows any global name
@@ -439,6 +444,7 @@ class FactCollector(ast.NodeVisitor):
             if m:
                 self.var_types[a.arg] = m
         self.generic_visit(node)
+        self._fn_depth -= 1
     visit_AsyncFunctionDef = visit_FunctionDef
 
     def visit_For(self, node: ast.For):
