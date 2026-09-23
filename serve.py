@@ -76,6 +76,18 @@ def _read_corpus(path):
     return []
 
 
+def _load_demos(demo_dir):
+    """Read the demo manifest → {id: {title, repo, pr, file}}. Empty if no manifest."""
+    if not demo_dir:
+        return {}
+    try:
+        with open(os.path.join(demo_dir, "manifest.json"), encoding="utf-8") as f:
+            entries = json.load(f)
+    except (FileNotFoundError, ValueError):
+        return {}
+    return {e["id"]: e for e in entries if e.get("id") and e.get("file")}
+
+
 def make_handler(cfg):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *a):
@@ -124,12 +136,28 @@ def make_handler(cfg):
                 if path == "/healthz":
                     return self._json(200, {"ok": True})
 
+                # pre-baked demos are public (no token, no engine) — served before the auth gate
+                if path == "/api/demos":
+                    return self._json(200, {"demos": [
+                        {"id": e["id"], "title": e.get("title", e["id"]),
+                         "repo": e.get("repo"), "pr": e.get("pr")} for e in cfg["demos"].values()]})
+                if path == "/api/review" and g("demo"):
+                    e = cfg["demos"].get(g("demo"))
+                    if not e:
+                        return self._json(404, {"error": f"unknown demo {g('demo')!r}"})
+                    try:
+                        with open(os.path.join(cfg["demo_dir"], e["file"]), encoding="utf-8") as f:
+                            return self._send(200, f.read(), "application/json; charset=utf-8")
+                    except OSError:
+                        return self._json(500, {"error": "demo file missing"})
+
                 if path.startswith("/api/") and not self._authorized(g):
                     return self._json(401, {"error": "unauthorized — append ?token=…"})
 
                 if path == "/api/config":
                     return self._json(200, {"repo": cfg["repo"], "invariants": cfg["invariants"],
                                             "locked": bool(cfg["allowed"]),
+                                            "has_demos": bool(cfg["demos"]),
                                             "preload": cfg["preload"]})
                 if path == "/api/prs":
                     repo = g("repo") or cfg["repo"]
@@ -282,6 +310,8 @@ def main():
     ap.add_argument("--base", help="open this base..head on load (with --head)")
     ap.add_argument("--head")
     ap.add_argument("--no-open", action="store_true", help="don't open a browser window")
+    ap.add_argument("--demo-dir", default=os.environ.get("LENSCHECK_DEMO_DIR", ""),
+                    help="folder of pre-baked reviews (with manifest.json) to serve as demos")
     args = ap.parse_args()
 
     # auto-select the current git repo when no repo was given
@@ -297,6 +327,8 @@ def main():
         "allowed": [s.strip() for s in os.environ.get("LENSCHECK_ALLOWED_REPOS", "").split(",") if s.strip()],
         "base_path": os.environ.get("LENSCHECK_BASE_PATH", "").rstrip("/"),
         "preload": preload,
+        "demo_dir": args.demo_dir,
+        "demos": _load_demos(args.demo_dir),
     }
     srv = ThreadingHTTPServer((args.host, args.port), make_handler(cfg))
     shown = "127.0.0.1" if args.host in ("0.0.0.0", "") else args.host
