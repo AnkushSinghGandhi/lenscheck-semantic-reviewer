@@ -105,6 +105,7 @@ class RepoIndex:
         self.class_models: dict[str, str] = {}     # Serializer/Form/etc. name -> its Meta.model table
         self.perm_consts: dict[str, list] = {}     # PERMISSION_CONSTANT -> [class names] (unambiguous)
         self.model_tables: dict[str, str] = {}     # Model -> explicit Meta.db_table (SQL table name)
+        self.module_imports: dict[str, dict] = {}  # file -> {alias: stem} for relative module imports
         self._build()
 
     def _iter_py(self):
@@ -138,6 +139,22 @@ class RepoIndex:
                     pamb.add(name)
                 pseen[name] = lst
             self._index_defs(tree, path)
+            # collect relative module imports: `from . import rows` / `from .rows import fn`
+            # so `rows.fn()` typed calls can be resolved as module-level functions in rows.py
+            file_dir = os.path.dirname(path)
+            mod_imports = {}
+            for node in ast.iter_child_nodes(tree):
+                if not isinstance(node, ast.ImportFrom) or not node.level:
+                    continue   # only relative imports (level > 0 means ".")
+                if node.module is None:
+                    # `from . import rows, tiles` — each alias IS the module stem
+                    for alias in node.names:
+                        stem = alias.asname or alias.name
+                        mod_imports[stem] = os.path.join(file_dir, alias.name + ".py")
+                # `from .rows import list_entities` — module is the stem, names are members (not modules)
+                # we don't need to handle that: it imports names, not the module itself
+            if mod_imports:
+                self.module_imports[path] = mod_imports
         self.global_consts = {n: v for n, v in seen.items() if n not in ambiguous}
         self.perm_consts = {n: v for n, v in pseen.items() if n not in pamb}
 
@@ -207,6 +224,11 @@ class RepoIndex:
         if cands:
             cands = [(n, p) for (n, p, tl) in cands if tl or not toplevel_only]
         return _pick(cands, near)
+
+    def imports_for(self, path: str) -> dict:
+        """Return {alias: module_file} for relative module imports in `path` (e.g. `from . import rows`).
+        Used to resolve `module.fn()` typed calls where the callee is a sibling module, not a class."""
+        return self.module_imports.get(path, {})
 
 
 def _pick(candidates, near: str):
@@ -413,6 +435,11 @@ class FactCollector(ast.NodeVisitor):
                 and f.value.id[:1].isupper() and f.attr not in {"objects", "as_view"} \
                 and f.attr not in ORM_READ and f.attr not in ORM_WRITE:
             # Model.classmethod(...)  e.g. OrderedItems.insert_ordered_item(...)
+            self.typed_calls.append((f.value.id, f.attr))
+        elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) \
+                and f.value.id[:1].islower() and f.value.id not in {"self", "cls"} \
+                and f.attr not in ORM_READ and f.attr not in ORM_WRITE:
+            # module.fn(...)  e.g. rows.list_entities(...) — lowercase module alias
             self.typed_calls.append((f.value.id, f.attr))
         elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Call) \
                 and isinstance(f.value.func, ast.Name) and f.value.func.id[:1].isupper():
@@ -1020,20 +1047,29 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
             _walk_follow(node, agg, index, ffile, {}, followed, child_depth)
 
     # Model.classmethod(...) / Service().method(...) — recurse with THAT class's methods,
-    # so a `self.x()` inside the service resolves correctly at the next level down
+    # so a `self.x()` inside the service resolves correctly at the next level down.
+    # Fallback: if `cname` is not a class but IS a relative module import (`from . import rows`),
+    # treat `rows.fn()` as a bare module-level call into that sibling module.
+    mod_imports = index.imports_for(owner_file)
     for cname, mname in sorted(set(local.typed_calls)):
         key = f"{cname}.{mname}"
         if key in followed:
             continue
         cls, cfile = index.find_class(cname, near=owner_file)
-        if cls is None:
-            continue
-        method = next((m for m in cls.body if isinstance(m, ast.FunctionDef) and m.name == mname), None)
-        if method is None:
-            continue
-        followed.add(key)
-        cls_methods = {m.name: m for m in cls.body if isinstance(m, ast.FunctionDef)}
-        _walk_follow(method, agg, index, cfile, cls_methods, followed, child_depth, self_type=cname)
+        if cls is not None:
+            method = next((m for m in cls.body if isinstance(m, ast.FunctionDef) and m.name == mname), None)
+            if method is None:
+                continue
+            followed.add(key)
+            cls_methods = {m.name: m for m in cls.body if isinstance(m, ast.FunctionDef)}
+            _walk_follow(method, agg, index, cfile, cls_methods, followed, child_depth, self_type=cname)
+        elif cname in mod_imports:
+            # `cname` is a sibling module (`from . import cname`); treat as a bare module-level call
+            mod_file = mod_imports[cname]
+            node, ffile = index.find_func(mname, near=mod_file, toplevel_only=True)
+            if node is not None:
+                followed.add(key)
+                _walk_follow(node, agg, index, ffile, {}, followed, child_depth)
 
 
 def _tag_indirect(agg, sub):
