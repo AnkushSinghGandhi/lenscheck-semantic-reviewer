@@ -43,10 +43,10 @@ def have_token():
 
 
 # --- transport ---------------------------------------------------------------
-def _req(method, path, payload=None):
+def _req(method, path, payload=None, override_token=None):
     data = json.dumps(payload).encode() if payload is not None else None
     headers = {"Content-Type": "application/json", "User-Agent": "lenscheck"}
-    tok = token()
+    tok = override_token or token()
     if tok:
         headers["Authorization"] = f"Bearer {tok}"
     req = urllib.request.Request(API_URL + path, data=data, method=method, headers=headers)

@@ -317,6 +317,13 @@
     </div>
 
     <div class="side-sec">
+      <label class="side-lbl">API key</label>
+      <input id="apiKeyInput" type="password" placeholder="sk_live_…" autocomplete="off"
+             oninput="saveApiKey()" style="font-family:ui-monospace,monospace;font-size:12px">
+      <div style="font-size:11px;color:var(--mut);margin-top:5px">Saved in browser only. Get yours at lenscheck.dev</div>
+    </div>
+
+    <div class="side-sec">
       <label class="side-lbl">Severity tally</label>
       <div id="tally"><span class="none">No results yet</span></div>
     </div>
@@ -442,15 +449,30 @@ function applyStoredFilters(){
   if(typeof src.q==="string") searchText=src.q;
 }
 
-// path-relative base so it works at "/" or under a sub-path like "/lenscheck"; token from URL
+// path-relative base so it works at "/" or under a sub-path like "/lenscheck"
 const BASE=location.pathname.endsWith("/")?location.pathname:location.pathname+"/";
-const TOKEN=new URLSearchParams(location.search).get("token")||"";
-function apiURL(p,params){params=Object.assign({},params||{});if(TOKEN)params.token=TOKEN;
-  const q=qs(params);return BASE+p+(q?"?"+q:"");}
+// token: URL param wins, then localStorage, then empty
+const LS_KEY="lenscheck.apikey";
+function getToken(){
+  return new URLSearchParams(location.search).get("token")||
+         (()=>{try{return localStorage.getItem(LS_KEY)||"";}catch(e){return "";}})();
+}
+function saveApiKey(){
+  const v=document.getElementById("apiKeyInput").value.trim();
+  try{if(v)localStorage.setItem(LS_KEY,v);else localStorage.removeItem(LS_KEY);}catch(e){}
+}
+// seed input from localStorage on load
+(()=>{try{const k=localStorage.getItem(LS_KEY);if(k){const el=document.getElementById("apiKeyInput");if(el)el.value=k;}}catch(e){}})();
+
+function apiURL(p,params){
+  params=Object.assign({},params||{});
+  const tok=getToken();if(tok)params.token=tok;
+  const q=qs(params);return BASE+p+(q?"?"+q:"");
+}
 
 function openMap(){
-  const r=val("repo").trim();
-  location.href=BASE+"map"+(r?("?repo="+encodeURIComponent(r)):"")+(TOKEN?((r?"&":"?")+"token="+TOKEN):"");
+  const r=val("repo").trim();const tok=getToken();
+  location.href=BASE+"map"+(r?("?repo="+encodeURIComponent(r)):"")+(tok?((r?"&":"?")+"token="+tok):"");
 }
 
 // light / dark theme — persisted; the head script sets it pre-paint, this syncs the button + toggles
