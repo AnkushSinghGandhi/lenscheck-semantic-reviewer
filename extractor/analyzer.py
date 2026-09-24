@@ -989,8 +989,9 @@ def build_edges(ep, method_nodes, index, owner_file, self_type=None, class_metho
 
 
 MAX_FOLLOW_DEPTH = 3   # counts *fact-bearing* hops (pass-through delegators are free — see below).
-FOLLOW_BUDGET = 60     # hard cap on functions followed per endpoint, so a pathological call graph
-                       # can't explode. The `followed` set already prevents re-visiting.
+FOLLOW_BUDGET = 250    # hard cap on functions followed per endpoint. The `followed` set already
+                       # prevents re-visiting so this only caps pathological fan-out. Raised from 60
+                       # after entity endpoints with wide module helper graphs were hitting it early.
 
 
 def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self_type=None):
