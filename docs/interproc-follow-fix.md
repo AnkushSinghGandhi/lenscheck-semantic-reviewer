@@ -59,14 +59,14 @@ matters**, **effort**, and **who/what it's waiting on**.
 - [x] **Determinism** — the 3 follow loops now `sorted()`, so results don't wobble run-to-run.
   Proven: c360 byte-identical across two hash seeds. *(edit 6)*
 - [x] **Full audit done** — losses 107/114 correct, gains **198/210 (94%)**, code review = **ship**.
-- [x] **reviewer2 synced** byte-identical + tests copied in.
+- [x] **reviewer2 synced** byte-identical + tests copied in + committed + pushed.
 - [x] **Tests green** — prism **11/11**, reviewer2 **127/127**.
 
 ### ⬜ Open — needs a decision or work
 
-- [ ] **1. Commit the change.** *Why:* it's all uncommitted (prism + reviewer2). *Effort:* small.
-  *Waiting on:* **your go.** Notes: sir/ → personal gmail, short lowercase msg, no Claude trailer;
-  suggest 2 commits (follow-fix / get_object_or_404 + guards); mirror-commit reviewer2 and cut its release.
+- [x] **1. Commit the change — DONE.** 2 commits in both prism and reviewer2, pushed.
+  - `b9335fc` / `adb59d3` — `extractor fix bare-call precision and same-name facade recall`
+  - `8b52bcd` / `98e8baf` — `extractor detect get_object_or_404 reads skip local aliases and sort follow loops`
 - [x] **2. Clean re-baseline of the audit numbers — DONE.** Backported `sorted()` into the HEAD
   snapshot too and re-ran before/after with a fixed seed (both sides deterministic; clean HEAD
   verified identical across two seeds). **Authoritative numbers: GAINS 152 eps / 211 tables,
