@@ -328,6 +328,11 @@ class FactCollector(ast.NodeVisitor):
         self.leaks = []        # (field, sink, file, line): a tainted field that reaches an egress sink
         self.local_names = set()  # names bound *inside* this fn (nested defs/closures, params) —
                                   # a call to one of these must never resolve to a module-level helper
+        self.assigned_names = set()  # names bound by a local `x = …` assignment. A Capitalized one is
+                                     # often a runtime model *alias* (`CPModels = apps.get_model(…)` /
+                                     # `CPModels = RealModel`), NOT an imported model class — so a
+                                     # get_object_or_404(<that name>, …) must not be credited as a
+                                     # read of a table literally called `CPModels`.
         self._fn_depth = 0        # nesting level while walking, so we don't treat the root fn's own
                                   # name as "local" (a facade `X()` that delegates to a module `X` must
                                   # still be followed — only genuinely nested defs are closures)
@@ -345,6 +350,13 @@ class FactCollector(ast.NodeVisitor):
                 model = self.self_type or "<instance>"   # the enclosing class, not a table named "self"
             kind = "write" if method in ORM_WRITE else ("read" if method in ORM_READ else "read")
             self.db.append((model, kind, fl, ln))
+        # get_object_or_404(Model, …) / get_list_or_404(Model, …) — a Django shortcut that runs a
+        # real query (Model.objects.get/filter under the hood). A common in-body read the ORM
+        # matcher above misses because there is no literal `.objects`.
+        if isinstance(f, ast.Name) and f.id in {"get_object_or_404", "get_list_or_404"} \
+                and node.args and isinstance(node.args[0], ast.Name) and node.args[0].id[:1].isupper() \
+                and node.args[0].id not in self.assigned_names:      # skip a local model *alias* (see __init__)
+            self.db.append((node.args[0].id, "read", fl, ln))
         # instance .save()/.delete() — resolve `var.save()` to its model when we know the type,
         # but skip non-ORM receivers (cache/session/storage) so they aren't mislabeled DB writes.
         if isinstance(f, ast.Attribute) and f.attr in {"save", "delete"} and not model \
@@ -428,6 +440,8 @@ class FactCollector(ast.NodeVisitor):
         # remember `x = <something that reveals a Model>` so a later `x.save()` names the table
         model = self._model_of(node.value)
         for tgt in node.targets:
+            if isinstance(tgt, ast.Name):
+                self.assigned_names.add(tgt.id)                        # a locally-bound name (see __init__)
             if isinstance(tgt, (ast.Name, ast.Attribute)) and model:   # x = … / self.x = Model(…)
                 self.var_types[_receiver_key(tgt)] = model
             elif isinstance(tgt, (ast.Tuple, ast.List)) and tgt.elts \

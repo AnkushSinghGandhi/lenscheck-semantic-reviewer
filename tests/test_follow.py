@@ -69,3 +69,36 @@ def test_same_name_facade_is_followed():
         )
     models = _models_read(d)
     assert "ModelD" in models, f"same-name facade dropped: {models}"
+
+
+def test_get_object_or_404_reads_real_model():
+    """get_object_or_404(Model, …) is a genuine read (Django shortcut runs Model.objects.get)."""
+    d = tempfile.mkdtemp()
+    with open(os.path.join(d, "app.py"), "w") as f:
+        f.write(
+            "from fastapi import FastAPI\n"
+            "app = FastAPI()\n"
+            "@app.get('/thing')\n"
+            "def handler(pk):\n"
+            "    obj = get_object_or_404(RealModel, pk=pk)\n"
+            "    return obj\n"
+        )
+    assert "RealModel" in _models_read(d)
+
+
+def test_get_object_or_404_skips_local_model_alias():
+    """A runtime model *alias* (`M = apps.get_model(...)` / `M = RealModel`) passed to
+    get_object_or_404 must NOT be credited as a table literally named `M` — no such table exists.
+    Regression for the c360 `CPModels` phantom found by the gain audit."""
+    d = tempfile.mkdtemp()
+    with open(os.path.join(d, "app.py"), "w") as f:
+        f.write(
+            "from fastapi import FastAPI\n"
+            "app = FastAPI()\n"
+            "@app.get('/thing')\n"
+            "def handler(pk):\n"
+            "    Alias = apps.get_model('app', 'Thing')\n"     # a Capitalized *variable*, not a model class
+            "    obj = get_object_or_404(Alias, pk=pk)\n"
+            "    return obj\n"
+        )
+    assert "Alias" not in _models_read(d), "credited a phantom table named after a local alias var"
