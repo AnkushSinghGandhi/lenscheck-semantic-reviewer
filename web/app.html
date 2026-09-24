@@ -452,17 +452,17 @@ function applyStoredFilters(){
 // path-relative base so it works at "/" or under a sub-path like "/lenscheck"
 const BASE=location.pathname.endsWith("/")?location.pathname:location.pathname+"/";
 // token: URL param wins, then localStorage, then empty
-const LS_KEY="lenscheck.apikey";
+const LS_API_KEY="lenscheck.apikey";
 function getToken(){
   return new URLSearchParams(location.search).get("token")||
-         (()=>{try{return localStorage.getItem(LS_KEY)||"";}catch(e){return "";}})();
+         (()=>{try{return localStorage.getItem(LS_API_KEY)||"";}catch(e){return "";}})();
 }
 function saveApiKey(){
   const v=document.getElementById("apiKeyInput").value.trim();
-  try{if(v)localStorage.setItem(LS_KEY,v);else localStorage.removeItem(LS_KEY);}catch(e){}
+  try{if(v)localStorage.setItem(LS_API_KEY,v);else localStorage.removeItem(LS_API_KEY);}catch(e){}
 }
 // seed input from localStorage on load
-(()=>{try{const k=localStorage.getItem(LS_KEY);if(k){const el=document.getElementById("apiKeyInput");if(el)el.value=k;}}catch(e){}})();
+(()=>{try{const k=localStorage.getItem(LS_API_KEY);if(k){const el=document.getElementById("apiKeyInput");if(el)el.value=k;}}catch(e){}})();
 
 function apiURL(p,params){
   params=Object.assign({},params||{});
