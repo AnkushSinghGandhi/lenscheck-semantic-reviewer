@@ -330,9 +330,10 @@ def parse_endpoints(index: RepoIndex) -> list:
 class FactCollector(ast.NodeVisitor):
     """Walk a function body; collect lens facts. Records callees for 1-level follow."""
 
-    def __init__(self, file: str = "", consts=None, class_models=None, self_type=None):
+    def __init__(self, file: str = "", consts=None, class_models=None, self_type=None, known_models=None):
         self.file = file
         self.class_models = class_models or {}   # Serializer/Form name -> its Meta.model table
+        self.known_models = known_models or set()  # all repo model/class names — for FK traversal detection
         self.self_type = self_type               # enclosing class, so `self.objects.x()` names its table
         self.db = []           # (model, kind, file, line)
         self.external = []     # (root, dest, file, line)
@@ -372,6 +373,16 @@ class FactCollector(ast.NodeVisitor):
                 model = self.self_type or "<instance>"   # the enclosing class, not a table named "self"
             kind = "write" if method in ORM_WRITE else ("read" if method in ORM_READ else "read")
             self.db.append((model, kind, fl, ln))
+            # Django FK traversal in filter/exclude/get kwargs: `fk_field__col__gte=val`
+            # causes a JOIN on the related table. The kwarg stem is the FK field name (snake_case);
+            # convert to CamelCase and check the repo index — if it's a known model, record a read.
+            if method in {"filter", "exclude", "get", "get_or_create", "update_or_create"}:
+                for kw in node.keywords:
+                    if kw.arg and "__" in kw.arg:
+                        stem = kw.arg.split("__")[0]
+                        related = "".join(w.capitalize() for w in stem.split("_"))
+                        if related in self.known_models:
+                            self.db.append((related, "read", fl, ln))
         # get_object_or_404(Model, …) / get_list_or_404(Model, …) — a Django shortcut that runs a
         # real query (Model.objects.get/filter under the hood). A common in-body read the ORM
         # matcher above misses because there is no literal `.objects`.
@@ -970,7 +981,7 @@ def build_edges(ep, method_nodes, index, owner_file, self_type=None, class_metho
     function bodies, following 1–2 levels into helpers. Framework-agnostic — Django resolves a
     class/func handler upstream and passes its methods here; Flask/FastAPI pass the single
     decorated function. The FactCollector + scorers below are pure Python analysis."""
-    agg = FactCollector(_rel(index, owner_file))
+    agg = FactCollector(_rel(index, owner_file), known_models=set(index.classes))
     followed = set()
     for m in method_nodes:
         _walk_follow(m, agg, index, owner_file, class_methods or {}, followed, depth=0,
@@ -1003,7 +1014,8 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
     """
     owner_rel = _rel(index, owner_file)
     local = FactCollector(owner_rel, consts=index.consts_for(owner_file),
-                          class_models=index.class_models, self_type=self_type)
+                          class_models=index.class_models, self_type=self_type,
+                          known_models=set(index.classes))
     local.visit(fn)
     if depth == 0:
         agg.db += local.db
