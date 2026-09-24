@@ -233,12 +233,12 @@ def make_handler(cfg):
                     body = {"repo": cloud._repo_name(repo, repo), "pr": g("pr", "0"),
                             "base_facts": cloud._facts_for(repo, base),
                             "head_facts": cloud._facts_for(repo, head)}
-                    code, out = cloud._req("POST", "/api/v1/review", body)
+                    code, out = cloud._req("POST", "/api/v1/review", body, override_token=g("token"))
                     return self._json(code or 502, out.get("review", out) if code == 200 else out)
                 if p == "/api/map":
                     body = {"repo": cloud._repo_name(repo, repo), "risky": g("risky") == "1",
                             "facts": cloud._facts_for(repo, gitutil.current_branch(repo))}
-                    code, out = cloud._req("POST", "/api/v1/map", body)
+                    code, out = cloud._req("POST", "/api/v1/map", body, override_token=g("token"))
                     return self._json(code or 502, out.get("map", out) if code == 200 else out)
                 if p == "/api/source":
                     rel = g("path")
@@ -296,8 +296,8 @@ def main():
     # a review (the fixed repo, or a pasted one in --public mode) still needs the cloud key.
     demo_only = bool(cfg.demos) and not a.public and a.repo == "."
     if not demo_only and not cloud.have_token():
-        sys.exit("lenscheck: no API key. Request beta access, then "
-                 "`export LENSCHECK_API_KEY=sk_live_...` (self-hosting? also set LENSCHECK_API_URL).")
+        print("lenscheck: no server-side API key found — enter your key in the UI to run reviews."
+              " (Or: export LENSCHECK_API_KEY=sk_live_... before starting.)")
     cfg.repo = None if a.public else gitutil.ensure_local(a.repo)
 
     httpd = ThreadingHTTPServer((a.host, a.port), make_handler(cfg))
