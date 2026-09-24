@@ -96,7 +96,7 @@ class RepoIndex:
     def __init__(self, root: str):
         self.root = root
         self.classes: dict[str, list] = {}     # name -> [(node, file)]
-        self.funcs: dict[str, list] = {}       # name -> [(node, file)]
+        self.funcs: dict[str, list] = {}       # name -> [(node, file, toplevel)]
         self.url_files: list[str] = []
         self.drf_present = False               # REST_FRAMEWORK settings seen
         self.default_permissions = None        # DEFAULT_PERMISSION_CLASSES (list) or None
@@ -141,11 +141,18 @@ class RepoIndex:
         self.global_consts = {n: v for n, v in seen.items() if n not in ambiguous}
         self.perm_consts = {n: v for n, v in pseen.items() if n not in pamb}
 
-    def _index_defs(self, node, path):
+    def _index_defs(self, node, path, toplevel=True):
         """Index ClassDefs and FunctionDefs, recursing through the module, class bodies, and
         control-flow (if/try/with) — but NOT into function bodies. Handlers and the helpers we
         follow are module-level or class methods, never nested inside a function, so pruning
-        function bodies (the bulk of the AST) skips ~all the cost with no loss."""
+        function bodies (the bulk of the AST) skips ~all the cost with no loss.
+
+        Each `self.funcs` entry carries a `toplevel` flag (module-level def vs class method). Both
+        kinds are indexed — a classmethod can be a view (`path(..., Helper.search)` resolves by
+        name) — but the *bare-call follow* path filters to toplevel only: a bare `foo()` never
+        resolves to a class method in Python (needs `self.`/`Cls.`), so a same-named method must
+        not shadow the real module helper (e.g. `Helper.load()` -> module `load()` was resolving
+        back to itself and losing the module read)."""
         for child in ast.iter_child_nodes(node):
             if isinstance(child, ast.ClassDef):
                 self.classes.setdefault(child.name, []).append((child, path))
@@ -155,12 +162,12 @@ class RepoIndex:
                 t = _class_db_table(child) or _class_tablename(child)   # Django Meta.db_table / SQLAlchemy __tablename__
                 if t:
                     self.model_tables[child.name] = t
-                self._index_defs(child, path)                 # into class body (methods, Meta)
-            elif isinstance(child, ast.FunctionDef):
-                self.funcs.setdefault(child.name, []).append((child, path))
+                self._index_defs(child, path, toplevel=False)  # methods live under the class, not the module
+            elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                self.funcs.setdefault(child.name, []).append((child, path, toplevel))
                 # prune: a function body holds no module-level handlers/helpers to index
             else:
-                self._index_defs(child, path)                 # if/try/with/… may wrap defs
+                self._index_defs(child, path, toplevel=toplevel)   # if/try/with/… wrap defs, same level
 
     def consts_for(self, file: str) -> dict:
         """String constants visible in `file`: the repo-wide table, with this module's own on top."""
@@ -193,8 +200,13 @@ class RepoIndex:
     def find_class(self, name: str, near: str = ""):
         return _pick(self.classes.get(name), near)
 
-    def find_func(self, name: str, near: str = ""):
-        return _pick(self.funcs.get(name), near)
+    def find_func(self, name: str, near: str = "", toplevel_only: bool = False):
+        """Resolve a function by name. `toplevel_only=True` (the bare-call follow path) drops class
+        methods so a bare `foo()` binds only to a module-level `foo`, never a same-named method."""
+        cands = self.funcs.get(name)
+        if cands:
+            cands = [(n, p) for (n, p, tl) in cands if tl or not toplevel_only]
+        return _pick(cands, near)
 
 
 def _pick(candidates, near: str):
@@ -970,8 +982,11 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
     if child_depth > MAX_FOLLOW_DEPTH or len(followed) >= FOLLOW_BUDGET:
         return
 
-    # self.method(...) — resolve against the current class's own methods (same self_type)
-    for mname in set(local.self_calls):
+    # self.method(...) — resolve against the current class's own methods (same self_type).
+    # NOTE: all three follow loops iterate `sorted(set(...))`, not a bare `set(...)`: under the
+    # shared FOLLOW_BUDGET cap, which calls get followed first decides the result, and a set's
+    # iteration order depends on PYTHONHASHSEED — sorting makes the extraction deterministic.
+    for mname in sorted(set(local.self_calls)):
         key = f"self:{owner_rel}:{mname}"
         if mname in classmethods and key not in followed:
             followed.add(key)
@@ -981,18 +996,18 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
     # module-level func(...) defined in the repo (no `self`). Names bound locally — nested
     # closures, params — are excluded: a call to a local `resolve()` must not bind to a same-named
     # module function in another app.
-    for fname in set(local.func_calls) - local.local_names:
+    for fname in sorted(set(local.func_calls) - local.local_names):
         key = f"func:{fname}"
         if key in followed:
             continue
-        node, ffile = index.find_func(fname, near=owner_file)
+        node, ffile = index.find_func(fname, near=owner_file, toplevel_only=True)
         if node is not None:
             followed.add(key)
             _walk_follow(node, agg, index, ffile, {}, followed, child_depth)
 
     # Model.classmethod(...) / Service().method(...) — recurse with THAT class's methods,
     # so a `self.x()` inside the service resolves correctly at the next level down
-    for cname, mname in set(local.typed_calls):
+    for cname, mname in sorted(set(local.typed_calls)):
         key = f"{cname}.{mname}"
         if key in followed:
             continue
