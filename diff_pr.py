@@ -260,6 +260,12 @@ def unknowns(ep):
         if e.status in {"⚠", "?"} and e.items:
             vals = ", ".join(sorted({norm(x) for x in e.items}))   # identities; locs are in investigate
             out.append(f"{label} {e.status}: {vals}" + (f" — {e.note}" if e.note else ""))
+    # publish the blindspot: the adaptive follow stops when a branch stops learning ('dried_out' =
+    # complete). If instead it hit the depth/budget cap while still finding facts, the facts below are
+    # possibly-incomplete — say so, don't imply we saw everything.
+    if getattr(ep, "follow_stop", "") in ("ceiling", "budget"):
+        out.append(f"depth ⚠: call graph exceeded the {ep.follow_stop} cap "
+                   f"(reached depth {ep.follow_depth}) — DB/external facts may be incomplete below it")
     return out
 
 

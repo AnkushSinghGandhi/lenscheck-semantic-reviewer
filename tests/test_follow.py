@@ -58,6 +58,29 @@ def test_adaptive_depth_dries_out_and_still_reports_the_fact():
     assert _thing_ep(root).follow_stop == "dried_out"
 
 
+def test_adaptive_depth_ceiling_is_labelled_not_silently_complete():
+    """A genuinely-productive chain deeper than DEPTH_CEILING is cut at the cap and MUST report
+    'ceiling' (possibly-incomplete) — never a silent 'dried_out' that would imply completeness."""
+    root = _deep_chain_repo([f"M{i}.objects.all()" for i in range(12)])   # 12 distinct models
+    ep = _thing_ep(root)
+    from analyzer import DEPTH_CEILING
+    assert ep.follow_stop == "ceiling"                 # honest blindspot, not a false 'complete'
+    assert ep.follow_depth == DEPTH_CEILING            # reached the cap while still learning
+
+
+def test_adaptive_depth_terminates_on_recursion():
+    """Mutual recursion (a→b→a) and self-recursion must not hang or double-count — the `followed`
+    set stops a callee being re-entered. Both real reads are still found exactly once."""
+    d = tempfile.mkdtemp()
+    with open(os.path.join(d, "app.py"), "w") as f:
+        f.write("from fastapi import FastAPI\napp = FastAPI()\n"
+                "@app.get('/thing')\ndef handler():\n    return a()\n"
+                "def a():\n    Ay.objects.all()\n    return b()\n"
+                "def b():\n    Bee.objects.all()\n    return a()\n")   # b → a cycle
+    models = _models_read(d)
+    assert models == {"Ay", "Bee"}                     # both found, walk terminated (no hang)
+
+
 def test_delegator_and_closure_collision():
     d = tempfile.mkdtemp()
     # handler → facade (pure delegator, no facts) → worker (reads ModelA) → deep (reads ModelB)
