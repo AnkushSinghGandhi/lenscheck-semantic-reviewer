@@ -50,8 +50,19 @@ def test_unknown_wrapper_call_does_not_forge_a_leak():
 def test_async_and_log_and_return_sinks():
     delay = _pii('def post(self, request):\n    tasks.notify.delay(user.email)\n')
     ret = _pii('def get(self, request):\n    return user.phone\n')
-    assert delay.status == "✓" and any("celery.delay" in it for it in delay.items)
-    assert ret.status == "✓" and any("phone → response" in it for it in ret.items)
+    assert delay.status == "✓" and any("celery.delay" in it for it in delay.items)   # off-platform → ✓
+    assert ret.status == "⚠" and any("phone → response" in it for it in ret.items)   # to client → ⚠
+
+
+def test_streamed_raw_sql_pii_reaches_the_client():
+    # a raw-SQL export: PII column selected → cursor tainted → fetched rows → yielded to the client
+    e = _pii('def rows(self):\n'
+             '    with connection.cursor() as cur:\n'
+             '        cur.execute("SELECT u.email FROM users u")\n'
+             '        for row in cur.fetchall():\n'
+             '            yield row\n')
+    assert e.status == "⚠"                                       # PII returned to client (not off-platform)
+    assert any("email → response" in it for it in e.items)
 
 
 def test_instance_write_resolves_via_for_loop():
