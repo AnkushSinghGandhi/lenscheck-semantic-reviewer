@@ -646,6 +646,9 @@ def _orm_model_method(f):
 _SQL_COMMENT_RE = re.compile(r"--[^\n]*|/\*.*?\*/", re.S)          # strip -- line and /* */ comments
 _SQL_WRITE_RE = re.compile(r'\b(?:insert\s+into|update|delete\s+from)\s+[`"\[]?([\w.]+)', re.I)
 _SQL_READ_RE = re.compile(r'\b(?:from|join)\s+[`"\[]?([\w.]+)', re.I)
+# CTE names: `WITH x AS (…), y AS (…)`. A later `FROM x`/`JOIN x` references the CTE, NOT a table —
+# excluding these stops the query-local alias being hallucinated as a real table.
+_SQL_CTE_RE = re.compile(r'(?:\bwith\s+|,\s*)([`"\[]?\w+[`"\]]?)\s+as\s*\(', re.I)
 _SQL_STOPWORDS = {"select", "dual", "lateral", "only", "where", "values", "set"}
 
 
@@ -680,15 +683,17 @@ def _sql_tables(sql):
     if not any(k in sql.lower() for k in ("select", "insert", "update", "delete")):
         return []
     sql = _SQL_COMMENT_RE.sub(" ", sql)
+    ctes = {_clean_table(m.group(1)) for m in _SQL_CTE_RE.finditer(sql)}   # query-local, not tables
+    ctes.discard(None)
     out, seen = [], set()
     for m in _SQL_WRITE_RE.finditer(sql):
         t = _clean_table(m.group(1))
-        if t and t not in seen:
+        if t and t not in ctes and t not in seen:
             seen.add(t)
             out.append((t, "write"))
     for m in _SQL_READ_RE.finditer(sql):
         t = _clean_table(m.group(1))
-        if t and t not in seen:
+        if t and t not in ctes and t not in seen:
             seen.add(t)
             out.append((t, "read"))
     return out
