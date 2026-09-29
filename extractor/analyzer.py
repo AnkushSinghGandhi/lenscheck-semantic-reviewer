@@ -340,11 +340,13 @@ def parse_endpoints(index: RepoIndex) -> list:
 class FactCollector(ast.NodeVisitor):
     """Walk a function body; collect lens facts. Records callees for 1-level follow."""
 
-    def __init__(self, file: str = "", consts=None, class_models=None, self_type=None, known_models=None):
+    def __init__(self, file: str = "", consts=None, class_models=None, self_type=None, known_models=None,
+                 manager_model=None):
         self.file = file
         self.class_models = class_models or {}   # Serializer/Form name -> its Meta.model table
         self.known_models = known_models or set()  # all repo model/class names — for FK traversal detection
         self.self_type = self_type               # enclosing class, so `self.objects.x()` names its table
+        self.manager_model = manager_model       # set when walking a Manager method: `self.create()` → this model
         self.db = []           # (model, kind, file, line)
         self.external = []     # (root, dest, file, line)
         self.async_ = []       # (mechanism, target, file, line)
@@ -354,6 +356,7 @@ class FactCollector(ast.NodeVisitor):
         self.func_calls = []   # bare names called x(...)
         self.typed_calls = []  # (ClassName, method) called as Model.method(...)
         self.manager_calls = []  # (Model, method) for Model.objects.<custom>() — follow into its Manager
+        self.manager_fallback = []  # (Model, method, file, line) — a read added only if the Manager is unresolved
         self.call_arg_models = {}  # call-key -> [model|None per positional arg]; binds a helper's param
                                    # to the model actually passed (`fetch_all(Product)` → param=Product)
         self.var_types = {}    # local var name -> Model (so `order.save()` → Order:write)
@@ -379,6 +382,12 @@ class FactCollector(ast.NodeVisitor):
     def visit_Call(self, node: ast.Call):
         f = node.func
         fl, ln = self._loc(node)
+        # inside a followed custom-Manager method: `self.create()/save()/filter()/…` acts on the model
+        # the manager MANAGES (set via manager_model), so resolve it to that model's table — this is
+        # what makes `Order.objects.import_batch()`'s `self.create()` a real write, not a fallback read.
+        if self.manager_model and isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) \
+                and f.value.id == "self" and f.attr in (ORM_WRITE | ORM_READ):
+            self.db.append((self.manager_model, "write" if f.attr in ORM_WRITE else "read", fl, ln))
         # ORM:  <Model>.objects.<method>(...)  and chained querysets
         model, method = _orm_model_method(f)
         if model and method:
@@ -391,13 +400,16 @@ class FactCollector(ast.NodeVisitor):
                 # `link_model = SynonymLink`), else record an honest `<instance>` rather than
                 # inventing a table literally named `model`/`link_model`/`target_model`.
                 model = self.var_types.get(model) or "<instance>"
-            kind = "write" if method in ORM_WRITE else ("read" if method in ORM_READ else "read")
-            self.db.append((model, kind, fl, ln))
-            # a non-standard method on `Model.objects` is a CUSTOM MANAGER method (`Order.objects.
-            # import_batch(...)`) — record it so the follow can descend into the Manager class and
-            # surface the reads/writes hidden in its body (the default `read` above is just a fallback).
             if method not in ORM_READ and method not in ORM_WRITE and model[:1].isupper():
+                # a non-standard method on `Model.objects` is a CUSTOM MANAGER method (`Order.objects.
+                # import_batch(...)`). Follow into the Manager to get its real reads/writes; the read
+                # is only a FALLBACK, added in `_walk_follow` iff the Manager can't be resolved — so a
+                # resolved write (`self.create` inside the method) isn't shadowed by a spurious read.
                 self.manager_calls.append((model, method))
+                self.manager_fallback.append((model, method, fl, ln))
+            else:
+                kind = "write" if method in ORM_WRITE else "read"
+                self.db.append((model, kind, fl, ln))
             # Django FK traversal in filter/exclude/get kwargs: `fk_field__col__gte=val`
             # causes a JOIN on the related table. The kwarg stem is the FK field name (snake_case);
             # convert to CamelCase and check the repo index — if it's a known model, record a read.
@@ -457,6 +469,9 @@ class FactCollector(ast.NodeVisitor):
             if sql:
                 for tbl, kind in _sql_tables(sql):
                     self.db.append((tbl, kind, fl, ln))
+                # a sensitive column in the SQL (`SELECT u.email …`) is a PII read the ORM lens misses
+                for col in {m.group(1).lower() for m in _SQL_PII_RE.finditer(sql)}:
+                    self.pii.append((col, fl, ln))
         # cache read / mutate (E7): cache.get(k) / cache.set(k, …) / cache.delete(k) / caches['x'].clear()
         if isinstance(f, ast.Attribute) and _is_cache_receiver(f.value) \
                 and f.attr in (CACHE_READ | CACHE_WRITE):
@@ -684,6 +699,14 @@ _SQL_READ_RE = re.compile(r'\b(?:from|join)\s+[`"\[]?([\w.]+)', re.I)
 # excluding these stops the query-local alias being hallucinated as a real table.
 _SQL_CTE_RE = re.compile(r'(?:\bwith\s+|,\s*)([`"\[]?\w+[`"\]]?)\s+as\s*\(', re.I)
 _SQL_STOPWORDS = {"select", "dual", "lateral", "only", "where", "values", "set"}
+
+# High-confidence PII column names to scan for inside raw SQL (a `SELECT u.email …` reads PII the ORM
+# lens would otherwise miss). Curated to avoid collisions (`address`/`pan`/`card` are too ambiguous as
+# bare SQL tokens); `\b` bounds each so `email` in `email_verified` / `user.email` behaves correctly.
+_SQL_PII_COLS = ("user_email", "billing_email", "email", "phone_number", "mobile_number",
+                 "phone", "mobile", "password", "ssn", "aadhaar", "aadhar",
+                 "date_of_birth", "dob", "card_number", "pan_number", "passport")
+_SQL_PII_RE = re.compile(r"\b(" + "|".join(_SQL_PII_COLS) + r")\b", re.I)
 
 
 def _extract_sql(arg, str_vars):
@@ -1170,6 +1193,17 @@ def _fact_keys(local):
     return keys
 
 
+def _manager_followable(index, model, method):
+    """True if `model.objects.<method>()` is a custom Manager method we can actually follow (the
+    Manager class is in the repo and defines the method) — so the call needs no fallback read."""
+    mgr = index.model_managers.get(model)
+    if not mgr:
+        return False
+    cls, _ = index.find_class(mgr)
+    return cls is not None and any(
+        isinstance(m, ast.FunctionDef) and m.name == method for m in cls.body)
+
+
 def _seed_from_args(callee, arg_models):
     """Map a callee's params to the concrete models passed at the call site: `fetch_all(Product)` +
     `def fetch_all(model)` → {model: Product}. Skips a leading self/cls so methods align too."""
@@ -1183,7 +1217,7 @@ def _seed_from_args(callee, arg_models):
 
 
 def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self_type=None,
-                 seen=None, dry_streak=0, stop=None, seed_types=None):
+                 seen=None, dry_streak=0, stop=None, seed_types=None, manager_model=None):
     """Collect facts in `fn`; recurse into the functions it calls with an ADAPTIVE, findings-driven
     depth (see the constants above). A branch keeps descending while it reveals NEW facts and brakes
     once it dries out — so deep service/repository stacks get chased and thin handlers stop early,
@@ -1204,10 +1238,17 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
     owner_rel = _rel(index, owner_file)
     local = FactCollector(owner_rel, consts=index.consts_for(owner_file),
                           class_models=index.class_models, self_type=self_type,
-                          known_models=set(index.classes))
+                          known_models=set(index.classes), manager_model=manager_model)
     if seed_types:
         local.var_types.update(seed_types)     # bind params to the models passed at the call site
     local.visit(fn)
+    # A custom-manager call (`Order.objects.import_batch()`) records NO fact at the call site — the
+    # Manager is followed below and its body supplies the real reads/writes. If the Manager can't be
+    # resolved (not in the repo), keep a fallback READ so the table isn't lost entirely.
+    for m_model, m_method, m_fl, m_ln in local.manager_fallback:
+        if not _manager_followable(index, m_model, m_method):
+            tag = "" if depth == 0 else "*"
+            agg.db.append((m_model, "read" + tag, local.file, m_ln))
     if depth == 0:
         agg.db += local.db
         agg.external += local.external
@@ -1307,8 +1348,8 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
                              seed_types=_seed_from_args(node, local.call_arg_models.get(key)))
 
     # Model.objects.<custom>() — a custom Manager method. Resolve the model's Manager class and follow
-    # its body, so reads/writes hidden in `Order.objects.import_batch(...)` are surfaced (not just the
-    # fallback `read` recorded at the call site).
+    # its body with `manager_model` set to the managed Model, so `self.create()` inside surfaces as a
+    # real write to that model's table (not the fallback read the call site would otherwise guess).
     for cname, mname in sorted(set(local.manager_calls)):
         key = f"manager:{cname}.{mname}"
         if key in followed:
@@ -1325,7 +1366,8 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
         followed.add(key)
         mcls_methods = {m.name: m for m in mcls.body if isinstance(m, ast.FunctionDef)}
         _walk_follow(method, agg, index, mfile, mcls_methods, followed, child_depth, self_type=mgr,
-                     seen=seen, dry_streak=child_streak, stop=stop)
+                     seen=seen, dry_streak=child_streak, stop=stop,
+                     manager_model=cname)     # cname is the managed Model — `self.create()` writes it
 
 
 def _tag_indirect(agg, sub):
