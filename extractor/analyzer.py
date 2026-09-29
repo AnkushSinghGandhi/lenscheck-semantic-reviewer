@@ -509,15 +509,16 @@ class FactCollector(ast.NodeVisitor):
         if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "self":
             self.self_calls.append(f.attr)
         elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) \
-                and f.value.id[:1].isupper() and f.attr not in {"objects", "as_view"} \
-                and f.attr not in ORM_READ and f.attr not in ORM_WRITE:
-            # Model.classmethod(...)  e.g. OrderedItems.insert_ordered_item(...)
+                and f.value.id[:1].isupper() and f.attr not in {"objects", "as_view"}:
+            # Class.classmethod(...)  e.g. OrderedItems.insert_ordered_item(...) / OrderService.create(...).
+            # ORM-verb names (create/update/…) are NOT excluded: a service/repo method is often named
+            # exactly `create`/`save`, and an unresolved callee simply doesn't follow (see _walk_follow).
             self.typed_calls.append((f.value.id, f.attr))
             self.call_arg_models[f"{f.value.id}.{f.attr}"] = self._arg_models(node)
         elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) \
-                and f.value.id[:1].islower() and f.value.id not in {"self", "cls"} \
-                and f.attr not in ORM_READ and f.attr not in ORM_WRITE:
-            # module.fn(...)  e.g. rows.list_entities(...) — lowercase module alias
+                and f.value.id[:1].islower() and f.value.id not in {"self", "cls"}:
+            # module.fn(...) / instance.method(...) — e.g. rows.list_entities(...) or uc.create(...).
+            # Same: don't exclude ORM verbs; resolution (mod_imports / instance_types) gates the follow.
             self.typed_calls.append((f.value.id, f.attr))
             self.call_arg_models[f"{f.value.id}.{f.attr}"] = self._arg_models(node)
         elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Call) \
