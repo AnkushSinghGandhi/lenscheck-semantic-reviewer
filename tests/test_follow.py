@@ -81,6 +81,24 @@ def test_custom_manager_method_is_followed():
     assert "AuditRow" in _models_read(d)      # the write inside the manager body is found
 
 
+def test_instance_variable_helper_method_is_followed():
+    """`flow = mod.Helper(req); flow.run()` — a helper stored in a variable — is resolved to its class
+    and followed into `Helper.run`, where controllers hide the real DB writes (example-backend)."""
+    d = tempfile.mkdtemp()
+    with open(os.path.join(d, "helpers.py"), "w") as f:
+        f.write("class ProfileFlow:\n"
+                "    def __init__(self, req):\n        pass\n"
+                "    def run(self):\n        User.objects.filter(id=1).update(name='x')\n")   # write hidden here
+    with open(os.path.join(d, "app.py"), "w") as f:
+        f.write("from fastapi import FastAPI\napp = FastAPI()\nimport helpers\n"
+                "@app.get('/thing')\ndef handler(req):\n"
+                "    flow = helpers.ProfileFlow(req)\n"        # instance = module.Helper(...)
+                "    return flow.run()\n"                      # instance.method() → must follow
+                "class User:\n    pass\n")
+    facts = [i.split(" @ ")[0] for i in _thing_ep(d).e3_db_tables.items]
+    assert any(f.startswith("User:write") for f in facts), facts   # the helper's write is surfaced
+
+
 def test_manager_method_self_create_is_a_write():
     """`Model.objects.<custom>()` follows the Manager, and `self.create()` inside it is a WRITE to the
     managed model (not the fallback read the call site would guess). No spurious read is emitted."""
