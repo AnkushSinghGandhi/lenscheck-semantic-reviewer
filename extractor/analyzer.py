@@ -87,6 +87,8 @@ class Endpoint:
     e6_pii: Edge = None
     e7_cache: Edge = None
     tables: dict = field(default_factory=dict)   # model -> {"table": name, "explicit": bool}
+    follow_depth: int = 0     # deepest fact-bearing hop the adaptive follow actually reached
+    follow_stop: str = ""     # why it stopped: 'dried_out' (complete) / 'ceiling' / 'budget' (⚠ maybe more)
 
 
 # ---- repo index ----------------------------------------------------------------------
@@ -1067,9 +1069,13 @@ def build_edges(ep, method_nodes, index, owner_file, self_type=None, class_metho
     decorated function. The FactCollector + scorers below are pure Python analysis."""
     agg = FactCollector(_rel(index, owner_file), known_models=set(index.classes))
     followed = set()
+    seen = set()                                    # every fact key found ANYWHERE in this endpoint
+    stop = {"reason": "dried_out", "depth": 0, "first_fact": None}   # adaptive-follow outcome
     for m in method_nodes:
         _walk_follow(m, agg, index, owner_file, class_methods or {}, followed, depth=0,
-                     self_type=self_type)
+                     self_type=self_type, seen=seen, dry_streak=0, stop=stop)
+    ep.follow_depth = stop["depth"]                 # deepest fact-bearing hop reached (observability)
+    ep.follow_stop = stop["reason"]                 # 'dried_out' complete, else possibly-incomplete
     ep.e3_db_tables = _score_db(agg)
     ep.e4_external = _score_external(agg)
     ep.e5_async = _score_async(agg)
@@ -1083,19 +1089,55 @@ def build_edges(ep, method_nodes, index, owner_file, self_type=None, class_metho
     return ep
 
 
-MAX_FOLLOW_DEPTH = 3   # counts *fact-bearing* hops (pass-through delegators are free — see below).
-FOLLOW_BUDGET = 250    # hard cap on functions followed per endpoint. The `followed` set already
-                       # prevents re-visiting so this only caps pathological fan-out. Raised from 60
-                       # after entity endpoints with wide module helper graphs were hitting it early.
+# --- adaptive follow depth (was a flat MAX_FOLLOW_DEPTH=3) --------------------------------------
+# Depth is no longer a magic constant. A branch deepens while it keeps revealing NEW facts and stops
+# once it "dries out" — DRY_STREAK_K consecutive fact-bearing hops that add nothing new. This adapts
+# to the repo, the endpoint, and its abstraction depth automatically: measured recall saturates at
+# depth 4 on commerce and 5 on example_cms (see experiments/adaptive_depth_findings.md), and a
+# findings-driven stop reproduces each without per-repo tuning. Deeper follow is ~free — wall time is
+# flat across depth because `followed` + pass-through-free already bound the work — so the ceiling is
+# a loose safety net, not the primary limit.
+DEPTH_CEILING = 8      # hard safety cap on fact-bearing hops; rarely the actual stop (dry-streak is)
+DRY_STREAK_K = 3       # stop a branch after K fact-bearing hops that reveal NO new fact (the adaptive
+                       # stop). K=3 makes the walk a provable recall-superset of the old flat depth-3.
+FOLLOW_BUDGET = 250    # unchanged global backstop on total functions followed per endpoint. The
+                       # `followed` set prevents re-visiting, so this only caps pathological fan-out.
 
 
-def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self_type=None):
-    """Collect facts in `fn`; recurse up to MAX_FOLLOW_DEPTH into the functions it calls.
+def _fact_keys(local):
+    """Content identity of a frame's facts — the marginal-yield signal ("did this frame teach us
+    anything new?"). Excludes the volatile line number (keeps the file, for cross-file distinctness)
+    and the cosmetic '*'/'(via call)' tags — computed on the RAW frame before `_tag_indirect` runs —
+    so the new-vs-seen decision is a pure, hash-seed-independent function of the source."""
+    keys = set()
+    for (m, k, f, _ln) in local.db:        keys.add(("db", m, k.rstrip("*"), f))
+    for (r, d, f, _ln) in local.external:  keys.add(("ext", r, d, f))
+    for (me, t, f, _ln) in local.async_:   keys.add(("async", me, t, f))
+    for (k, d, f, _ln) in local.cache:     keys.add(("cache", k.rstrip("*"), d, f))
+    for (a, f, _ln) in local.pii:          keys.add(("pii", a, f))
+    for (fld, snk, f, _ln) in local.leaks: keys.add(("leak", fld, snk, f))
+    return keys
 
-    Facts in the handler itself (depth 0) are direct; anything reached through a call (depth ≥ 1)
-    is tagged "(via call)" so the report stays honest about indirection. `self_type` is the class
-    `fn` belongs to, so a `self.objects.x()` inside it resolves to that class's table.
+
+def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self_type=None,
+                 seen=None, dry_streak=0, stop=None):
+    """Collect facts in `fn`; recurse into the functions it calls with an ADAPTIVE, findings-driven
+    depth (see the constants above). A branch keeps descending while it reveals NEW facts and brakes
+    once it dries out — so deep service/repository stacks get chased and thin handlers stop early,
+    with no magic depth number.
+
+    Facts in the handler itself (depth 0) are direct; anything reached through a call (depth ≥ 1) is
+    tagged "(via call)" so the report stays honest about indirection. `self_type` is the class `fn`
+    belongs to, so a `self.objects.x()` inside it resolves to that class's table.
+
+    `seen` (per-endpoint, shared) is every fact key discovered so far; `dry_streak` (per-branch, by
+    value) counts consecutive fact-bearing hops that revealed nothing new; `stop` (shared) records
+    the deepest hop reached and why the walk ended — for the published-blindspot report.
     """
+    if seen is None:
+        seen = set()
+    if stop is None:
+        stop = {"reason": "dried_out", "depth": 0, "first_fact": None}
     owner_rel = _rel(index, owner_file)
     local = FactCollector(owner_rel, consts=index.consts_for(owner_file),
                           class_models=index.class_models, self_type=self_type,
@@ -1111,13 +1153,37 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
     else:
         _tag_indirect(agg, local)      # reached via a call → mark it
 
-    # A pass-through frame — a facade/delegator that carries no facts of its own and just forwards
-    # (e.g. `ClientHelper.entity_search` = `return client_entity_search(...)`) — shouldn't spend a
-    # depth level, or plumbing layers exhaust the budget before the real data logic is reached.
-    contributed = bool(local.db or local.external or local.async_ or local.cache
-                       or local.pii or local.leaks)
-    child_depth = depth + 1 if (depth == 0 or contributed) else depth
-    if child_depth > MAX_FOLLOW_DEPTH or len(followed) >= FOLLOW_BUDGET:
+    # marginal-yield signal: what did THIS frame teach us that we didn't already know? Computed on the
+    # raw frame (line- and tag-independent) so it's deterministic and stable across runs.
+    keys = _fact_keys(local)
+    new_keys = keys - seen
+    seen |= new_keys
+    contributed = bool(keys)                       # same "has any facts" test as before
+    if new_keys and depth > stop["depth"]:
+        stop["depth"] = depth                      # deepest hop that actually YIELDED a new fact
+    if new_keys and stop["first_fact"] is None:
+        stop["first_fact"] = depth
+
+    # Depth AND the dry-streak both treat a pass-through frame — a facade/delegator carrying no facts
+    # of its own, just forwarding — as FREE: plumbing layers never spend depth or advance the streak,
+    # so we reach the real data logic through any amount of indirection. A fact-bearing frame advances
+    # depth; it resets the streak if it revealed something new, else it extends the dry run.
+    if depth == 0:
+        child_depth, child_streak = depth + 1, 0
+    elif contributed:
+        child_depth = depth + 1
+        child_streak = 0 if new_keys else dry_streak + 1
+    else:
+        child_depth, child_streak = depth, dry_streak
+
+    # terminations — dry-out is the natural (complete) stop; ceiling/budget mark possibly-incomplete
+    if child_streak >= DRY_STREAK_K:
+        return
+    if child_depth > DEPTH_CEILING:
+        stop["reason"] = "ceiling"
+        return
+    if len(followed) >= FOLLOW_BUDGET:
+        stop["reason"] = "budget"
         return
 
     # self.method(...) — resolve against the current class's own methods (same self_type).
@@ -1129,7 +1195,8 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
         if mname in classmethods and key not in followed:
             followed.add(key)
             _walk_follow(classmethods[mname], agg, index, owner_file, classmethods, followed,
-                         child_depth, self_type=self_type)
+                         child_depth, self_type=self_type,
+                         seen=seen, dry_streak=child_streak, stop=stop)
 
     # module-level func(...) defined in the repo (no `self`). Names bound locally — nested
     # closures, params — are excluded: a call to a local `resolve()` must not bind to a same-named
@@ -1141,7 +1208,8 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
         node, ffile = index.find_func(fname, near=owner_file, toplevel_only=True)
         if node is not None:
             followed.add(key)
-            _walk_follow(node, agg, index, ffile, {}, followed, child_depth)
+            _walk_follow(node, agg, index, ffile, {}, followed, child_depth,
+                         seen=seen, dry_streak=child_streak, stop=stop)
 
     # Model.classmethod(...) / Service().method(...) — recurse with THAT class's methods,
     # so a `self.x()` inside the service resolves correctly at the next level down.
@@ -1159,14 +1227,16 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
                 continue
             followed.add(key)
             cls_methods = {m.name: m for m in cls.body if isinstance(m, ast.FunctionDef)}
-            _walk_follow(method, agg, index, cfile, cls_methods, followed, child_depth, self_type=cname)
+            _walk_follow(method, agg, index, cfile, cls_methods, followed, child_depth, self_type=cname,
+                         seen=seen, dry_streak=child_streak, stop=stop)
         elif cname in mod_imports:
             # `cname` is a sibling module (`from . import cname`); treat as a bare module-level call
             mod_file = mod_imports[cname]
             node, ffile = index.find_func(mname, near=mod_file, toplevel_only=True)
             if node is not None:
                 followed.add(key)
-                _walk_follow(node, agg, index, ffile, {}, followed, child_depth)
+                _walk_follow(node, agg, index, ffile, {}, followed, child_depth,
+                             seen=seen, dry_streak=child_streak, stop=stop)
 
 
 def _tag_indirect(agg, sub):
