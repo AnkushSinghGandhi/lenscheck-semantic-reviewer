@@ -1,6 +1,7 @@
 """Interprocedural DB-read tracing: a read reached through a pass-through delegator must be found
 (recall), and a call to a nested closure must not bind to a same-named module function elsewhere
-(precision). Regression for the example `clients/entity-search` case that missed `colleges`."""
+(precision). Regression for a same-name facade `Helper.load()` delegating to a module-level
+`load()` that missed a table read."""
 
 import os
 import sys
@@ -89,7 +90,7 @@ def test_get_object_or_404_reads_real_model():
 def test_get_object_or_404_skips_local_model_alias():
     """A runtime model *alias* (`M = apps.get_model(...)` / `M = RealModel`) passed to
     get_object_or_404 must NOT be credited as a table literally named `M` — no such table exists.
-    Regression for the example `Alias` phantom found by the gain audit."""
+    Regression for the `Alias` phantom found by the gain audit."""
     d = tempfile.mkdtemp()
     with open(os.path.join(d, "app.py"), "w") as f:
         f.write(
