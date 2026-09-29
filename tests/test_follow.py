@@ -81,6 +81,22 @@ def test_custom_manager_method_is_followed():
     assert "AuditRow" in _models_read(d)      # the write inside the manager body is found
 
 
+def test_manager_method_self_create_is_a_write():
+    """`Model.objects.<custom>()` follows the Manager, and `self.create()` inside it is a WRITE to the
+    managed model (not the fallback read the call site would guess). No spurious read is emitted."""
+    d = tempfile.mkdtemp()
+    with open(os.path.join(d, "app.py"), "w") as f:
+        f.write("from fastapi import FastAPI\napp = FastAPI()\n"
+                "@app.get('/thing')\ndef handler():\n    return Thing.objects.bulk_thing([])\n"
+                "class ThingManager:\n"
+                "    def bulk_thing(self, rows):\n        self.create(x=1)\n"
+                "class Thing:\n    objects = ThingManager()\n")
+    ep = _thing_ep(d)
+    facts = [i.split(" @ ")[0] for i in ep.e3_db_tables.items]
+    assert any(f.startswith("Thing:write") for f in facts)       # self.create → managed model write
+    assert not any(f.startswith("Thing:read") for f in facts)    # no spurious fallback read
+
+
 def test_helper_param_binds_to_passed_model():
     """A helper `def f(model): model.objects.all()` called as `f(Widget)` resolves to Widget — the
     param is bound to the model passed at the call site, not left as an anonymous <instance>."""

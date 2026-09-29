@@ -368,6 +368,20 @@ def test_raw_execute_extracts_tables_from_module_constant():
     assert got == {("ad_target_slice", "read"), ("users", "read")}
 
 
+def test_raw_sql_sensitive_column_is_a_pii_source():
+    # `SELECT u.email …` in raw SQL reads PII the ORM lens would miss → recorded as a PII source
+    src = ("def rows(cursor):\n"
+           "    cursor.execute('SELECT u.email, u.phone FROM users u WHERE u.id = %s', [1])\n")
+    fc = FactCollector("m.py")
+    fc.visit(ast.parse(src))
+    labels = {a for a, _f, _l in fc.pii}
+    assert "email" in labels and "phone" in labels
+    # a non-PII column must not be flagged
+    fc2 = FactCollector("m.py")
+    fc2.visit(ast.parse("def r(cur):\n    cur.execute('SELECT id, name FROM users')\n"))
+    assert fc2.pii == []
+
+
 def test_raw_execute_ignores_non_sql_strings():
     # `.execute()` / `.raw()` exist on non-DB objects too — a non-SQL arg must not invent tables
     src = ("def f(runner):\n"
