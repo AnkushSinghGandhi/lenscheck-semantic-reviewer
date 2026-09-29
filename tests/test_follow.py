@@ -18,6 +18,46 @@ def _models_read(root):
     return set()
 
 
+def _thing_ep(root):
+    for ep in analyze_repo(root):
+        if "/thing" in (ep.route or ""):
+            return ep
+    return None
+
+
+def _deep_chain_repo(hops_read):
+    """A handler → l1 → l2 → … chain where hop i runs `hops_read[i]`. Returns the temp repo dir."""
+    d = tempfile.mkdtemp()
+    body = ["from fastapi import FastAPI", "app = FastAPI()", "@app.get('/thing')",
+            "def handler():", "    return l0()"]
+    for i, stmt in enumerate(hops_read):
+        nxt = f"    return l{i+1}()" if i + 1 < len(hops_read) else "    return 1"
+        body += [f"def l{i}():", f"    {stmt}", nxt]
+    with open(os.path.join(d, "app.py"), "w") as f:
+        f.write("\n".join(body) + "\n")
+    return d
+
+
+def test_adaptive_depth_reaches_deep_new_facts():
+    """5 fact-bearing hops, each reading a DISTINCT model. The old flat depth-3 cap stopped at the
+    third — findings-driven follow keeps descending while every hop still reveals something new."""
+    root = _deep_chain_repo([f"Model{c}.objects.all()" for c in "ABCDE"])
+    models = _models_read(root)
+    assert {"ModelA", "ModelB", "ModelC", "ModelD", "ModelE"} <= models, models  # D,E are depth 4,5
+    ep = _thing_ep(root)
+    assert ep.follow_depth >= 5                    # observability: reports how deep data actually went
+    assert ep.follow_stop == "dried_out"           # natural, complete stop (never hit a cap)
+
+
+def test_adaptive_depth_dries_out_and_still_reports_the_fact():
+    """A chain that keeps re-reading the SAME model teaches nothing new past hop 1 → the branch
+    brakes (dried_out) instead of walking to the ceiling; the one real read is still reported."""
+    root = _deep_chain_repo(["Same.objects.all()"] * 6)
+    models = _models_read(root)
+    assert "Same" in models
+    assert _thing_ep(root).follow_stop == "dried_out"
+
+
 def test_delegator_and_closure_collision():
     d = tempfile.mkdtemp()
     # handler → facade (pure delegator, no facts) → worker (reads ModelA) → deep (reads ModelB)
