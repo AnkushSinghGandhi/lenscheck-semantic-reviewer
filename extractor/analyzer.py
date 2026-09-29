@@ -108,6 +108,7 @@ class RepoIndex:
         self.class_models: dict[str, str] = {}     # Serializer/Form/etc. name -> its Meta.model table
         self.perm_consts: dict[str, list] = {}     # PERMISSION_CONSTANT -> [class names] (unambiguous)
         self.model_tables: dict[str, str] = {}     # Model -> explicit Meta.db_table (SQL table name)
+        self.model_managers: dict[str, str] = {}   # Model -> its custom Manager class (from `objects = X()`)
         self.module_imports: dict[str, dict] = {}  # file -> {alias: stem} for relative module imports
         self._build()
 
@@ -185,6 +186,9 @@ class RepoIndex:
                 t = _class_db_table(child) or _class_tablename(child)   # Django Meta.db_table / SQLAlchemy __tablename__
                 if t:
                     self.model_tables[child.name] = t
+                mgr = _class_manager(child)                   # `objects = OrderManager()` → custom manager
+                if mgr:
+                    self.model_managers[child.name] = mgr
                 self._index_defs(child, path, toplevel=False)  # methods live under the class, not the module
             elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 self.funcs.setdefault(child.name, []).append((child, path, toplevel))
@@ -349,6 +353,9 @@ class FactCollector(ast.NodeVisitor):
         self.self_calls = []   # method names called as self.x(...)
         self.func_calls = []   # bare names called x(...)
         self.typed_calls = []  # (ClassName, method) called as Model.method(...)
+        self.manager_calls = []  # (Model, method) for Model.objects.<custom>() — follow into its Manager
+        self.call_arg_models = {}  # call-key -> [model|None per positional arg]; binds a helper's param
+                                   # to the model actually passed (`fetch_all(Product)` → param=Product)
         self.var_types = {}    # local var name -> Model (so `order.save()` → Order:write)
         # local var name -> resolved string (so `requests.post(url)` names the dest); seeded with
         # module/repo-level URL constants so an imported `requests.post(LEARN_API)` resolves too.
@@ -386,6 +393,11 @@ class FactCollector(ast.NodeVisitor):
                 model = self.var_types.get(model) or "<instance>"
             kind = "write" if method in ORM_WRITE else ("read" if method in ORM_READ else "read")
             self.db.append((model, kind, fl, ln))
+            # a non-standard method on `Model.objects` is a CUSTOM MANAGER method (`Order.objects.
+            # import_batch(...)`) — record it so the follow can descend into the Manager class and
+            # surface the reads/writes hidden in its body (the default `read` above is just a fallback).
+            if method not in ORM_READ and method not in ORM_WRITE and model[:1].isupper():
+                self.manager_calls.append((model, method))
             # Django FK traversal in filter/exclude/get kwargs: `fk_field__col__gte=val`
             # causes a JOIN on the related table. The kwarg stem is the FK field name (snake_case);
             # convert to CamelCase and check the repo index — if it's a known model, record a read.
@@ -451,10 +463,14 @@ class FactCollector(ast.NodeVisitor):
             kind = "read" if f.attr in CACHE_READ else "write"
             detail = f"{f.attr} {_cache_key(node, self.str_vars)}".strip()
             self.cache.append((kind, detail, fl, ln))
-        # external calls
+        # external calls — ANY method call on a known network/SDK root is egress. The verb list is no
+        # longer a filter (it missed `stripe.Charge.create`, `boto3.client(...).put_object`, …): these
+        # libraries exist to talk to external services, and the root is already gated to EXTERNAL_ROOTS
+        # (so `Order.objects.create` — root `Order`, not a lib — never matches). `request`-family verbs
+        # still lead the label when present, for readability.
         if isinstance(f, ast.Attribute):
             root = _root_name(f.value)
-            if root in EXTERNAL_ROOTS and f.attr in EXTERNAL_VERBS:
+            if root in EXTERNAL_ROOTS:
                 self.external.append((f"{root}.{f.attr}", _dest_of(node, self.str_vars), fl, ln))
         # async: threading.Thread(target=fn)
         if _is_threading_thread(f):
@@ -475,17 +491,21 @@ class FactCollector(ast.NodeVisitor):
                 and f.attr not in ORM_READ and f.attr not in ORM_WRITE:
             # Model.classmethod(...)  e.g. OrderedItems.insert_ordered_item(...)
             self.typed_calls.append((f.value.id, f.attr))
+            self.call_arg_models[f"{f.value.id}.{f.attr}"] = self._arg_models(node)
         elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) \
                 and f.value.id[:1].islower() and f.value.id not in {"self", "cls"} \
                 and f.attr not in ORM_READ and f.attr not in ORM_WRITE:
             # module.fn(...)  e.g. rows.list_entities(...) — lowercase module alias
             self.typed_calls.append((f.value.id, f.attr))
+            self.call_arg_models[f"{f.value.id}.{f.attr}"] = self._arg_models(node)
         elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Call) \
                 and isinstance(f.value.func, ast.Name) and f.value.func.id[:1].isupper():
             # Service().method(...)  e.g. ProductService().get_product_details(...)
             self.typed_calls.append((f.value.func.id, f.attr))
+            self.call_arg_models[f"{f.value.func.id}.{f.attr}"] = self._arg_models(node)
         elif isinstance(f, ast.Name):
             self.func_calls.append(f.id)
+            self.call_arg_models[f.id] = self._arg_models(node)
         # taint sink: a tainted (sensitive) value passed into an egress call → a traced leak
         sink = _sink_label(f)
         if sink:
@@ -606,6 +626,20 @@ class FactCollector(ast.NodeVisitor):
         elif isinstance(node, ast.BinOp):
             labels |= self._taint_labels(node.left) | self._taint_labels(node.right)
         return labels
+
+    def _arg_models(self, node):
+        """Positional args of a call resolved to concrete model names (or None), so a followed helper
+        can bind its param to the model actually passed — `fetch_all(Product)` lets `model.objects` in
+        `def fetch_all(model)` resolve to Product instead of degrading to <instance>."""
+        out = []
+        for a in node.args:
+            if isinstance(a, ast.Name) and a.id in self.known_models:
+                out.append(a.id)                       # a model class passed by name
+            elif isinstance(a, ast.Name) and self.var_types.get(a.id):
+                out.append(self.var_types[a.id])       # a local already known to hold a model
+            else:
+                out.append(None)
+        return out
 
     @staticmethod
     def _model_of(value):
@@ -779,7 +813,7 @@ def _sink_label(f):
     Sinks: an external client call, a Celery dispatch, a logging call, or an HTTP Response()."""
     if isinstance(f, ast.Attribute):
         root = _root_name(f.value)
-        if root in EXTERNAL_ROOTS and f.attr in EXTERNAL_VERBS:
+        if root in EXTERNAL_ROOTS:                      # any call on a network/SDK root is egress
             return f"{root}.{f.attr}"
         if f.attr in {"delay", "apply_async"}:
             return f"celery.{f.attr}"
@@ -900,6 +934,18 @@ def _class_tablename(classdef):
         if isinstance(s, ast.Assign) and any(
                 isinstance(t, ast.Name) and t.id == "__tablename__" for t in s.targets):
             return _const_str(s.value)
+    return None
+
+
+def _class_manager(classdef):
+    """The custom Manager class from a model's `objects = XManager()` — so `Model.objects.<custom>()`
+    can be followed into that Manager's body. Returns the class name or None. Only a direct `objects =
+    <Name>()` counts (the default manager); the default `models.Manager` gives no extra methods to
+    follow, so a `models.Manager()` value (an Attribute call) is intentionally ignored."""
+    for s in classdef.body:
+        if isinstance(s, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "objects" for t in s.targets) \
+                and isinstance(s.value, ast.Call) and isinstance(s.value.func, ast.Name):
+            return s.value.func.id
     return None
 
 
@@ -1124,8 +1170,20 @@ def _fact_keys(local):
     return keys
 
 
+def _seed_from_args(callee, arg_models):
+    """Map a callee's params to the concrete models passed at the call site: `fetch_all(Product)` +
+    `def fetch_all(model)` → {model: Product}. Skips a leading self/cls so methods align too."""
+    if not arg_models or not isinstance(callee, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return {}
+    params = [a.arg for a in (callee.args.posonlyargs + callee.args.args)]
+    if params and params[0] in ("self", "cls"):
+        params = params[1:]
+    return {params[i]: arg_models[i]
+            for i in range(min(len(params), len(arg_models))) if arg_models[i]}
+
+
 def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self_type=None,
-                 seen=None, dry_streak=0, stop=None):
+                 seen=None, dry_streak=0, stop=None, seed_types=None):
     """Collect facts in `fn`; recurse into the functions it calls with an ADAPTIVE, findings-driven
     depth (see the constants above). A branch keeps descending while it reveals NEW facts and brakes
     once it dries out — so deep service/repository stacks get chased and thin handlers stop early,
@@ -1147,6 +1205,8 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
     local = FactCollector(owner_rel, consts=index.consts_for(owner_file),
                           class_models=index.class_models, self_type=self_type,
                           known_models=set(index.classes))
+    if seed_types:
+        local.var_types.update(seed_types)     # bind params to the models passed at the call site
     local.visit(fn)
     if depth == 0:
         agg.db += local.db
@@ -1214,7 +1274,8 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
         if node is not None:
             followed.add(key)
             _walk_follow(node, agg, index, ffile, {}, followed, child_depth,
-                         seen=seen, dry_streak=child_streak, stop=stop)
+                         seen=seen, dry_streak=child_streak, stop=stop,
+                         seed_types=_seed_from_args(node, local.call_arg_models.get(fname)))
 
     # Model.classmethod(...) / Service().method(...) — recurse with THAT class's methods,
     # so a `self.x()` inside the service resolves correctly at the next level down.
@@ -1233,7 +1294,8 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
             followed.add(key)
             cls_methods = {m.name: m for m in cls.body if isinstance(m, ast.FunctionDef)}
             _walk_follow(method, agg, index, cfile, cls_methods, followed, child_depth, self_type=cname,
-                         seen=seen, dry_streak=child_streak, stop=stop)
+                         seen=seen, dry_streak=child_streak, stop=stop,
+                         seed_types=_seed_from_args(method, local.call_arg_models.get(key)))
         elif cname in mod_imports:
             # `cname` is a sibling module (`from . import cname`); treat as a bare module-level call
             mod_file = mod_imports[cname]
@@ -1241,7 +1303,29 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
             if node is not None:
                 followed.add(key)
                 _walk_follow(node, agg, index, ffile, {}, followed, child_depth,
-                             seen=seen, dry_streak=child_streak, stop=stop)
+                             seen=seen, dry_streak=child_streak, stop=stop,
+                             seed_types=_seed_from_args(node, local.call_arg_models.get(key)))
+
+    # Model.objects.<custom>() — a custom Manager method. Resolve the model's Manager class and follow
+    # its body, so reads/writes hidden in `Order.objects.import_batch(...)` are surfaced (not just the
+    # fallback `read` recorded at the call site).
+    for cname, mname in sorted(set(local.manager_calls)):
+        key = f"manager:{cname}.{mname}"
+        if key in followed:
+            continue
+        mgr = index.model_managers.get(cname)
+        if not mgr:
+            continue
+        mcls, mfile = index.find_class(mgr, near=owner_file)
+        if mcls is None:
+            continue
+        method = next((m for m in mcls.body if isinstance(m, ast.FunctionDef) and m.name == mname), None)
+        if method is None:
+            continue
+        followed.add(key)
+        mcls_methods = {m.name: m for m in mcls.body if isinstance(m, ast.FunctionDef)}
+        _walk_follow(method, agg, index, mfile, mcls_methods, followed, child_depth, self_type=mgr,
+                     seen=seen, dry_streak=child_streak, stop=stop)
 
 
 def _tag_indirect(agg, sub):

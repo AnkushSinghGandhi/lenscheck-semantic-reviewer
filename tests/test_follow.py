@@ -68,6 +68,33 @@ def test_adaptive_depth_ceiling_is_labelled_not_silently_complete():
     assert ep.follow_depth == DEPTH_CEILING            # reached the cap while still learning
 
 
+def test_custom_manager_method_is_followed():
+    """`Model.objects.<custom>()` resolves the model's Manager class and follows its body, so a
+    write hidden in the manager method is surfaced — not just the fallback read at the call site."""
+    d = tempfile.mkdtemp()
+    with open(os.path.join(d, "app.py"), "w") as f:
+        f.write("from fastapi import FastAPI\napp = FastAPI()\n"
+                "@app.get('/thing')\ndef handler():\n    return Thing.objects.bulk_thing([])\n"
+                "class ThingManager:\n"
+                "    def bulk_thing(self, rows):\n        AuditRow.objects.create(x=1)\n"
+                "class Thing:\n    objects = ThingManager()\n")
+    assert "AuditRow" in _models_read(d)      # the write inside the manager body is found
+
+
+def test_helper_param_binds_to_passed_model():
+    """A helper `def f(model): model.objects.all()` called as `f(Widget)` resolves to Widget — the
+    param is bound to the model passed at the call site, not left as an anonymous <instance>."""
+    d = tempfile.mkdtemp()
+    with open(os.path.join(d, "app.py"), "w") as f:
+        f.write("from fastapi import FastAPI\napp = FastAPI()\n"
+                "@app.get('/thing')\ndef handler():\n    return fetch_all(Widget)\n"
+                "def fetch_all(model):\n    return list(model.objects.all())\n"
+                "class Widget:\n    pass\n")
+    models = _models_read(d)
+    assert "Widget" in models                 # bound to the passed model
+    assert "model" not in models               # never the literal param name
+
+
 def test_adaptive_depth_terminates_on_recursion():
     """Mutual recursion (a→b→a) and self-recursion must not hang or double-count — the `followed`
     set stops a callee being re-entered. Both real reads are still found exactly once."""
