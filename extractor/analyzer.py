@@ -375,6 +375,13 @@ class FactCollector(ast.NodeVisitor):
         if model and method:
             if model in ("self", "cls"):                 # `self.objects.x()` in a model method →
                 model = self.self_type or "<instance>"   # the enclosing class, not a table named "self"
+            elif model[:1].islower():
+                # a lowercase receiver before `.objects` is a *variable* (a param, a local, a runtime
+                # `apps.get_model(...)` result), never a model class — Django/SQLAlchemy models are
+                # PascalCase. Resolve it to the concrete model if we tracked its binding (e.g.
+                # `link_model = SynonymLink`), else record an honest `<instance>` rather than
+                # inventing a table literally named `model`/`link_model`/`target_model`.
+                model = self.var_types.get(model) or "<instance>"
             kind = "write" if method in ORM_WRITE else ("read" if method in ORM_READ else "read")
             self.db.append((model, kind, fl, ln))
             # Django FK traversal in filter/exclude/get kwargs: `fk_field__col__gte=val`
@@ -496,6 +503,9 @@ class FactCollector(ast.NodeVisitor):
     def visit_Assign(self, node: ast.Assign):
         # remember `x = <something that reveals a Model>` so a later `x.save()` names the table
         model = self._model_of(node.value)
+        if not model and isinstance(node.value, ast.Name) and node.value.id in self.known_models:
+            model = node.value.id                                      # `link_model = SynonymLink`
+            # a bare class alias: a later `link_model.objects.filter()` now resolves to the real model
         for tgt in node.targets:
             if isinstance(tgt, ast.Name):
                 self.assigned_names.add(tgt.id)                        # a locally-bound name (see __init__)
@@ -603,8 +613,10 @@ class FactCollector(ast.NodeVisitor):
         if isinstance(f, ast.Name) and f.id[:1].isupper():          # Model(...)
             return f.id
         m, _ = _orm_model_method(f)                                 # Model.objects.<method>(...)
-        if m:
-            return m
+        if m and m[:1].isupper():
+            return m                # skip a lowercase receiver (`table_class.objects.get()`): it's a
+                                    # runtime-chosen model, not a class — don't propagate it as a type
+                                    # that a later `.save()` would then write to a table named `table_class`
         if isinstance(f, ast.Name) and f.id in {"get_object_or_404", "get_list_or_404"} \
                 and value.args and isinstance(value.args[0], ast.Name) \
                 and value.args[0].id[:1].isupper():                 # get_object_or_404(Model, …)
