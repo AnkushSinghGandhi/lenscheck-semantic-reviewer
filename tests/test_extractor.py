@@ -332,6 +332,30 @@ def test_sql_tables_unit_reads_writes_and_subquery():
     assert _sql_tables("just a plain string, not sql") == []          # conservative: no SQL, no tables
 
 
+def test_sql_tables_cte_alias_is_not_a_table():
+    from extractor.analyzer import _sql_tables
+    # `WITH recent AS (…)` defines a query-local alias; a later FROM/JOIN recent references the CTE,
+    # NOT a table — it must not be hallucinated (regression: the torture fixture caught this).
+    got = _sql_tables("WITH recent AS (SELECT id FROM orders WHERE created > %s) "
+                      "SELECT r.id, p.amount FROM recent r JOIN payments p ON p.order_id = r.id")
+    assert got == [("orders", "read"), ("payments", "read")]          # orders (in the CTE) + payments
+    assert ("recent", "read") not in got                             # the CTE name is NOT a table
+    # multiple CTEs
+    multi = _sql_tables("WITH a AS (SELECT 1 FROM users), b AS (SELECT 1 FROM orders) "
+                        "SELECT * FROM a JOIN b ON 1=1 JOIN payments p ON 1=1")
+    assert set(multi) == {("users", "read"), ("orders", "read"), ("payments", "read")}
+
+
+def test_sql_tables_update_subquery_schema():
+    from extractor.analyzer import _sql_tables
+    # UPDATE target is a write; a table read inside its subquery is a read
+    assert _sql_tables("UPDATE payments SET amount=%s WHERE order_id IN "
+                       "(SELECT id FROM orders WHERE status=%s)") == [("payments", "write"), ("orders", "read")]
+    # schema-qualified name → the table part; alias ignored
+    assert _sql_tables("SELECT * FROM analytics.events e JOIN users u ON u.id=e.uid") \
+        == [("events", "read"), ("users", "read")]
+
+
 def test_raw_execute_extracts_tables_from_module_constant():
     # the real-world shape: a `_SQL = """…"""` module constant run via `cursor.execute(_SQL, …)`.
     # The constant is seeded into str_vars exactly as the repo index does, so it must resolve.
