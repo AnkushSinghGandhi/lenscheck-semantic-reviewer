@@ -470,8 +470,13 @@ class FactCollector(ast.NodeVisitor):
                 for tbl, kind in _sql_tables(sql):
                     self.db.append((tbl, kind, fl, ln))
                 # a sensitive column in the SQL (`SELECT u.email …`) is a PII read the ORM lens misses
-                for col in {m.group(1).lower() for m in _SQL_PII_RE.finditer(sql)}:
+                pii_cols = {m.group(1).lower() for m in _SQL_PII_RE.finditer(sql)}
+                for col in pii_cols:
                     self.pii.append((col, fl, ln))
+                # taint the cursor so `rows = cursor.fetchall()` carries the PII and a later
+                # `yield row` / `return rows` registers where it egresses (a raw-SQL PII export).
+                if pii_cols and isinstance(f.value, ast.Name):
+                    self.tainted.setdefault(f.value.id, set()).update(pii_cols)
         # cache read / mutate (E7): cache.get(k) / cache.set(k, …) / cache.delete(k) / caches['x'].clear()
         if isinstance(f, ast.Attribute) and _is_cache_receiver(f.value) \
                 and f.attr in (CACHE_READ | CACHE_WRITE):
@@ -598,6 +603,16 @@ class FactCollector(ast.NodeVisitor):
                 self.leaks.append((label, "response", fl, ln))
         self.generic_visit(node)
 
+    def visit_Yield(self, node: ast.Yield):
+        # `yield <tainted>` in a streaming generator (e.g. a raw-SQL CSV export) sends PII to the
+        # client the same way `return` does — the row fetched from a PII SELECT leaves here.
+        if node.value is not None:
+            fl, ln = self._loc(node)
+            for label in self._taint_labels(node.value):
+                self.leaks.append((label, "response", fl, ln))
+        self.generic_visit(node)
+    visit_YieldFrom = visit_Yield
+
     def _taint_labels(self, node) -> set:
         """Sensitive field labels an expression carries — the taint half of the flow. Conservative:
         propagates through attribute/subscript reads of a sensitive name, request `.get('field')`,
@@ -627,6 +642,11 @@ class FactCollector(ast.NodeVisitor):
             if fname in TAINT_WRAPPERS:
                 for a in list(node.args) + [k.value for k in node.keywords]:
                     labels |= self._taint_labels(a)
+            # `cursor.fetchone/fetchmany/fetchall()` on a tainted cursor carries the cursor's taint —
+            # so PII selected by a raw SQL SELECT flows into the fetched rows.
+            if isinstance(f, ast.Attribute) and f.attr in {"fetchone", "fetchmany", "fetchall"} \
+                    and isinstance(f.value, ast.Name):
+                labels |= self.tainted.get(f.value.id, set())
         elif isinstance(node, ast.Dict):
             labels |= {_const_str(k) for k in node.keys if _const_str(k) in SENSITIVE}
             for v in node.values:
@@ -1456,19 +1476,28 @@ def _score_pii(agg) -> Edge:
     for model, kind, f, ln in agg.db:
         if model in PERSON_MODELS and kind.rstrip("*").startswith("read"):
             _first_loc(seen, f"reads {model}", f, ln)
-    leaks = {}
+    # Split traced leaks by WHERE the PII goes. A sensitive field reaching a THIRD PARTY — an external
+    # API, a log, a task queue — is the real egress concern (✓). The same field merely returned to the
+    # CLIENT in the response is worth surfacing but is a weaker signal (⚠): ~85% of "traced leaks"
+    # across the example repos are just an endpoint handing a caller back its own data, and lumping those
+    # in with third-party egress buried the ~3-per-1000 that actually matter.
+    offplatform, client = {}, {}
     for field, sink, f, ln in agg.leaks:
-        _first_loc(leaks, f"{field} → {sink}", f, ln)
+        _first_loc(client if sink == "response" else offplatform, f"{field} → {sink}", f, ln)
     egress = bool(agg.external or agg.async_)
-    if not seen and not leaks:
+    if not seen and not offplatform and not client:
         return Edge(NA)
     src_items = [f"{fact} @ {loc}" for fact, loc in seen.items()]
-    if leaks:
-        # traced: a sensitive field actually flows into an egress sink (intra-procedural). The
-        # verified-leak lines lead; the raw sources follow for context.
-        leak_items = [f"{fact} @ {loc}" for fact, loc in leaks.items()]
-        return Edge(VERIFIED, leak_items + src_items,
-                    note="traced: a sensitive field flows into an egress sink (intra-procedural)")
+    off_items = [f"{fact} @ {loc}" for fact, loc in offplatform.items()]
+    cli_items = [f"{fact} @ {loc}" for fact, loc in client.items()]
+    if offplatform:
+        # a sensitive field flows OFF-PLATFORM (external call / log / queue) — the real leak.
+        return Edge(VERIFIED, off_items + cli_items + src_items,
+                    note="traced: a sensitive field flows off-platform (external / log / task queue)")
+    if client:
+        # PII flows back to the client in the response — real, but not a third-party leak.
+        return Edge(POTENTIAL, cli_items + src_items,
+                    note="a sensitive field is returned to the client — verify the caller is authorised")
     if egress:
         # source and an egress path co-occur but no flow was traced between them → honestly potential
         return Edge(POTENTIAL, src_items,
