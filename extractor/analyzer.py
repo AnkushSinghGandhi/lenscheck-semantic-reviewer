@@ -557,7 +557,7 @@ class FactCollector(ast.NodeVisitor):
             callee = node.value.func
             cls = callee.id if isinstance(callee, ast.Name) else (
                 callee.attr if isinstance(callee, ast.Attribute) else None)
-            if cls and cls[:1].isupper() and cls in self.known_models:
+            if cls and cls[:1].isupper():
                 self.instance_types[node.targets[0].id] = cls
         for tgt in node.targets:
             if isinstance(tgt, ast.Name):
@@ -1198,7 +1198,7 @@ def build_edges(ep, method_nodes, index, owner_file, self_type=None, class_metho
 # Depth is no longer a magic constant. A branch deepens while it keeps revealing NEW facts and stops
 # once it "dries out" — DRY_STREAK_K consecutive fact-bearing hops that add nothing new. This adapts
 # to the repo, the endpoint, and its abstraction depth automatically: measured recall saturates at
-# depth 4 on commerce and 5 on example_cms (see experiments/adaptive_depth_findings.md), and a
+# depth 4 on one service and 5 on another (measured on real Django repos), and a
 # findings-driven stop reproduces each without per-repo tuning. Deeper follow is ~free — wall time is
 # flat across depth because `followed` + pass-through-free already bound the work — so the ceiling is
 # a loose safety net, not the primary limit.
@@ -1493,7 +1493,7 @@ def _score_pii(agg) -> Edge:
     # Split traced leaks by WHERE the PII goes. A sensitive field reaching a THIRD PARTY — an external
     # API, a log, a task queue — is the real egress concern (✓). The same field merely returned to the
     # CLIENT in the response is worth surfacing but is a weaker signal (⚠): ~85% of "traced leaks"
-    # across the example repos are just an endpoint handing a caller back its own data, and lumping those
+    # across the repos we measured are just an endpoint handing a caller back its own data, and lumping those
     # in with third-party egress buried the ~3-per-1000 that actually matter.
     offplatform, client = {}, {}
     for field, sink, f, ln in agg.leaks:

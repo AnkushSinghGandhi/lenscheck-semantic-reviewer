@@ -268,7 +268,7 @@ def test_module_str_consts_accumulate():
 
 
 def test_imported_url_constant_resolves_across_modules(tmp_path):
-    # the real example shape: a URL constant defined in one module, imported and used in another
+    # a common cross-module shape: a URL constant defined in one module, imported and used in another
     (tmp_path / "service_urls.py").write_text(
         "import os\nBASE = os.getenv('API_URL', '')\nSET_KW = BASE + '/api/1/kw/{pk}/set/'\n")
     (tmp_path / "settings.py").write_text(
