@@ -356,6 +356,30 @@ def test_raw_execute_ignores_non_sql_strings():
 
 # ---- FK-traversal read is stamped at the kwarg line, not the .filter() call line ------
 
+def test_lowercase_orm_receiver_is_not_a_table_name():
+    # a lowercase `.objects` receiver is a variable (param / runtime `apps.get_model`), never a model
+    # class — it must not invent a table literally named `model` / `table_class`.
+    src = ("def handler(model):\n"                       # `model` is a param → dynamic
+           "    model.objects.filter(pk__in=[1])\n"
+           "    inst = table_class.objects.get(id=1)\n"   # lowercase local → not a type
+           "    inst.save()\n")
+    fc = FactCollector("m.py")
+    fc.visit(ast.parse(src))
+    models = {m for m, _k, _f, _l in fc.db}
+    assert "model" not in models and "table_class" not in models    # no fake table names
+    assert models == {"<instance>"}                                  # honest unknown, read + write
+
+
+def test_class_alias_assignment_resolves_to_real_model():
+    # `link_model = SynonymLink` (a bare class alias) → a later `.objects` names the real model
+    src = ("def handler():\n"
+           "    link_model = SynonymLink\n"
+           "    link_model.objects.filter(status=1)\n")
+    fc = FactCollector("m.py", known_models={"SynonymLink"})
+    fc.visit(ast.parse(src))
+    assert {m for m, _k, _f, _l in fc.db} == {"SynonymLink"}
+
+
 def test_fk_traversal_read_uses_kwarg_line_not_call_line():
     # `Child.objects.filter(parent__col=…)` reads BOTH Child (the call) and Parent (the FK join).
     # They must not share a source line, or clicking the FK'd table jumps to the parent's query.
