@@ -696,11 +696,16 @@ def build_graph(ep):
     leaf(ep.e5_async.items, "async", "dispatches")
     leaf(ep.e7_cache.items, "cache", "")
     # hang the real SQL table off each model node — Model → db table
+    model_loc = {n["id"]: n.get("loc") for n in nodes}   # so a db table can point at its read site
     for model, info in (getattr(ep, "tables", {}) or {}).items():
         mnid = f"table:{model}"
         if mnid in ids:
             tnid = f"dbtable:{info['table']}"
-            add(tnid, info["table"], "dbtable", explicit=info.get("explicit", True))
+            # give the table node the same loc as its model node, so clicking the green table jumps
+            # to where the model is actually read (not a dead block) — and to the FK-kwarg line when
+            # the read came from a `fk__col=…` traversal.
+            add(tnid, info["table"], "dbtable", explicit=info.get("explicit", True),
+                loc=model_loc.get(mnid))
             edges.append({"from": mnid, "to": tnid,
                           "kind": "table" if info.get("explicit", True) else "table (convention)"})
     return {"nodes": nodes, "edges": edges}
