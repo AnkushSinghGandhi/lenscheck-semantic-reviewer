@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ast
 import os
+import re
 from dataclasses import dataclass, field, asdict
 from typing import Optional
 
@@ -143,7 +144,10 @@ class RepoIndex:
             # so `rows.fn()` typed calls can be resolved as module-level functions in rows.py
             file_dir = os.path.dirname(path)
             mod_imports = {}
-            for node in ast.iter_child_nodes(tree):
+            # `ast.walk`, not `iter_child_nodes`: the import can be *function-local* (a view that does
+            # `from . import interactions` inside its `get()` to dodge a cycle), and that method-body
+            # import is exactly the one whose `interactions.build_response(...)` we need to follow.
+            for node in ast.walk(tree):
                 if not isinstance(node, ast.ImportFrom) or not node.level:
                     continue   # only relative imports (level > 0 means ".")
                 if node.module is None:
@@ -382,7 +386,12 @@ class FactCollector(ast.NodeVisitor):
                         stem = kw.arg.split("__")[0]
                         related = "".join(w.capitalize() for w in stem.split("_"))
                         if related in self.known_models:
-                            self.db.append((related, "read", fl, ln))
+                            # point at the FK-kwarg line (`fk__col=…`), NOT the whole `.filter(` call:
+                            # the parent model already owns the call line, so sharing it made the two
+                            # models resolve to the same source — clicking the FK'd table showed the
+                            # parent's query. `ast.keyword` carries `lineno` on 3.9+ (else fall back).
+                            kln = getattr(kw, "lineno", ln)
+                            self.db.append((related, "read", fl, kln))
         # get_object_or_404(Model, …) / get_list_or_404(Model, …) — a Django shortcut that runs a
         # real query (Model.objects.get/filter under the hood). A common in-body read the ORM
         # matcher above misses because there is no literal `.objects`.
@@ -417,6 +426,16 @@ class FactCollector(ast.NodeVisitor):
             if stmt in {"select", "insert", "update", "delete"} \
                     and isinstance(marg, ast.Name) and marg.id[:1].isupper():
                 self.db.append((marg.id, "read" if stmt == "select" else "write", fl, ln))
+        # raw SQL: cursor.execute(sql, …) / .executemany(sql) / <qs>.raw(sql). The SQL text may be a
+        # string literal, an f-string, or a module constant (a `_SQL = """…"""` folded into str_vars).
+        # We pull table names straight out of its FROM/JOIN/INTO/UPDATE clauses — DB access the ORM
+        # matchers above never see because there is no `.objects`. The table names ARE the SQL tables,
+        # so they need no model→table resolution downstream (build_edges leaves them as-is).
+        if isinstance(f, ast.Attribute) and f.attr in {"execute", "executemany", "raw"} and node.args:
+            sql = _extract_sql(node.args[0], self.str_vars)
+            if sql:
+                for tbl, kind in _sql_tables(sql):
+                    self.db.append((tbl, kind, fl, ln))
         # cache read / mutate (E7): cache.get(k) / cache.set(k, …) / cache.delete(k) / caches['x'].clear()
         if isinstance(f, ast.Attribute) and _is_cache_receiver(f.value) \
                 and f.attr in (CACHE_READ | CACHE_WRITE):
@@ -606,6 +625,59 @@ def _orm_model_method(f):
     if isinstance(cur, ast.Attribute) and cur.attr == "objects" and isinstance(cur.value, ast.Name):
         return cur.value.id, method
     return None, None
+
+
+# ---- raw SQL --------------------------------------------------------------------------
+# Table extraction for DB access that bypasses the ORM (a `cursor.execute(sql)` or `.raw(sql)`).
+_SQL_COMMENT_RE = re.compile(r"--[^\n]*|/\*.*?\*/", re.S)          # strip -- line and /* */ comments
+_SQL_WRITE_RE = re.compile(r'\b(?:insert\s+into|update|delete\s+from)\s+[`"\[]?([\w.]+)', re.I)
+_SQL_READ_RE = re.compile(r'\b(?:from|join)\s+[`"\[]?([\w.]+)', re.I)
+_SQL_STOPWORDS = {"select", "dual", "lateral", "only", "where", "values", "set"}
+
+
+def _extract_sql(arg, str_vars):
+    """The SQL string behind an execute()/raw() first arg: a literal, an f-string, a module constant
+    (`_SQL`, seeded into str_vars), or a `text("…")` wrapper. None when nothing static resolves."""
+    if isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name) \
+            and arg.func.id == "text" and arg.args:
+        arg = arg.args[0]                                 # SQLAlchemy text("…")
+    return _fold_str(arg, str_vars)
+
+
+def _clean_table(tok):
+    """Normalise a captured table token: strip quotes/backticks/brackets and any schema prefix. None
+    for a `{placeholder}`, a non-identifier, or a SQL keyword that slipped past the clause match."""
+    tok = tok.strip().strip('`"[]').split(".")[-1]        # "schema"."table" → table
+    if not tok or "{" in tok or not re.match(r"^\w+$", tok):
+        return None
+    if tok.lower() in _SQL_STOPWORDS:
+        return None
+    return tok
+
+
+def _sql_tables(sql):
+    """(table, kind) pairs from a raw SQL string — writes from INSERT/UPDATE/DELETE, reads from
+    FROM/JOIN. Comment-stripped and subquery-aware (a `FROM (subquery)` opener has no identifier to
+    capture, so it's skipped). Conservative: only fires when the string actually looks like SQL, and
+    a token it can't pin to a bare identifier is dropped, never guessed. A table that is both written
+    and read is reported once, as a write."""
+    if not sql:
+        return []
+    if not any(k in sql.lower() for k in ("select", "insert", "update", "delete")):
+        return []
+    sql = _SQL_COMMENT_RE.sub(" ", sql)
+    out, seen = [], set()
+    for m in _SQL_WRITE_RE.finditer(sql):
+        t = _clean_table(m.group(1))
+        if t and t not in seen:
+            seen.add(t)
+            out.append((t, "write"))
+    for m in _SQL_READ_RE.finditer(sql):
+        t = _clean_table(m.group(1))
+        if t and t not in seen:
+            seen.add(t)
+            out.append((t, "read"))
+    return out
 
 
 def _is_session_receiver(node) -> bool:

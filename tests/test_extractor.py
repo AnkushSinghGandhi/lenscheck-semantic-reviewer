@@ -316,3 +316,58 @@ def test_external_status_literal_dest_is_verified():
            "def send():\n"
            "    requests.post('https://api.stripe.com/v1/charges')\n")
     assert _external_status(src) == "✓"
+
+
+# ---- raw SQL (cursor.execute / .raw) --------------------------------------------------
+
+def test_sql_tables_unit_reads_writes_and_subquery():
+    from extractor.analyzer import _sql_tables
+    read = _sql_tables("SELECT a.x FROM foo a JOIN bar b ON b.id = a.id "
+                       "-- comment mentioning FROM nothing\n WHERE a.x = %s")
+    assert read == [("foo", "read"), ("bar", "read")]                 # FROM + JOIN, comment ignored
+    assert _sql_tables("INSERT INTO audit_log (msg) VALUES (%s)") == [("audit_log", "write")]
+    assert _sql_tables("DELETE FROM sessions WHERE id = %s") == [("sessions", "write")]
+    # a FROM (subquery) opener has no table identifier → skipped, only the real outer table counts
+    assert _sql_tables("SELECT * FROM (SELECT 1) t JOIN users u ON u.id = t.id") == [("users", "read")]
+    assert _sql_tables("just a plain string, not sql") == []          # conservative: no SQL, no tables
+
+
+def test_raw_execute_extracts_tables_from_module_constant():
+    # the real-world shape: a `_SQL = """…"""` module constant run via `cursor.execute(_SQL, …)`.
+    # The constant is seeded into str_vars exactly as the repo index does, so it must resolve.
+    sql = "SELECT c.uid FROM ad_target_slice c JOIN users u ON u.uid = c.uid"
+    src = ("def rows(cursor):\n"
+           "    cursor.execute(_SQL, [1, 2])\n")
+    fc = FactCollector("m.py", consts={"_SQL": sql})
+    fc.visit(ast.parse(src))
+    got = {(model, kind) for model, kind, _f, _l in fc.db}
+    assert got == {("ad_target_slice", "read"), ("users", "read")}
+
+
+def test_raw_execute_ignores_non_sql_strings():
+    # `.execute()` / `.raw()` exist on non-DB objects too — a non-SQL arg must not invent tables
+    src = ("def f(runner):\n"
+           "    runner.execute('do the thing')\n"
+           "    thing.raw('not sql either')\n")
+    fc = FactCollector("m.py")
+    fc.visit(ast.parse(src))
+    assert fc.db == []
+
+
+# ---- FK-traversal read is stamped at the kwarg line, not the .filter() call line ------
+
+def test_fk_traversal_read_uses_kwarg_line_not_call_line():
+    # `Child.objects.filter(parent__col=…)` reads BOTH Child (the call) and Parent (the FK join).
+    # They must not share a source line, or clicking the FK'd table jumps to the parent's query.
+    src = ("class V:\n"
+           "    def get(self, r):\n"
+           "        return Child.objects.filter(\n"           # line 3: the .filter( call
+           "            name='x',\n"
+           "            parent__added__gte=r.a,\n"            # line 5: the FK kwarg
+           "        )\n")
+    fc = FactCollector("m.py", known_models={"Child", "Parent"})
+    fc.visit(ast.parse(src))
+    lines = {model: ln for model, _kind, _f, ln in fc.db}
+    assert lines["Child"] == 3                                # the parent query owns the call line
+    assert lines["Parent"] == 5                               # the FK read points at its own kwarg
+    assert lines["Child"] != lines["Parent"]
