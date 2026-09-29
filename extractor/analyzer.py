@@ -360,6 +360,8 @@ class FactCollector(ast.NodeVisitor):
         self.call_arg_models = {}  # call-key -> [model|None per positional arg]; binds a helper's param
                                    # to the model actually passed (`fetch_all(Product)` → param=Product)
         self.var_types = {}    # local var name -> Model (so `order.save()` → Order:write)
+        self.instance_types = {}  # local var name -> repo class it holds (`h = mod.Helper(req)` → Helper),
+                                  # so a later `h.method()` follows into Helper.method (the write hides there)
         # local var name -> resolved string (so `requests.post(url)` names the dest); seeded with
         # module/repo-level URL constants so an imported `requests.post(LEARN_API)` resolves too.
         self.str_vars = dict(consts or {})
@@ -548,6 +550,14 @@ class FactCollector(ast.NodeVisitor):
         if not model and isinstance(node.value, ast.Name) and node.value.id in self.known_models:
             model = node.value.id                                      # `link_model = SynonymLink`
             # a bare class alias: a later `link_model.objects.filter()` now resolves to the real model
+        # `h = Helper(...)` / `h = module.Helper(...)` where Helper is a repo class → remember the type
+        # so `h.method()` can be followed into Helper.method (where controllers hide the real DB writes).
+        if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and isinstance(node.value, ast.Call):
+            callee = node.value.func
+            cls = callee.id if isinstance(callee, ast.Name) else (
+                callee.attr if isinstance(callee, ast.Attribute) else None)
+            if cls and cls[:1].isupper() and cls in self.known_models:
+                self.instance_types[node.targets[0].id] = cls
         for tgt in node.targets:
             if isinstance(tgt, ast.Name):
                 self.assigned_names.add(tgt.id)                        # a locally-bound name (see __init__)
@@ -1344,19 +1354,22 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
     # treat `rows.fn()` as a bare module-level call into that sibling module.
     mod_imports = index.imports_for(owner_file)
     for cname, mname in sorted(set(local.typed_calls)):
-        key = f"{cname}.{mname}"
+        # resolve an instance variable to the class it holds: `profile_helper.validate()` where
+        # `profile_helper = cus_api_helper.UpdateProfileFlow(req)` → follow UpdateProfileFlow.validate.
+        target_cls = local.instance_types.get(cname, cname)
+        key = f"{target_cls}.{mname}"
         if key in followed:
             continue
-        cls, cfile = index.find_class(cname, near=owner_file)
+        cls, cfile = index.find_class(target_cls, near=owner_file)
         if cls is not None:
             method = next((m for m in cls.body if isinstance(m, ast.FunctionDef) and m.name == mname), None)
             if method is None:
                 continue
             followed.add(key)
             cls_methods = {m.name: m for m in cls.body if isinstance(m, ast.FunctionDef)}
-            _walk_follow(method, agg, index, cfile, cls_methods, followed, child_depth, self_type=cname,
+            _walk_follow(method, agg, index, cfile, cls_methods, followed, child_depth, self_type=target_cls,
                          seen=seen, dry_streak=child_streak, stop=stop,
-                         seed_types=_seed_from_args(method, local.call_arg_models.get(key)))
+                         seed_types=_seed_from_args(method, local.call_arg_models.get(f"{cname}.{mname}")))
         elif cname in mod_imports:
             # `cname` is a sibling module (`from . import cname`); treat as a bare module-level call
             mod_file = mod_imports[cname]
