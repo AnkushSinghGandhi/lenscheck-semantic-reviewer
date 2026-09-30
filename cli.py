@@ -61,6 +61,7 @@ def main():
         print("\nCommands:")
         print("  init      Add the GitHub Action to this repo (one-command setup)")
         print("  map       Map every endpoint in a repo, grouped by app, worst-first")
+        print("  provenance  Table→endpoint code map + data-consistency rules (local, no key)")
         print("  review    Run a semantic review of a PR or commit range")
         print("  post      Post a review to a PR (sticky comment, inline comments, label)")
         print("  serve     Start the Lenscheck web UI")
@@ -78,6 +79,9 @@ def main():
     elif command == "map":
         import map_repo
         map_repo.main()
+    elif command == "provenance":
+        import provenance                          # local, key-free: runs the free extractor only
+        provenance.main()
     elif command == "review":
         import diff_pr
         # No args → review the current repo's branch vs. its default branch (diff_pr resolves it).
