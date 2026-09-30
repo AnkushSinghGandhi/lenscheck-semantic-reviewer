@@ -29,6 +29,19 @@ EXTERNAL_ROOTS = {"requests", "httpx", "urllib", "urllib2", "aiohttp",
                   "stripe", "razorpay", "boto3", "sendgrid", "smtplib"}
 EXTERNAL_VERBS = {"get", "post", "put", "patch", "delete", "request", "send", "post_async"}
 
+# Django field lookups — the token after `field__` when it's a WHERE operator, not an FK traversal.
+# `status__in` / `target_year__gt` / `removed_at__isnull` filter the LOCAL column (no join, no related
+# read); only `fk__relatedcol` joins a table. Used to stop the FK-traversal heuristic hallucinating a
+# read of a model that merely shares a name with a filtered field's stem (Status/EntityType/…).
+_DJANGO_LOOKUPS = {
+    "exact", "iexact", "contains", "icontains", "in", "gt", "gte", "lt", "lte", "startswith",
+    "istartswith", "endswith", "iendswith", "range", "date", "year", "iso_year", "month", "day",
+    "week", "week_day", "iso_week_day", "quarter", "time", "hour", "minute", "second", "isnull",
+    "regex", "iregex", "search", "overlap", "contained_by", "has_key", "has_keys", "has_any_keys",
+    "len", "trigram_similar", "unaccent", "isempty",
+    "id", "pk",   # `fk__id`/`fk__pk` resolve to the LOCAL fk column — no join to the related table
+}
+
 # ORM read vs write method names
 ORM_READ = {"get", "filter", "all", "values", "values_list", "count", "exists",
             "first", "last", "aggregate", "annotate", "none", "get_or_none"}
@@ -351,6 +364,8 @@ class FactCollector(ast.NodeVisitor):
         self.self_type = self_type               # enclosing class, so `self.objects.x()` names its table
         self.manager_model = manager_model       # set when walking a Manager method: `self.create()` → this model
         self.db = []           # (model, kind, file, line)
+        self.where_only = set()  # ids of filter()/exclude() Call nodes that are only an UPDATE/DELETE
+                                 # WHERE clause (no SELECT) — their read must not be recorded
         self.external = []     # (root, dest, file, line)
         self.async_ = []       # (mechanism, target, file, line)
         self.pii = []          # (attr, file, line)
@@ -405,7 +420,10 @@ class FactCollector(ast.NodeVisitor):
                 # `link_model = SynonymLink`), else record an honest `<instance>` rather than
                 # inventing a table literally named `model`/`link_model`/`target_model`.
                 model = self.var_types.get(model) or "<instance>"
-            if method not in ORM_READ and method not in ORM_WRITE and model[:1].isupper():
+            if method == "raw":
+                pass   # `<Model>.objects.raw(sql)` — the raw SQL text (parsed below into FROM/JOIN
+                       # tables) names the real table; a model-level read here would double-count it.
+            elif method not in ORM_READ and method not in ORM_WRITE and model[:1].isupper():
                 # a non-standard method on `Model.objects` is a CUSTOM MANAGER method (`Order.objects.
                 # import_batch(...)`). Follow into the Manager to get its real reads/writes; the read
                 # is only a FALLBACK, added in `_walk_follow` iff the Manager can't be resolved — so a
@@ -414,13 +432,27 @@ class FactCollector(ast.NodeVisitor):
                 self.manager_fallback.append((model, method, fl, ln))
             else:
                 kind = "write" if method in ORM_WRITE else "read"
-                self.db.append((model, kind, fl, ln))
+                # `Model.objects.filter(...).update()/.delete()` — the filtered queryset feeding a
+                # terminal write is a WHERE clause, not a SELECT; mark its read-method Call nodes so the
+                # phantom read (and the phantom person-read PII it triggers) is never recorded.
+                if method in {"update", "delete"} and isinstance(f, ast.Attribute) \
+                        and isinstance(f.value, ast.Call):
+                    cur = f.value
+                    while isinstance(cur, ast.Call) and isinstance(cur.func, ast.Attribute):
+                        if cur.func.attr in ORM_READ:
+                            self.where_only.add(id(cur))
+                        cur = cur.func.value
+                if not (kind == "read" and id(node) in self.where_only):
+                    self.db.append((model, kind, fl, ln))
             # Django FK traversal in filter/exclude/get kwargs: `fk_field__col__gte=val`
             # causes a JOIN on the related table. The kwarg stem is the FK field name (snake_case);
             # convert to CamelCase and check the repo index — if it's a known model, record a read.
             if method in {"filter", "exclude", "get", "get_or_create", "update_or_create"}:
                 for kw in node.keywords:
-                    if kw.arg and "__" in kw.arg:
+                    # only a REAL traversal `fk__relatedcol[...]` joins a table. `field__lookup`
+                    # (status__in, target_year__gt, removed_at__isnull, fk__in) is a plain WHERE on the
+                    # local column — the token after the stem being a Django lookup means NO join.
+                    if kw.arg and "__" in kw.arg and kw.arg.split("__")[1] not in _DJANGO_LOOKUPS:
                         stem = kw.arg.split("__")[0]
                         related = "".join(w.capitalize() for w in stem.split("_"))
                         if related in self.known_models:
