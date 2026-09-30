@@ -59,6 +59,7 @@ def main():
         print("  init      Add the GitHub Action to this repo (one-command setup)")
         print("  review    Semantic review of a PR / commit range (needs LENSCHECK_API_KEY)")
         print("  map       Map every endpoint in a repo, grouped by app, worst-first")
+        print("  provenance  Table→endpoint code map + data-consistency rules (local, no key)")
         print("  serve     Open the interactive web UI (review + flow graph) in your browser")
         print("  post      Post a review to a PR (sticky comment, inline comments, label)")
         print("  invariants Discover the rules your code follows, confirm them, enforce on every PR")
@@ -74,6 +75,9 @@ def main():
 
     if command == "init":
         sys.exit(cmd_init(sys.argv[1:]))
+    elif command == "provenance":
+        import provenance                          # local, key-free: runs the free extractor only
+        provenance.main()
     elif command in ("review", "map", "usage", "digest", "invariants"):
         import cloud
         if not cloud.have_token():
