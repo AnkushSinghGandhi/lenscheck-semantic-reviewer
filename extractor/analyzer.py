@@ -113,9 +113,12 @@ class RepoIndex:
         self._build()
 
     def _iter_py(self):
+        # sorted traversal (dirs + files) so the index is filesystem-order-independent: on a same-name
+        # helper/class collision `_pick` breaks proximity ties on the first-indexed candidate, so an
+        # unsorted os.walk would resolve the name differently across machines/CI checkouts.
         for dirpath, dirnames, filenames in os.walk(self.root):
-            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
-            for fn in filenames:
+            dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
+            for fn in sorted(filenames):
                 if fn.endswith(".py"):
                     yield os.path.join(dirpath, fn)
 
@@ -1294,7 +1297,12 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
     # raw frame (line- and tag-independent) so it's deterministic and stable across runs.
     keys = _fact_keys(local)
     new_keys = keys - seen
-    seen |= new_keys
+    # path-local novelty: children inherit this frame's + its ANCESTORS' facts, never a SIBLING's. A
+    # single shared `seen` let an earlier sibling's finds count as "already seen" for a later branch,
+    # advancing that branch's dry-streak on facts it never itself saw — silently dropping the branch's
+    # own unique deep reads while still labelling the endpoint 'dried_out' (complete). Forking a fresh
+    # set per frame keeps each branch's dry-out decision its own, restoring the equals-unbounded recall.
+    child_seen = seen | keys
     contributed = bool(keys)                       # same "has any facts" test as before
     if new_keys and depth > stop["depth"]:
         stop["depth"] = depth                      # deepest hop that actually YIELDED a new fact
@@ -1313,15 +1321,21 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
     else:
         child_depth, child_streak = depth, dry_streak
 
-    # terminations — dry-out is the natural (complete) stop; ceiling/budget mark possibly-incomplete
+    # dry-out is the natural, COMPLETE stop — return with no reason so the label stays 'dried_out'.
     if child_streak >= DRY_STREAK_K:
         return
-    if child_depth > DEPTH_CEILING:
-        stop["reason"] = "ceiling"
-        return
-    if len(followed) >= FOLLOW_BUDGET:
-        stop["reason"] = "budget"
-        return
+
+    def _capped():
+        """Record a possibly-incomplete stop ONLY at the point a resolvable, not-yet-followed child is
+        about to be skipped for a cap — so 'ceiling'/'budget' never fires on a leaf (or an all-already-
+        followed frame) that merely touched the boundary while actually being complete."""
+        if child_depth > DEPTH_CEILING:
+            stop["reason"] = "ceiling"
+            return True
+        if len(followed) >= FOLLOW_BUDGET:
+            stop["reason"] = "budget"
+            return True
+        return False
 
     # self.method(...) — resolve against the current class's own methods (same self_type).
     # NOTE: all three follow loops iterate `sorted(set(...))`, not a bare `set(...)`: under the
@@ -1330,10 +1344,12 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
     for mname in sorted(set(local.self_calls)):
         key = f"self:{owner_rel}:{mname}"
         if mname in classmethods and key not in followed:
+            if _capped():
+                return
             followed.add(key)
             _walk_follow(classmethods[mname], agg, index, owner_file, classmethods, followed,
                          child_depth, self_type=self_type,
-                         seen=seen, dry_streak=child_streak, stop=stop)
+                         seen=child_seen, dry_streak=child_streak, stop=stop)
 
     # module-level func(...) defined in the repo (no `self`). Names bound locally — nested
     # closures, params — are excluded: a call to a local `resolve()` must not bind to a same-named
@@ -1344,9 +1360,11 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
             continue
         node, ffile = index.find_func(fname, near=owner_file, toplevel_only=True)
         if node is not None:
+            if _capped():
+                return
             followed.add(key)
             _walk_follow(node, agg, index, ffile, {}, followed, child_depth,
-                         seen=seen, dry_streak=child_streak, stop=stop,
+                         seen=child_seen, dry_streak=child_streak, stop=stop,
                          seed_types=_seed_from_args(node, local.call_arg_models.get(fname)))
 
     # Model.classmethod(...) / Service().method(...) — recurse with THAT class's methods,
@@ -1366,19 +1384,23 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
             method = next((m for m in cls.body if isinstance(m, ast.FunctionDef) and m.name == mname), None)
             if method is None:
                 continue
+            if _capped():
+                return
             followed.add(key)
             cls_methods = {m.name: m for m in cls.body if isinstance(m, ast.FunctionDef)}
             _walk_follow(method, agg, index, cfile, cls_methods, followed, child_depth, self_type=target_cls,
-                         seen=seen, dry_streak=child_streak, stop=stop,
+                         seen=child_seen, dry_streak=child_streak, stop=stop,
                          seed_types=_seed_from_args(method, local.call_arg_models.get(f"{cname}.{mname}")))
         elif cname in mod_imports:
             # `cname` is a sibling module (`from . import cname`); treat as a bare module-level call
             mod_file = mod_imports[cname]
             node, ffile = index.find_func(mname, near=mod_file, toplevel_only=True)
             if node is not None:
+                if _capped():
+                    return
                 followed.add(key)
                 _walk_follow(node, agg, index, ffile, {}, followed, child_depth,
-                             seen=seen, dry_streak=child_streak, stop=stop,
+                             seen=child_seen, dry_streak=child_streak, stop=stop,
                              seed_types=_seed_from_args(node, local.call_arg_models.get(key)))
 
     # Model.objects.<custom>() — a custom Manager method. Resolve the model's Manager class and follow
@@ -1397,10 +1419,12 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
         method = next((m for m in mcls.body if isinstance(m, ast.FunctionDef) and m.name == mname), None)
         if method is None:
             continue
+        if _capped():
+            return
         followed.add(key)
         mcls_methods = {m.name: m for m in mcls.body if isinstance(m, ast.FunctionDef)}
         _walk_follow(method, agg, index, mfile, mcls_methods, followed, child_depth, self_type=mgr,
-                     seen=seen, dry_streak=child_streak, stop=stop,
+                     seen=child_seen, dry_streak=child_streak, stop=stop,
                      manager_model=cname)     # cname is the managed Model — `self.create()` writes it
 
 
