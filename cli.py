@@ -77,7 +77,7 @@ def main():
         sys.exit(cmd_init(sys.argv[1:]))
     elif command == "provenance":
         import provenance                          # local, key-free: runs the free extractor only
-        provenance.main()
+        sys.exit(provenance.main())
     elif command in ("review", "map", "usage", "digest", "invariants"):
         import cloud
         if not cloud.have_token():

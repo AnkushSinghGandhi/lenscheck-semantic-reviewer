@@ -16,9 +16,18 @@ import ast
 import json
 import os
 import sys
+import warnings
 
-from extractor import analyze_repo
-from extractor.analyzer import RepoIndex
+# keep stdout pure JSON: the extractor parses the target repo and may emit SyntaxWarnings — silence them
+# (progress/errors go to stderr) so a tool shelling out to us can `json.loads(stdout)` unconditionally.
+warnings.filterwarnings("ignore", category=SyntaxWarning)
+
+from extractor import analyze_repo          # noqa: E402
+from extractor.analyzer import RepoIndex    # noqa: E402
+
+# Stable subprocess contract. Bump only on a breaking change to the JSON shape; consumers (e.g. QDD)
+# check `schema` and refuse an unknown major. Exit codes: 0 ok · 2 usage · 3 repo unreadable.
+SCHEMA = 1
 
 _FK_CALLS = {"ForeignKey", "OneToOneField"}
 
@@ -167,8 +176,9 @@ def build(repo):
             seen_a.add(a["id"]); uniq.append(a)
 
     return {
+        "schema": SCHEMA,
         "repo": os.path.abspath(repo),
-        "generated_by": "lenscheck provenance (prototype)",
+        "generated_by": "lenscheck provenance",
         "summary": {"endpoints": len(eps), "tables": len(tables),
                     "fk_edges": len(fk_edges), "orphan_rules": len(rules),
                     "anomalies": len(uniq)},
@@ -193,17 +203,40 @@ def _to_yaml(rules):
     return "\n".join(out)
 
 
-def main():
-    ap = argparse.ArgumentParser(prog="lenscheck provenance")
-    ap.add_argument("repo")
-    ap.add_argument("--yaml", help="also write QDD consistency_rules.yaml here")
-    a = ap.parse_args()
-    data = build(a.repo)
+def main(argv=None):
+    """Subprocess contract for tools that shell out to us (e.g. QDD): pure JSON on stdout, human text on
+    stderr, exit 0 on success. A consumer can safely `json.loads(subprocess stdout)`."""
+    ap = argparse.ArgumentParser(
+        prog="lenscheck provenance",
+        description="Emit table→endpoint code provenance + candidate data-consistency rules as JSON.")
+    ap.add_argument("repo", help="path to the application's source repo (read-only, never executed)")
+    ap.add_argument("--yaml", metavar="FILE", help="also write the FK rules as a QDD consistency_rules.yaml")
+    ap.add_argument("--compact", action="store_true", help="single-line JSON (default is indented)")
+    a = ap.parse_args(argv)
+
+    if not os.path.isdir(a.repo):
+        print(f"lenscheck provenance: not a directory: {a.repo}", file=sys.stderr)
+        return 3
+    try:
+        data = build(a.repo)
+    except Exception as e:                       # never leak a traceback onto stdout the consumer parses
+        print(f"lenscheck provenance: failed to analyze {a.repo}: {e}", file=sys.stderr)
+        return 3
+
     if a.yaml:
-        with open(a.yaml, "w", encoding="utf-8") as f:
-            f.write(_to_yaml(data["consistency_rules"]))
-    print(json.dumps(data, indent=2))
+        try:
+            with open(a.yaml, "w", encoding="utf-8") as f:
+                f.write(_to_yaml(data["consistency_rules"]))
+        except OSError as e:
+            print(f"lenscheck provenance: could not write {a.yaml}: {e}", file=sys.stderr)
+            return 3
+
+    s = data["summary"]
+    print(f"lenscheck provenance: {s['endpoints']} endpoints · {s['tables']} tables · "
+          f"{s['orphan_rules']} orphan rules · {s['anomalies']} anomalies", file=sys.stderr)
+    print(json.dumps(data, separators=(",", ":")) if a.compact else json.dumps(data, indent=2))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
