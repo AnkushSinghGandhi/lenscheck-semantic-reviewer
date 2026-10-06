@@ -210,6 +210,8 @@ def main(argv=None):
         prog="lenscheck provenance",
         description="Emit table→endpoint code provenance + candidate data-consistency rules as JSON.")
     ap.add_argument("repo", help="path to the application's source repo (read-only, never executed)")
+    ap.add_argument("--out", metavar="FILE", help="write the JSON to FILE — hand this to someone who has "
+                    "no repo/code access (it's facts only: table/endpoint/FK names, no source).")
     ap.add_argument("--yaml", metavar="FILE", help="also write the FK rules as a QDD consistency_rules.yaml")
     ap.add_argument("--compact", action="store_true", help="single-line JSON (default is indented)")
     a = ap.parse_args(argv)
@@ -231,10 +233,21 @@ def main(argv=None):
             print(f"lenscheck provenance: could not write {a.yaml}: {e}", file=sys.stderr)
             return 3
 
+    blob = json.dumps(data, separators=(",", ":")) if a.compact else json.dumps(data, indent=2)
+    if a.out:
+        try:
+            with open(a.out, "w", encoding="utf-8") as f:
+                f.write(blob)
+        except OSError as e:
+            print(f"lenscheck provenance: could not write {a.out}: {e}", file=sys.stderr)
+            return 3
+
     s = data["summary"]
     print(f"lenscheck provenance: {s['endpoints']} endpoints · {s['tables']} tables · "
-          f"{s['orphan_rules']} orphan rules · {s['anomalies']} anomalies", file=sys.stderr)
-    print(json.dumps(data, separators=(",", ":")) if a.compact else json.dumps(data, indent=2))
+          f"{s['orphan_rules']} orphan rules · {s['anomalies']} anomalies"
+          + (f"  → {a.out}" if a.out else ""), file=sys.stderr)
+    if not a.out:
+        print(blob)              # stdout stays the default channel for piping/subprocess use
     return 0
 
 
