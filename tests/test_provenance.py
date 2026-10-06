@@ -69,3 +69,14 @@ def test_main_is_a_clean_subprocess_contract(capsys, tmp_path):
     bad = provenance.main([str(tmp_path / "nope")])
     out = capsys.readouterr()
     assert bad == 3 and out.out == ""                               # nothing on stdout when it fails
+
+
+def test_out_flag_writes_a_shareable_file(capsys, tmp_path):
+    # a dev runs `--out file.json` to hand a facts-only file to someone without repo access
+    import json
+    f = tmp_path / "prov.json"
+    code = provenance.main([_repo(), "--out", str(f)])
+    out = capsys.readouterr()
+    assert code == 0
+    assert out.out == ""                                            # --out suppresses stdout
+    assert json.loads(f.read_text())["schema"] == provenance.SCHEMA  # the file is a valid contract
