@@ -81,7 +81,7 @@ def main():
         map_repo.main()
     elif command == "provenance":
         import provenance                          # local, key-free: runs the free extractor only
-        provenance.main()
+        sys.exit(provenance.main())
     elif command == "review":
         import diff_pr
         # No args → review the current repo's branch vs. its default branch (diff_pr resolves it).
