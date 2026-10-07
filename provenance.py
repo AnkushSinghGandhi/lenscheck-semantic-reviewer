@@ -110,14 +110,25 @@ def build(repo):
             if model in ("<instance>",):
                 continue
             tbl = table_of(model)
-            rec = tables.setdefault(tbl, {"models": set(), "written_by": [], "read_by": []})
+            rec = tables.setdefault(tbl, {"models": set(), "written_by": [], "read_by": [],
+                                          "pii_off_platform": set(), "pii_to_client": set()})
             if model != tbl:
                 rec["models"].add(model)
             bucket = "written_by" if kind.startswith("write") else "read_by"
             if ep_ref not in rec[bucket]:
                 rec[bucket].append(ep_ref)
+            # a code-flow fact a database tool can't see: does an endpoint touching this table leak a
+            # sensitive field OFF-PLATFORM (✓, to an external API / log / queue) or back to the CLIENT
+            # (⚠)? Heuristic (endpoint-level, not column-level) — a flag to verify, not a proof.
+            status = getattr(getattr(e, "e6_pii", None), "status", None)
+            if status == "✓":
+                rec["pii_off_platform"].add(e.handler)
+            elif status == "⚠":
+                rec["pii_to_client"].add(e.handler)
     for rec in tables.values():
         rec["models"] = sorted(rec["models"])
+        rec["pii_off_platform"] = sorted(rec["pii_off_platform"])
+        rec["pii_to_client"] = sorted(rec["pii_to_client"])
 
     # 2) consistency rules
     rules = []
@@ -183,7 +194,8 @@ def build(repo):
                     "fk_edges": len(fk_edges), "orphan_rules": len(rules),
                     "anomalies": len(uniq)},
         "tables": {t: {"models": r["models"],
-                       "written_by": r["written_by"], "read_by": r["read_by"]}
+                       "written_by": r["written_by"], "read_by": r["read_by"],
+                       "pii_off_platform": r["pii_off_platform"], "pii_to_client": r["pii_to_client"]}
                    for t, r in sorted(tables.items())},
         "consistency_rules": rules + uniq,
     }
