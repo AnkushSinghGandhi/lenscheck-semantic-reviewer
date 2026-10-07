@@ -75,6 +75,18 @@ def _split_loc(where):
     return path, int(line)
 
 
+def _lines_for(changed, path):
+    """Changed head-side lines for `path`. The extractor roots file paths at the source dir (e.g.
+    `apps/x.py`) while a git diff is repo-root-relative (e.g. `svc/apps/x.py`); match exactly, else
+    by a path-boundary suffix so subdir/monorepo layouts still anchor."""
+    if path in changed:
+        return changed[path]
+    for k, v in changed.items():
+        if k.endswith("/" + path) or path.endswith("/" + k):
+            return v
+    return ()
+
+
 def build_inline_comments(review):
     """(comments, n_unanchored): at most one anchored comment per change.
 
@@ -87,7 +99,7 @@ def build_inline_comments(review):
         hits = []
         for i, inv in enumerate(c.get("investigate", [])):
             loc = _split_loc(inv.get("where", ""))
-            if loc and loc[1] in changed.get(loc[0], ()):
+            if loc and loc[1] in _lines_for(changed, loc[0]):
                 hits.append((i, loc, inv.get("fact", "")))
         if not hits:
             unanchored += 1
