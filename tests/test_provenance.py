@@ -80,3 +80,9 @@ def test_out_flag_writes_a_shareable_file(capsys, tmp_path):
     assert code == 0
     assert out.out == ""                                            # --out suppresses stdout
     assert json.loads(f.read_text())["schema"] == provenance.SCHEMA  # the file is a valid contract
+
+
+def test_tables_carry_pii_fields():
+    """Each table carries the PII-egress signal (empty here — the fixture has no PII flow)."""
+    t = provenance.build(_repo())["tables"]["payments"]
+    assert "pii_off_platform" in t and "pii_to_client" in t
