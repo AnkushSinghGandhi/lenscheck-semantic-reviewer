@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lenscheck-semantic-reviewer"
-version = "2.1.0"
+version = "2.2.0"
 description = "Semantic PR Reviewer for Python Web Applications — thin client for the Lenscheck cloud"
 readme = "PYPI_README.md"
 requires-python = ">=3.8"
@@ -27,6 +27,6 @@ Repository = "https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer"
 lenscheck = "cli:main"
 
 [tool.setuptools]
-py-modules = ["cli", "cloud", "gitutil", "serve"]
+py-modules = ["cli", "cloud", "gitutil", "serve", "provenance"]
 packages = ["extractor", "ci", "web"]
 package-data = { "web" = ["*.html"] }

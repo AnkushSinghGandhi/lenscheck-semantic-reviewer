@@ -70,6 +70,47 @@ def _facts_for(local_repo, ref):
         return {"v": 1, "ref": ref, "endpoints": [to_dict(e) for e in eps]}
 
 
+def _parse_changed_lines(diff_text):
+    """Right-side (head) line numbers present in a unified diff, keyed by file path — the only lines
+    a GitHub review comment can anchor to. Self-contained here so the thin client can attach them to
+    the cloud's review (the cloud has no repo to diff); mirrors the engine's parse_changed_lines."""
+    out, path, right = {}, None, 0
+    for line in diff_text.splitlines():
+        if line.startswith("+++ "):
+            p = line[4:].strip()
+            if p.startswith("b/"):
+                p = p[2:]
+            path = None if p == "/dev/null" else p
+        elif line.startswith("@@"):
+            try:                                         # @@ -a,b +c,d @@
+                right = int(line.split("+", 1)[1].split(" ", 1)[0].split(",", 1)[0])
+            except (IndexError, ValueError):
+                right = 0
+        elif path is None:
+            continue
+        elif line.startswith("+") and not line.startswith("+++"):
+            out.setdefault(path, set()).add(right); right += 1
+        elif line.startswith(" "):
+            out.setdefault(path, set()).add(right); right += 1
+    return {p: sorted(v) for p, v in out.items()}
+
+
+def _changed_lines(local, base, head):
+    """{file: [head-side lines]} for base..head, best-effort (never break a review over the diff)."""
+    try:
+        return _parse_changed_lines(gitutil.sh("git", "-C", local, "diff", "--no-color", base, head))
+    except Exception:
+        return {}
+
+
+def _ensure_repo(repo):
+    """Resolve a path/URL to a local checkout and fail cleanly (no traceback) if it isn't a repo."""
+    local = gitutil.ensure_local(repo)
+    if not gitutil.git_toplevel(local):
+        sys.exit(f"lenscheck: {repo!r} is not a git repository — run inside a repo, or pass a path/URL.")
+    return local
+
+
 def _repo_name(local_repo, given):
     """owner/name if we can read the git remote (so the cloud can verify visibility), else basename."""
     try:
@@ -91,9 +132,12 @@ def review(argv):
     ap.add_argument("--json", dest="json_out", nargs="?", const="__stdout__",
                     help="write the review JSON to FILE (or print it if no FILE)")
     a = ap.parse_args(argv)
-    local = gitutil.ensure_local(a.repo)
+    local = _ensure_repo(a.repo)
     base = a.base or gitutil.default_branch(local)
     head = a.head or gitutil.current_branch(local)
+    if not base or not head:
+        sys.exit("lenscheck: couldn't resolve a base/head ref (no mainline branch or detached HEAD) "
+                 "— pass --base and --head explicitly.")
     _progress(f"lenscheck: reviewing {base}..{head}")
     body = {"repo": _repo_name(local, a.repo), "pr": a.pr, "private": a.private,
             "base_facts": _facts_for(local, base), "head_facts": _facts_for(local, head)}
@@ -101,6 +145,10 @@ def review(argv):
     code, out = _req("POST", "/api/v1/review", body)
     if code == 200 and isinstance(out, dict) and "review" in out:
         rev = out["review"]
+        # The cloud can't see the diff (facts only), so attach the head-side changed lines here —
+        # this is what lets `lenscheck post --inline` pin each finding to the line the PR touched.
+        if not rev.get("changed_lines"):
+            rev["changed_lines"] = _changed_lines(local, base, head)
         if a.out:
             with open(a.out, "w", encoding="utf-8") as f:
                 f.write(rev.get("markdown") or rev.get("title", ""))
@@ -116,8 +164,8 @@ def map(argv):
     ap.add_argument("--risky", action="store_true"); ap.add_argument("--private", action="store_true")
     ap.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
-    local = gitutil.ensure_local(a.repo)
-    head = gitutil.current_branch(local)
+    local = _ensure_repo(a.repo)
+    head = gitutil.current_branch(local) or "HEAD"
     _progress(f"lenscheck: mapping {head}")
     body = {"repo": _repo_name(local, a.repo), "private": a.private, "risky": a.risky,
             "facts": _facts_for(local, head)}
@@ -171,7 +219,7 @@ def invariants(argv):
     ap.add_argument("--snapshots", type=int, default=6)
     ap.add_argument("--out", default="invariants.discovered.json")
     a = ap.parse_args(argv)
-    local = gitutil.ensure_local(a.repo)
+    local = _ensure_repo(a.repo)
     shas = _sample_commits(local, a.snapshots)
     if not shas:
         sys.exit("lenscheck: no commit history to sample")
