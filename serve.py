@@ -45,16 +45,40 @@ def _commits(repo, n=50):
     for line in out.splitlines():
         sha, _, subj = line.partition("\t")
         if sha:
-            res.append({"sha": sha, "subject": subj})
+            res.append({"sha": sha, "title": subj})   # UI reads `.title` (matches /api/prs)
     return res
 
 
+def _read_blob(repo, ref, rel):
+    """Full text of `rel` at `ref`, or None if absent. `WORKTREE` reads the checked-out file off
+    disk; any other ref uses `git show`. Content is NOT stripped — line numbers must stay exact. A
+    realpath guard keeps a crafted `rel` from escaping the repo (serve can run on a public box)."""
+    root = os.path.realpath(repo)
+    full = os.path.realpath(os.path.join(root, rel))
+    if full != root and not full.startswith(root + os.sep):
+        return None
+    if ref in ("WORKTREE", "", None):
+        try:
+            with open(full, encoding="utf-8", errors="replace") as f:
+                return f.read()
+        except OSError:
+            return None
+    try:
+        p = subprocess.run(["git", "-C", repo, "show", f"{ref}:{rel}"],
+                           capture_output=True, text=True, timeout=30)
+        return p.stdout if p.returncode == 0 else None
+    except Exception:
+        return None
+
+
 def _source_snippet(repo, ref, rel, line, ctx=6):
-    blob = _git(repo, "show", f"{ref}:{rel}")
+    blob = _read_blob(repo, ref, rel)
+    if blob is None:
+        return {"found": False, "path": rel, "ref": ref, "line": line}
     lines = blob.splitlines()
     lo, hi = max(1, line - ctx), min(len(lines), line + ctx)
-    return {"path": rel, "ref": ref, "line": line,
-            "lines": [{"n": i, "text": lines[i - 1]} for i in range(lo, hi + 1)]}
+    return {"found": True, "path": rel, "ref": ref, "line": line,
+            "start": lo, "lines": lines[lo - 1:hi]}
 
 
 def _repo_allowed(url, allow):
@@ -239,7 +263,9 @@ def make_handler(cfg):
                     body = {"repo": cloud._repo_name(repo, repo), "risky": g("risky") == "1",
                             "facts": cloud._facts_for(repo, gitutil.current_branch(repo))}
                     code, out = cloud._req("POST", "/api/v1/map", body, override_token=g("token"))
-                    return self._json(code or 502, out.get("map", out) if code == 200 else out)
+                    # forward the whole payload: the web UI (web/map.html) reads the grouped
+                    # apps[]/total/seed; the flat `map` stays in it for any CLI-style consumer.
+                    return self._json(code or 502, out)
                 if p == "/api/source":
                     rel = g("path")
                     if not rel:
