@@ -1,0 +1,123 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Lenscheck — Cross-repo</title>
+<style>
+*{box-sizing:border-box}
+body{font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;margin:0;background:#fafafa;color:#1a1a1a}
+.wrap{max-width:1100px;margin:0 auto;padding:1.2rem 2rem 3rem}
+h1{font-size:1.3rem;margin:.2rem 0}.sub{color:#555;font-size:13px;margin:0 0 .8rem}
+a.back{font-size:13px;color:#2471a3;text-decoration:none}
+.setup{background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1rem;margin:.6rem 0 1rem}
+.setup textarea{width:100%;font:12px ui-monospace,Menlo,monospace;padding:.6rem;border:1px solid #d1d5db;border-radius:6px}
+.setup .row{display:flex;gap:.8rem;align-items:center;margin-top:.5rem}
+.setup button{padding:.5rem 1.1rem;border:0;border-radius:6px;background:#2471a3;color:#fff;font-weight:600;cursor:pointer}
+#status{color:#777;font-size:12px}
+.legend{color:#666;font-size:12px;margin:.3rem 0 .9rem;line-height:1.7}.legend b{font-weight:600}
+.toolbar{position:sticky;top:0;background:rgba(250,250,250,.96);backdrop-filter:blur(4px);padding:.6rem 0;margin-bottom:1rem;border-bottom:1px solid #e5e7eb;z-index:5}
+.toolbar input[type=search]{width:100%;padding:.5rem .8rem;font-size:14px;border:1px solid #d1d5db;border-radius:8px;margin-bottom:.5rem}
+.chips{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
+.chip{display:inline-flex;align-items:center;gap:.35rem;padding:.2rem .6rem;border:1px solid #d1d5db;border-radius:999px;font-size:12px;cursor:pointer;user-select:none;background:#fff}
+.chip.mw{border-color:#f1b0b7}.chip.pc{border-color:#f0dca0}.chip input{margin:0}
+.btn{font-size:12px;color:#2471a3;cursor:pointer;background:none;border:none;padding:0 .3rem}
+#count{margin-left:auto;color:#777;font-size:12px}
+.card{background:#fff;border:1px solid #e5e7eb;border-left:4px solid #cbd5e1;border-radius:8px;margin-bottom:.45rem;overflow:hidden}
+.card[data-kind=multi_writer]{border-left-color:#c0392b}.card[data-kind=producer_consumer]{border-left-color:#d4a017}
+summary{cursor:pointer;padding:.55rem .9rem;font-size:13px;display:flex;align-items:center;gap:.5rem;list-style:none}
+summary::-webkit-details-marker{display:none}summary:hover{background:#f8fafc}summary code{font-weight:600}
+.meta{color:#999;font-weight:400;font-size:12px;margin-left:auto}
+.body{padding:.2rem .9rem 1rem;border-top:1px solid #f0f0f0}
+.repos{display:flex;gap:1rem;flex-wrap:wrap;margin-top:.5rem}
+.repo{flex:1;min-width:260px;border-left:3px solid #ddd;padding-left:.7rem}.repo.absent{opacity:.45}
+.rw{margin:.3rem 0}.w{color:#c0392b;font-weight:700;font-size:11px}.r{color:#2471a3;font-weight:700;font-size:11px}
+ul{margin:.2rem 0;padding-left:1rem}li{font-size:12px}code{font-family:ui-monospace,Menlo,monospace;font-size:12px}
+.h{color:#555}.loc{color:#999;font-size:11px}.none{color:#bbb}
+.badge{display:inline-block;padding:.1rem .5rem;border-radius:4px;font-size:11px;font-weight:600;background:#eef;color:#446}
+.badge.red{background:#fdecea;color:#c0392b}.badge.amber{background:#fef3cd;color:#8a6d0b}.more{color:#999;list-style:none}
+#empty{display:none;color:#999;padding:2rem;text-align:center}
+</style></head>
+<body><div class="wrap">
+<a class="back" href="app.html">← Review</a>
+<h1>Cross-repo provenance</h1>
+<p class="sub">Which DB tables are written/read by endpoints across more than one repo — endpoint-level, with cross-service multi-writer flagged.</p>
+
+<div class="setup">
+  <textarea id="repos" rows="4" placeholder="One repo per line, optional @branch:&#10;/path/to/cms&#10;/path/to/legacy@develop"></textarea>
+  <div class="row">
+    <label><input type="checkbox" id="wonly"> writes-only (drop read-only noise)</label>
+    <button id="run">Analyze</button>
+    <span id="status"></span>
+  </div>
+</div>
+
+<div id="results" style="display:none">
+  <p class="legend">
+    🔴 <b>multi-writer</b>: 2+ repos WRITE it → coordinate schema &amp; write logic. ·
+    🟡 <b>producer→consumer</b>: one writes, others read → writer owns the shape. ·
+    <b>read-only</b>: none write → usually safe.
+  </p>
+  <div class="toolbar">
+    <input id="q" type="search" placeholder="filter by table name…">
+    <div class="chips">
+      <label class="chip mw"><input type="checkbox" class="kf" value="multi_writer" checked> 🔴 multi-writer <span id="c-mw"></span></label>
+      <label class="chip pc"><input type="checkbox" class="kf" value="producer_consumer" checked> 🟡 producer→consumer <span id="c-pc"></span></label>
+      <label class="chip"><input type="checkbox" class="kf" value="read_only" checked> read-only <span id="c-ro"></span></label>
+      <button class="btn" id="expand">expand all</button>
+      <button class="btn" id="collapse">collapse all</button>
+      <span id="count"></span>
+    </div>
+  </div>
+  <div id="list"></div><div id="empty">no tables match</div>
+</div>
+
+<script>
+var TOKEN=new URLSearchParams(location.search).get("token")||"";
+var BADGE={multi_writer:["badge red","cross-service multi-writer"],producer_consumer:["badge amber","producer → consumer"],read_only:["badge","read-only shared"]};
+var ORDER={multi_writer:0,producer_consumer:1,read_only:2};
+var DATA=null;
+function esc(s){return (s==null?"":""+s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
+function eps(lst){if(!lst||!lst.length)return '<span class="none">—</span>';
+ var r=lst.slice(0,6).map(function(e){return '<li><code>'+esc(e.route)+'</code> <span class="h">'+esc(e.handler)+'</span> <span class="loc">'+esc(e.loc)+'</span></li>';}).join("");
+ if(lst.length>6)r+='<li class="more">+'+(lst.length-6)+' more</li>';return '<ul>'+r+'</ul>';}
+function cardHtml(s){
+ var per=DATA.repos.map(function(rp){var a=s.by_repo[rp];
+  if(!a)return '<div class="repo absent"><b>'+esc(rp)+'</b> <span class="none">not touched</span></div>';
+  return '<div class="repo"><b>'+esc(rp)+'</b><div class="rw"><span class="w">WRITES</span> '+eps(a.written_by)+'</div><div class="rw"><span class="r">READS</span> '+eps(a.read_by)+'</div></div>';}).join("");
+ var b=BADGE[s.kind];
+ return '<details class="card" data-kind="'+s.kind+'" data-table="'+esc(s.table.toLowerCase())+'"><summary><code>'+esc(s.table)+'</code> <span class="'+b[0]+'">'+b[1]+'</span><span class="meta">writers: '+(esc(s.writers.join(", "))||"—")+'</span></summary><div class="body"><div class="repos">'+per+'</div></div></details>';}
+function render(){
+ var st=DATA.shared_tables.slice().sort(function(a,b){return (ORDER[a.kind]-ORDER[b.kind])||(a.table<b.table?-1:1);});
+ document.getElementById("list").innerHTML=st.map(cardHtml).join("");
+ var su=DATA.summary;
+ document.getElementById("c-mw").textContent="("+su.multi_writer+")";
+ document.getElementById("c-pc").textContent="("+su.producer_consumer+")";
+ document.getElementById("c-ro").textContent="("+su.read_only+")";
+ document.getElementById("results").style.display="";
+ wire();apply();
+}
+var cards=[];
+function wire(){cards=[].slice.call(document.querySelectorAll(".card"));}
+function apply(){
+ var term=document.getElementById("q").value.trim().toLowerCase();
+ var kinds={};[].slice.call(document.querySelectorAll(".kf")).forEach(function(k){kinds[k.value]=k.checked;});
+ var n=0;cards.forEach(function(c){var ok=(!term||c.getAttribute("data-table").indexOf(term)>=0)&&kinds[c.getAttribute("data-kind")];c.style.display=ok?"":"none";if(ok)n++;});
+ document.getElementById("count").textContent=n+" shown";document.getElementById("empty").style.display=n?"none":"block";
+}
+document.getElementById("q").addEventListener("input",apply);
+[].slice.call(document.querySelectorAll(".kf")).forEach(function(k){k.addEventListener("change",apply);});
+document.getElementById("expand").addEventListener("click",function(){cards.forEach(function(c){if(c.style.display!=="none")c.open=true;});});
+document.getElementById("collapse").addEventListener("click",function(){cards.forEach(function(c){c.open=false;});});
+document.getElementById("run").addEventListener("click",function(){
+ var repos=document.getElementById("repos").value.split("\n").map(function(s){return s.trim();}).filter(Boolean);
+ if(repos.length<2){document.getElementById("status").textContent="need at least 2 repos";return;}
+ var wonly=document.getElementById("wonly").checked?"1":"0";
+ document.getElementById("status").textContent="analyzing… (runs the extractor per repo, may take a bit)";
+ var url="api/crossrepo?repos="+encodeURIComponent(repos.join(","))+"&writes_only="+wonly+(TOKEN?"&token="+encodeURIComponent(TOKEN):"");
+ fetch(url).then(function(r){return r.json();}).then(function(d){
+  if(d.error){document.getElementById("status").textContent="error: "+d.error;return;}
+  DATA=d;document.getElementById("status").textContent=d.repos.join(" · ")+" — "+d.summary.shared_tables+" tables";render();
+ }).catch(function(e){document.getElementById("status").textContent="failed: "+e;});
+});
+// prefill from ?repos=a,b
+var pre=new URLSearchParams(location.search).get("repos");
+if(pre){document.getElementById("repos").value=pre.split(",").join("\n");}
+</script>
+</div></body></html>

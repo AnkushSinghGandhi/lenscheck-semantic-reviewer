@@ -133,6 +133,9 @@ def make_handler(cfg):
                 if path in ("/map", "/map.html"):
                     return self._send(200, open(os.path.join(HERE, "web", "map.html"), "rb").read(),
                                       "text/html; charset=utf-8")
+                if path in ("/crossrepo", "/crossrepo.html"):
+                    return self._send(200, open(os.path.join(HERE, "web", "crossrepo.html"), "rb").read(),
+                                      "text/html; charset=utf-8")
                 if path == "/healthz":
                     return self._json(200, {"ok": True})
 
@@ -166,6 +169,21 @@ def make_handler(cfg):
                     if not self._repo_ok(repo):
                         return self._json(403, {"error": "repo not in allowlist"})
                     return self._json(200, {"repo": repo, "prs": diff_pr.list_merges(repo, int(g("n", "30")))})
+                if path == "/api/crossrepo":
+                    repos = [r.strip() for r in g("repos", "").split(",") if r.strip()]
+                    if len(repos) < 2:
+                        return self._json(400, {"error": "need at least two repos"})
+                    for spec in repos:
+                        head, sep, _ = spec.rpartition("@")
+                        rp = head if (sep and os.path.isdir(head)) else spec
+                        if not self._repo_ok(rp):
+                            return self._json(403, {"error": f"repo not in allowlist: {rp}"})
+                    import crossrepo
+                    try:
+                        data = crossrepo.build(repos, writes_only=(g("writes_only") == "1"))
+                    except Exception as e:
+                        return self._json(500, {"error": str(e)})
+                    return self._json(200, data)
                 if path == "/api/refs":
                     repo = g("repo") or cfg["repo"]
                     if not repo:

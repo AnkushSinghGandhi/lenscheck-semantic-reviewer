@@ -267,6 +267,7 @@
   <div class="spacer"></div>
   <button class="navbtn on" title="The review workspace">☑ Review</button>
   <button class="navbtn" onclick="openMap()" title="Every endpoint in the repo, grouped by app">🗺 Repo Map</button>
+  <button class="navbtn" onclick="openCrossrepo()" title="Tables written/read across repos — cross-service multi-writers">🔀 Cross-repo</button>
   <button class="navbtn" id="themeBtn" onclick="toggleTheme()" title="Toggle light / dark">☀</button>
   <a class="domain" href="https://api.lenscheck.dev" target="_blank" rel="noopener" title="Lenscheck — visit the site">🌐 <b>api.lenscheck.dev</b></a>
   <div class="sep"></div>
@@ -451,6 +452,11 @@ function apiURL(p,params){params=Object.assign({},params||{});if(TOKEN)params.to
 function openMap(){
   const r=val("repo").trim();
   location.href=BASE+"map"+(r?("?repo="+encodeURIComponent(r)):"")+(TOKEN?((r?"&":"?")+"token="+TOKEN):"");
+}
+
+function openCrossrepo(){
+  const r=val("repo").trim();   // prefill the loaded repo as the first; add others in the page
+  location.href=BASE+"crossrepo"+(r?("?repos="+encodeURIComponent(r)):"")+(TOKEN?((r?"&":"?")+"token="+TOKEN):"");
 }
 
 // light / dark theme — persisted; the head script sets it pre-paint, this syncs the button + toggles

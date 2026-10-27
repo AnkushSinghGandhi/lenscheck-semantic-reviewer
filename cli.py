@@ -82,6 +82,11 @@ def main():
     elif command == "provenance":
         import provenance                          # local, key-free: runs the free extractor only
         sys.exit(provenance.main())
+    elif command == "crossrepo":
+        import crossrepo                           # local, key-free: provenance across >1 repo
+        if len(sys.argv) == 1:
+            sys.argv.append("--help")
+        sys.exit(crossrepo.main())
     elif command == "review":
         import diff_pr
         # No args → review the current repo's branch vs. its default branch (diff_pr resolves it).
