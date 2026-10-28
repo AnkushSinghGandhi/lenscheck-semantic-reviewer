@@ -1,9 +1,11 @@
 # `lenscheck crossrepo` — cross-service data-consistency
 
 Most consistency bugs live *between* services, not inside one. `crossrepo` takes two or
-more repos that share a database and finds every table they share — endpoint-level — and
-flags where **two services write the same table** (the cross-service race / constraint
-conflict). Deterministic, no LLM.
+more repos that share a database and finds every table they share — down to
+`route → handler → file:line`, across routed views **and background jobs (celery tasks,
+management commands, signal receivers)** — and flags where **two services write the same
+table** (the cross-service race / constraint conflict). It also surfaces **HTTP coupling**:
+where one service's endpoint calls a route another service serves. Deterministic, no LLM.
 
 ## What it reports
 Per shared table: which repos **write** vs **read** it, down to `route → handler → file:line`,
@@ -14,6 +16,9 @@ classified as:
 
 With `--schema` it adds the precise column-level rule:
 *"coordinate on unique key (form_id, unit_id, email) — both writers must agree."*
+
+Below the tables it lists **cross-repo API calls** — `repo A → call /path → repo B route` —
+so you see both ways two services couple: through the database and over HTTP.
 
 ## Where it lives (the three repos)
 | repo | role |
@@ -57,8 +62,10 @@ can violate the other's constraint (the duplicate-entry class). The per-repo end
 tells you exactly which route/handler in each service to coordinate.
 
 ## Known limits (see lenscheck-plan for the roadmap)
-- **db_table normalization:** provenance sometimes keys a table by its model class name, so a
-  managed=False table can miss the cross-repo join + the schema join. (Top fix.)
-- **API-call link:** only shared *tables* today; the HTTP *call* coupling (A calls B's
-  endpoint) is not surfaced yet.
+- **API links are heuristic:** lenscheck routes carry no `include()` prefix, so an outbound call
+  path is matched on its tail segments (params as wildcards). Every link is surfaced as
+  needs-verify — expect occasional noise on short/common paths.
+- **db_table residue:** background-job writes are now attributed, but a `managed=False` model with
+  *no* explicit `db_table` still falls back to the `applabel_model` convention — if two repos name
+  that model differently and the real table isn't the convention, the join can miss it.
 - **Caching:** re-extracts each repo per run.
