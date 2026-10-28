@@ -68,6 +68,7 @@ ul{margin:.2rem 0;padding-left:1rem}li{font-size:12px}code{font-family:ui-monosp
     </div>
   </div>
   <div id="list"></div><div id="empty">no tables match</div>
+  <div id="apilinks"></div>
 </div>
 
 <script>
@@ -90,9 +91,21 @@ function cardHtml(s){
    ? '<div style="color:#c0392b;font-weight:600;font-size:12px;margin:.1rem 0 .4rem">⚠ coordinate on unique key <code>'+keys+'</code> — both writers must agree</div>'
    : '<div class="meta" style="margin:.1rem 0 .4rem">unique key: <code>'+keys+'</code></div>';}
  return '<details class="card" data-kind="'+s.kind+'" data-table="'+esc(s.table.toLowerCase())+'"><summary><code>'+esc(s.table)+'</code> <span class="'+b[0]+'">'+b[1]+'</span><span class="meta">writers: '+(esc(s.writers.join(", "))||"—")+'</span></summary><div class="body">'+ukh+'<div class="repos">'+per+'</div></div></details>';}
+function renderApiLinks(){
+ var links=DATA.api_links||[],el=document.getElementById("apilinks");
+ if(!links.length){el.innerHTML="";return;}
+ var rows=links.map(function(l){return '<li><b>'+esc(l.from_repo)+'</b> <code>'+esc(l.from.handler)
+  +'</code> <span class="loc">'+esc(l.from.loc)+'</span> → call <code>'+esc(l.call)+'</code> → <b>'
+  +esc(l.to_repo)+'</b> <code>'+esc(l.to.handler)+'</code> <span class="h">'+esc(l.to.route)
+  +'</span> <span class="loc">'+esc(l.to.loc)+'</span></li>';}).join("");
+ el.innerHTML='<h2 style="font-size:1.05rem;margin:1.6rem 0 .2rem">Cross-repo API calls ('+links.length+')</h2>'
+  +'<p class="legend">⚠ <b>heuristic</b>: routes carry no include() prefix, matched on the path tail — <b>verify each</b>.</p>'
+  +'<ul style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:.6rem 1.4rem">'+rows+'</ul>';
+}
 function render(){
  var st=DATA.shared_tables.slice().sort(function(a,b){return (ORDER[a.kind]-ORDER[b.kind])||(a.table<b.table?-1:1);});
  document.getElementById("list").innerHTML=st.map(cardHtml).join("");
+ renderApiLinks();
  var su=DATA.summary;
  document.getElementById("c-mw").textContent="("+su.multi_writer+")";
  document.getElementById("c-pc").textContent="("+su.producer_consumer+")";

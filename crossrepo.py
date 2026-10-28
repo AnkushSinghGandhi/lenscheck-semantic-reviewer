@@ -11,6 +11,7 @@ import argparse
 import html as _h
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -100,6 +101,67 @@ _BADGE = {
 }
 _ORDER = {"multi_writer": 0, "producer_consumer": 1, "read_only": 2}
 
+_PARAM = re.compile(r"[<>{}():]|\?P")        # a param segment: <int:pk> {id} :id (?P<pk>…)
+
+
+def _seg(s):
+    return "*" if (not s or _PARAM.search(s)) else s.lower()
+
+
+def _path_segs(path):
+    return [_seg(s) for s in path.strip("/").split("/") if s]
+
+
+def _route_segs(route):
+    r = route.strip().lstrip("^").rstrip("$")        # tolerate re_path anchors
+    return [_seg(s) for s in r.strip("/").split("/") if s]
+
+
+def _route_match(call_segs, route_segs):
+    """True if a route's (prefix-less) pattern is a segment-suffix of an outbound call path, params
+    as wildcards, with ≥1 real literal matched. Heuristic: lenscheck routes carry no include()
+    prefix, so only the tail is matchable — every link is surfaced as needs-verify."""
+    if not route_segs or len(route_segs) > len(call_segs):
+        return False
+    lits = 0
+    for c, r in zip(call_segs[-len(route_segs):], route_segs):
+        if r == "*":
+            continue
+        if c == "*" or c != r:
+            return False
+        lits += 1
+    return lits >= 1
+
+
+def _api_links(per):
+    """Cross-repo HTTP coupling: repo A's endpoint makes an outbound call whose path matches a route
+    served by repo B. The complement to shared-table coupling. Heuristic (see _route_match)."""
+    routes = {name: [(e, _route_segs(e.get("route", ""))) for e in data.get("endpoints", [])]
+              for name, data in per.items()}
+    links, seen = [], set()
+    for name, data in per.items():
+        for e in data.get("endpoints", []):
+            for call in e.get("calls", []):
+                cs = _path_segs(call)
+                if not cs:
+                    continue
+                for other, rlist in routes.items():
+                    if other == name:
+                        continue
+                    for tgt, rsegs in rlist:
+                        if not _route_match(cs, rsegs):
+                            continue
+                        key = (name, e["loc"], other, tgt["loc"], call)
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        links.append({
+                            "from_repo": name, "call": call,
+                            "from": {k: e.get(k, "") for k in ("route", "handler", "loc")},
+                            "to_repo": other,
+                            "to": {k: tgt.get(k, "") for k in ("route", "handler", "loc")}})
+    return sorted(links, key=lambda x: (x["from_repo"], x["to_repo"], x["call"]))
+
 
 def build(repos, writes_only=False, schema=None):
     per = {}
@@ -108,7 +170,7 @@ def build(repos, writes_only=False, schema=None):
         for spec in repos:                       # each is 'path' or 'path@branch'
             name, path, cleanup = _resolve(spec)
             cleanups.append(cleanup)
-            per[name] = provenance.build(path)
+            per[name] = provenance.build(path, with_calls=True)
     finally:
         for c in cleanups:
             try:
@@ -141,6 +203,8 @@ def build(repos, writes_only=False, schema=None):
             "unique_keys": [list(k) for k in (schema or {}).get(tbl, [])], "by_repo": slot,
         })
 
+    api_links = _api_links(per)
+
     def n(k):
         return sum(1 for s in shared if s["kind"] == k)
     return {
@@ -148,9 +212,11 @@ def build(repos, writes_only=False, schema=None):
         "writes_only": writes_only,
         "summary": {"repos": len(per), "shared_tables": len(shared),
                     "multi_writer": n("multi_writer"),
-                    "producer_consumer": n("producer_consumer"), "read_only": n("read_only")},
+                    "producer_consumer": n("producer_consumer"), "read_only": n("read_only"),
+                    "api_links": len(api_links)},
         "per_repo": {n2: d.get("summary", {}) for n2, d in per.items()},
         "shared_tables": shared,
+        "api_links": api_links,
     }
 
 
@@ -225,7 +291,23 @@ def write_html(data, path):
         '<span id="count"></span></div></div>')
     body = '<div id="list">' + "".join(cards) + '</div><div id="empty">no tables match</div>'
     with open(path, "w", encoding="utf-8") as f:
-        f.write(head + hdr + toolbar + body + "</div>" + _JS + "</body></html>")
+        f.write(head + hdr + toolbar + body + _api_links_html(data) + "</div>" + _JS + "</body></html>")
+
+
+def _api_links_html(data):
+    links = data.get("api_links") or []
+    if not links:
+        return ""
+    rows = "".join(
+        f'<li><b>{_h.escape(l["from_repo"])}</b> <code>{_h.escape(l["from"]["handler"])}</code> '
+        f'<span class="loc">{_h.escape(l["from"]["loc"])}</span> &rarr; call <code>{_h.escape(l["call"])}</code> '
+        f'&rarr; <b>{_h.escape(l["to_repo"])}</b> <code>{_h.escape(l["to"]["handler"])}</code> '
+        f'<span class="h">{_h.escape(l["to"]["route"])}</span> '
+        f'<span class="loc">{_h.escape(l["to"]["loc"])}</span></li>' for l in links)
+    return (f'<h2 style="font-size:1.05rem;margin:1.6rem 0 .2rem">Cross-repo API calls ({len(links)})</h2>'
+            '<p class="legend">⚠ <b>heuristic</b>: lenscheck routes carry no include() prefix, so an '
+            'outbound path is matched on its tail segments — <b>verify each link</b>.</p>'
+            f'<ul style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:.6rem 1.4rem">{rows}</ul>')
 
 
 def main(argv=None):

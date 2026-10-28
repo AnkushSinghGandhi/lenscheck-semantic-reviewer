@@ -148,7 +148,35 @@ def _item_model_kind(item):
     return (model or left), (kind or "read")
 
 
-def build(repo):
+def _url_path(dest):
+    """The URL *path* of an outbound-call destination, or None if there's no matchable path.
+    Handles `https://host/api/x`, a bare `/api/x`, and the folded `{HOST}/api/x` form (an
+    unresolved host placeholder before the first slash). A pure host/const yields None."""
+    d = dest.replace(" (via call)", "").strip()
+    if not d or d == "?":
+        return None
+    if d.startswith(("http://", "https://")):
+        from urllib.parse import urlparse
+        p = urlparse(d).path
+    elif d.startswith("/"):
+        p = d
+    elif "/" in d:                           # '{HOST}/api/x' / 'host:8000/api/x' → drop the authority
+        p = "/" + d.split("/", 1)[1]
+    else:
+        return None                          # just a host/const — nothing to match a route against
+    p = p.split("?")[0].split("#")[0].strip()
+    return p if p and p != "/" else None
+
+
+def _call_path(item):
+    """From an e4_external item `'requests.post -> {HOST}/api/x @ f:1'` pull the destination path."""
+    if " -> " not in item:
+        return None
+    dest = item.split(" -> ", 1)[1].rsplit(" @ ", 1)[0]
+    return _url_path(dest)
+
+
+def build(repo, with_calls=False):
     index = RepoIndex(repo)
     eps = analyze_repo(repo) + _nonroute_endpoints(index)   # routed views + background-job writers
 
@@ -248,7 +276,7 @@ def build(repo):
         if a["id"] not in seen_a:
             seen_a.add(a["id"]); uniq.append(a)
 
-    return {
+    out = {
         "schema": SCHEMA,
         "repo": os.path.abspath(repo),
         "generated_by": "lenscheck provenance",
@@ -261,6 +289,15 @@ def build(repo):
                    for t, r in sorted(tables.items())},
         "consistency_rules": rules + uniq,
     }
+    if with_calls:
+        # per-endpoint route + outbound-call paths — lets a cross-repo pass match "A calls /x" to the
+        # repo whose route serves /x (HTTP coupling, the complement to shared-table coupling).
+        out["endpoints"] = [
+            {"route": e.route, "handler": e.handler, "loc": f"{e.file}:{e.line}", "methods": e.methods,
+             "calls": sorted({p for it in (getattr(e.e4_external, "items", None) or [])
+                              for p in (_call_path(it),) if p})}
+            for e in eps]
+    return out
 
 
 def _to_yaml(rules):
