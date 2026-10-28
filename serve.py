@@ -178,9 +178,10 @@ def make_handler(cfg):
                         rp = head if (sep and os.path.isdir(head)) else spec
                         if not self._repo_ok(rp):
                             return self._json(403, {"error": f"repo not in allowlist: {rp}"})
-                    import crossrepo
+                    import crossrepo, schema_dump
                     try:
-                        data = crossrepo.build(repos, writes_only=(g("writes_only") == "1"))
+                        schema = schema_dump.load(g("schema")) if g("schema") else None
+                        data = crossrepo.build(repos, writes_only=(g("writes_only") == "1"), schema=schema)
                     except Exception as e:
                         return self._json(500, {"error": str(e)})
                     return self._json(200, data)
