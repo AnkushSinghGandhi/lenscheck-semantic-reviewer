@@ -541,8 +541,8 @@ class FactCollector(ast.NodeVisitor):
            (isinstance(f, ast.Attribute) and f.attr == "send_task"):
             self.async_.append(("celery.send_task", _first_const(node) or "?", fl, ln))
         # follow targets
-        if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "self":
-            self.self_calls.append(f.attr)
+        if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id in ("self", "cls"):
+            self.self_calls.append(f.attr)   # a classmethod reaches siblings via `cls.x()`, same as `self.x()`
         elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) \
                 and f.value.id[:1].isupper() and f.attr not in {"objects", "as_view"}:
             # Class.classmethod(...)  e.g. OrderedItems.insert_ordered_item(...) / OrderService.create(...).

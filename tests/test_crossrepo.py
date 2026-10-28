@@ -68,6 +68,25 @@ def test_route_match_is_suffix_and_needs_a_literal():
     assert not crossrepo._route_match(["leads"], ["*"])                       # all-wildcard → no link
 
 
+def test_classmethod_cls_call_chain_is_followed_to_the_write(tmp_path):
+    # task → Helper.save_uploaded() → cls._save_fresh() → bulk_create. The `cls.method()` hop was
+    # invisible before (only `self.method()` was followed), hiding the write two levels down — the
+    # real campaign_lead_staging miss.
+    r = tmp_path / "svc"
+    _write(r, "app/models.py",
+           "from django.db import models\nclass FreshLead(models.Model):\n"
+           "    class Meta:\n        db_table = 't_fresh'\n")
+    _write(r, "app/helper.py",
+           "from .models import FreshLead\nclass Helper:\n"
+           "    @classmethod\n    def save_uploaded(cls, rows):\n        return cls._save_fresh(rows)\n"
+           "    @classmethod\n    def _save_fresh(cls, rows):\n        FreshLead.objects.bulk_create([FreshLead()])\n")
+    _write(r, "app/tasks.py",
+           "from celery import shared_task\nfrom .helper import Helper\n"
+           "@shared_task\ndef process_upload(rows):\n    Helper.save_uploaded(rows)\n")
+    t = crossrepo.provenance.build(str(r))["tables"].get("t_fresh")
+    assert t and any(e["route"] == "task:process_upload" for e in t["written_by"])
+
+
 def test_blast_keeps_only_tables_and_links_a_changed_file_touches():
     data = {
         "repos": ["cms", "legacy"],
