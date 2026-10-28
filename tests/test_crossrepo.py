@@ -1,4 +1,7 @@
-"""Cross-repo: background-job write attribution (#1) and HTTP-call coupling (#5)."""
+"""Cross-repo: background-job write attribution (#1), HTTP-call coupling (#5),
+provenance caching (#8), and PR blast-radius (#10)."""
+import subprocess
+
 import crossrepo
 
 
@@ -63,3 +66,49 @@ def test_route_match_is_suffix_and_needs_a_literal():
     assert crossrepo._route_match(["api", "leads", "5"], ["leads", "*"])      # param wildcard
     assert not crossrepo._route_match(["api", "leads"], ["orders"])           # no literal match
     assert not crossrepo._route_match(["leads"], ["*"])                       # all-wildcard → no link
+
+
+def test_blast_keeps_only_tables_and_links_a_changed_file_touches():
+    data = {
+        "repos": ["cms", "legacy"],
+        "shared_tables": [
+            {"table": "leads", "kind": "multi_writer", "writers": ["cms", "legacy"], "by_repo": {
+                "cms": {"written_by": [{"route": "upload/", "handler": "u", "loc": "cms/views.py:10"}], "read_by": []},
+                "legacy": {"written_by": [{"route": "command:run", "handler": "C", "loc": "legacy/cmd.py:5"}], "read_by": []}}},
+            {"table": "other", "kind": "multi_writer", "writers": ["cms", "legacy"], "by_repo": {
+                "cms": {"written_by": [{"route": "x/", "handler": "x", "loc": "cms/elsewhere.py:1"}], "read_by": []},
+                "legacy": {"written_by": [{"route": "y/", "handler": "y", "loc": "legacy/z.py:1"}], "read_by": []}}},
+        ],
+        "api_links": [
+            {"from_repo": "cms", "call": "/api/x", "from": {"loc": "cms/views.py:10", "route": "upload/", "handler": "u"},
+             "to_repo": "legacy", "to": {"loc": "legacy/urls.py:2", "route": "x/", "handler": "xv"}},
+        ],
+    }
+    tables, links = crossrepo._blast(data, "cms", {"cms/views.py"})
+    assert [t["table"] for t in tables] == ["leads"]           # 'other' dropped (its cms write isn't in the diff)
+    assert tables[0]["blast"]["changed_write"] is True         # a WRITE changed → bigger blast
+    assert len(links) == 1                                     # link whose from.loc is in the changed file
+
+
+def test_provenance_cache_hits_on_second_call_for_a_clean_repo(tmp_path, monkeypatch):
+    repo = tmp_path / "r"
+    (repo / "app").mkdir(parents=True)
+    (repo / "app" / "models.py").write_text(
+        "from django.db import models\nclass M(models.Model):\n    class Meta:\n        db_table = 't'\n")
+
+    def git(*args):
+        subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+    git("init", "-q")
+    git("add", "-A")
+    git("-c", "user.email=a@b.c", "-c", "user.name=t", "commit", "-qm", "x")
+
+    calls, real = [], crossrepo.provenance.build
+    monkeypatch.setattr(crossrepo.provenance, "build",
+                        lambda p, with_calls=False: (calls.append(1), real(p, with_calls=with_calls))[1])
+    crossrepo._provenance(str(repo), True, True)      # miss → extracts
+    crossrepo._provenance(str(repo), True, True)      # clean HEAD unchanged → cache hit
+    assert len(calls) == 1
+
+    git("rm", "-q", "app/models.py")                  # dirty tree → never cached, always fresh
+    crossrepo._provenance(str(repo), True, True)
+    assert len(calls) == 2

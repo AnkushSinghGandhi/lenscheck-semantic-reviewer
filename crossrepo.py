@@ -8,6 +8,7 @@ Local, key-free. JSON contract on stdout (like `provenance`); optional self-cont
 with live search + kind filters + collapsible rows.
 """
 import argparse
+import hashlib
 import html as _h
 import json
 import os
@@ -163,14 +164,98 @@ def _api_links(per):
     return sorted(links, key=lambda x: (x["from_repo"], x["to_repo"], x["call"]))
 
 
-def build(repos, writes_only=False, schema=None):
+def _changed_files(repo_path, since):
+    """Repo-relative paths changed in `repo_path`: diff vs REF (`since`), else uncommitted changes
+    vs HEAD (staged + unstaged + untracked, so a brand-new module counts)."""
+    try:
+        if since:
+            r = subprocess.run(["git", "-C", repo_path, "diff", "--name-only", since],
+                               capture_output=True, text=True)
+            return set(r.stdout.split())
+        r = subprocess.run(["git", "-C", repo_path, "status", "--porcelain"], capture_output=True, text=True)
+        return {ln[3:] for ln in r.stdout.splitlines() if ln.strip()}
+    except Exception:
+        return set()
+
+
+def _touches(loc, changed_files):
+    return bool(loc) and loc.split(":")[0] in changed_files
+
+
+def _blast(data, changed_name, changed_files):
+    """Keep only the cross-repo tables + API-links that the changed files in `changed_name` touch.
+    Each kept table flags whether the change was a WRITE (bigger blast — downstream readers / other
+    writers can break)."""
+    tables = []
+    for s in data["shared_tables"]:
+        acc = s["by_repo"].get(changed_name) or {}
+        w = [e for e in acc.get("written_by", []) if _touches(e.get("loc"), changed_files)]
+        r = [e for e in acc.get("read_by", []) if _touches(e.get("loc"), changed_files)]
+        if not w and not r:
+            continue
+        s = dict(s)
+        s["blast"] = {"changed_write": bool(w), "changed_endpoints": [e["loc"] for e in w + r]}
+        tables.append(s)
+    links = [l for l in data.get("api_links", [])
+             if (l["from_repo"] == changed_name and _touches(l["from"]["loc"], changed_files))
+             or (l["to_repo"] == changed_name and _touches(l["to"]["loc"], changed_files))]
+    return tables, links
+
+
+def _cache_dir():
+    d = os.path.join(tempfile.gettempdir(), "lenscheck_provcache")
+    try:
+        os.makedirs(d, exist_ok=True)
+    except OSError:
+        return None
+    return d
+
+
+def _clean_head(path):
+    """HEAD sha when `path` is a git repo with a CLEAN tree, else None. A dirty tree or non-repo
+    returns None → that repo always re-extracts, so a cached result is never stale.
+    shortcut: only clean checkouts are cached; upgrade to a content fingerprint if dirty re-runs matter."""
+    try:
+        h = subprocess.run(["git", "-C", path, "rev-parse", "HEAD"], capture_output=True, text=True)
+        st = subprocess.run(["git", "-C", path, "status", "--porcelain"], capture_output=True, text=True)
+        if h.returncode or st.returncode or st.stdout.strip():
+            return None
+        return h.stdout.strip()
+    except Exception:
+        return None
+
+
+def _provenance(path, with_calls, use_cache):
+    """provenance.build, cached by git HEAD. A commit sha is globally unique, so the sha alone keys
+    it — same repo re-run (or an @branch worktree at the same commit) hits instantly."""
+    if not use_cache:
+        return provenance.build(path, with_calls=with_calls)
+    head, d = _clean_head(path), _cache_dir()
+    if not head or not d:
+        return provenance.build(path, with_calls=with_calls)
+    fp = os.path.join(d, hashlib.sha1(f"{head}|{with_calls}|{provenance.SCHEMA}".encode()).hexdigest() + ".json")
+    try:
+        with open(fp, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        pass
+    data = provenance.build(path, with_calls=with_calls)
+    try:
+        with open(fp, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+    except OSError:
+        pass
+    return data
+
+
+def build(repos, writes_only=False, schema=None, use_cache=True):
     per = {}
     cleanups = []
     try:
         for spec in repos:                       # each is 'path' or 'path@branch'
             name, path, cleanup = _resolve(spec)
             cleanups.append(cleanup)
-            per[name] = provenance.build(path, with_calls=True)
+            per[name] = _provenance(path, True, use_cache)
     finally:
         for c in cleanups:
             try:
@@ -291,7 +376,24 @@ def write_html(data, path):
         '<span id="count"></span></div></div>')
     body = '<div id="list">' + "".join(cards) + '</div><div id="empty">no tables match</div>'
     with open(path, "w", encoding="utf-8") as f:
-        f.write(head + hdr + toolbar + body + _api_links_html(data) + "</div>" + _JS + "</body></html>")
+        f.write(head + hdr + _blast_html(data) + toolbar + body
+                + _api_links_html(data) + "</div>" + _JS + "</body></html>")
+
+
+def _blast_html(data):
+    b = data.get("blast")
+    if not b:
+        return ""
+    files = "".join(f"<li><code>{_h.escape(f)}</code></li>" for f in b["changed_files"][:40])
+    more = (f'<li class="more">+{len(b["changed_files"]) - 40} more</li>'
+            if len(b["changed_files"]) > 40 else "")
+    return (f'<div style="background:#fff8e1;border:1px solid #f0dca0;border-radius:8px;padding:.7rem 1rem;margin:.4rem 0 1rem">'
+            f'<b>💥 Blast radius</b> — changes in <code>{_h.escape(b["changed_repo"])}</code> '
+            f'(vs {_h.escape(b["since"])}) couple to <b>{b["tables"]}</b> shared table(s) and '
+            f'<b>{b["links"]}</b> API link(s) in the other repo(s). Fix below, then check those endpoints.'
+            f'<details style="margin-top:.4rem"><summary style="cursor:pointer;font-size:12px;color:#8a6d0b">'
+            f'{len(b["changed_files"])} changed files</summary>'
+            f'<ul style="margin:.3rem 0">{files}{more}</ul></details></div>')
 
 
 def _api_links_html(data):
@@ -324,6 +426,13 @@ def main(argv=None):
     ap.add_argument("--schema", metavar="FILE",
                     help="DB-schema JSON (table -> unique keys, from schema_dump) so multi-writer "
                          "tables get a column-level 'coordinate on unique key' rule")
+    ap.add_argument("--no-cache", action="store_true",
+                    help="re-extract every repo (default: cache per-repo provenance by git HEAD for clean trees)")
+    ap.add_argument("--changed", metavar="PATH",
+                    help="blast-radius mode: a repo (also in REPOS) whose changed files seed the radius — "
+                         "show only the cross-repo tables/API-links those changes touch")
+    ap.add_argument("--since", metavar="REF",
+                    help="with --changed: diff against REF (default: uncommitted changes vs HEAD)")
     ap.add_argument("--compact", action="store_true", help="single-line JSON")
     a = ap.parse_args(argv)
 
@@ -338,10 +447,29 @@ def main(argv=None):
         return 3
     try:
         import schema_dump
-        data = build(a.repos, writes_only=a.writes_only, schema=schema_dump.load(a.schema))
+        data = build(a.repos, writes_only=a.writes_only, schema=schema_dump.load(a.schema),
+                     use_cache=not a.no_cache)
     except Exception as e:                       # never leak a traceback onto parsed stdout
         print(f"lenscheck crossrepo: failed: {e}", file=sys.stderr)
         return 3
+
+    if a.changed:
+        base = a.changed.rpartition("@")[0] or a.changed
+        cbase = os.path.basename(os.path.abspath(base))
+        cname = next((r for r in data["repos"] if r == cbase or r.startswith(cbase + "@")), None)
+        if not cname:
+            print(f"lenscheck crossrepo: --changed '{cbase}' not among analyzed repos {data['repos']}",
+                  file=sys.stderr)
+            return 3
+        cfiles = _changed_files(base, a.since)
+        btables, blinks = _blast(data, cname, cfiles)
+        data["shared_tables"], data["api_links"] = btables, blinks
+        for k in ("multi_writer", "producer_consumer", "read_only"):
+            data["summary"][k] = sum(1 for t in btables if t["kind"] == k)
+        data["summary"]["shared_tables"] = len(btables)
+        data["summary"]["api_links"] = len(blinks)
+        data["blast"] = {"changed_repo": cname, "since": a.since or "uncommitted vs HEAD",
+                         "changed_files": sorted(cfiles), "tables": len(btables), "links": len(blinks)}
 
     if a.html:
         write_html(data, a.html)
@@ -351,9 +479,10 @@ def main(argv=None):
         with open(a.out, "w", encoding="utf-8") as f:
             f.write(blob)
     s = data["summary"]
+    scope = f" · blast radius of {data['blast']['changed_repo']}" if data.get("blast") else ""
     print(f"lenscheck crossrepo: {s['repos']} repos · {s['shared_tables']} tables · "
           f"{s['multi_writer']} multi-writer · {s['producer_consumer']} producer/consumer · "
-          f"{s['read_only']} read-only", file=sys.stderr)
+          f"{s['read_only']} read-only · {s.get('api_links', 0)} API links{scope}", file=sys.stderr)
     if not a.out and not a.html:
         print(blob)
     return 0
