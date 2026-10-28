@@ -101,7 +101,7 @@ _BADGE = {
 _ORDER = {"multi_writer": 0, "producer_consumer": 1, "read_only": 2}
 
 
-def build(repos, writes_only=False):
+def build(repos, writes_only=False, schema=None):
     per = {}
     cleanups = []
     try:
@@ -137,7 +137,8 @@ def build(repos, writes_only=False):
         shared.append({
             "table": tbl, "repos": sorted(slot), "writers": writers,
             "readers": sorted(r for r, a in slot.items() if a["read_by"]),
-            "multi_writer": len(writers) >= 2, "kind": kind, "by_repo": slot,
+            "multi_writer": len(writers) >= 2, "kind": kind,
+            "unique_keys": [list(k) for k in (schema or {}).get(tbl, [])], "by_repo": slot,
         })
 
     def n(k):
@@ -180,11 +181,19 @@ def write_html(data, path):
                 f'<div class="rw"><span class="w">WRITES</span> {_eps(acc["written_by"])}</div>'
                 f'<div class="rw"><span class="r">READS</span> {_eps(acc["read_by"])}</div></div>')
         cls, label = _BADGE[s["kind"]]
+        uk = s.get("unique_keys") or []
+        uk_html = ""
+        if uk:
+            keys = _h.escape("; ".join("+".join(k) for k in uk))
+            uk_html = (f'<div style="color:#c0392b;font-weight:600;font-size:12px;margin:.1rem 0 .4rem">'
+                       f'⚠ coordinate on unique key <code>{keys}</code> — both writers must agree</div>'
+                       if s["kind"] == "multi_writer" else
+                       f'<div class="meta" style="margin:.1rem 0 .4rem">unique key: <code>{keys}</code></div>')
         cards.append(
             f'<details class="card" data-kind="{s["kind"]}" data-table="{_h.escape(s["table"].lower())}">'
             f'<summary><code>{_h.escape(s["table"])}</code> <span class="{cls}">{label}</span>'
             f'<span class="meta">writers: {", ".join(s["writers"]) or "—"}</span></summary>'
-            f'<div class="body"><div class="repos">{"".join(per)}</div></div></details>')
+            f'<div class="body">{uk_html}<div class="repos">{"".join(per)}</div></div></details>')
 
     su = data["summary"]
     scope = "write-coupled only" if data.get("writes_only") else "all shared"
@@ -230,6 +239,9 @@ def main(argv=None):
     ap.add_argument("--html", metavar="FILE", help="write a self-contained HTML report")
     ap.add_argument("--writes-only", action="store_true",
                     help="drop read-only-shared tables; keep only write coupling (multi-writer + producer/consumer)")
+    ap.add_argument("--schema", metavar="FILE",
+                    help="DB-schema JSON (table -> unique keys, from schema_dump) so multi-writer "
+                         "tables get a column-level 'coordinate on unique key' rule")
     ap.add_argument("--compact", action="store_true", help="single-line JSON")
     a = ap.parse_args(argv)
 
@@ -243,7 +255,8 @@ def main(argv=None):
         print("lenscheck crossrepo: need at least two repos", file=sys.stderr)
         return 3
     try:
-        data = build(a.repos, writes_only=a.writes_only)
+        import schema_dump
+        data = build(a.repos, writes_only=a.writes_only, schema=schema_dump.load(a.schema))
     except Exception as e:                       # never leak a traceback onto parsed stdout
         print(f"lenscheck crossrepo: failed: {e}", file=sys.stderr)
         return 3
