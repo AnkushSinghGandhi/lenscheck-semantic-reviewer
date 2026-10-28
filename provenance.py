@@ -22,14 +22,76 @@ import warnings
 # (progress/errors go to stderr) so a tool shelling out to us can `json.loads(stdout)` unconditionally.
 warnings.filterwarnings("ignore", category=SyntaxWarning)
 
-from extractor import analyze_repo          # noqa: E402
-from extractor.analyzer import RepoIndex    # noqa: E402
+from extractor import analyze_repo                                      # noqa: E402
+from extractor.analyzer import RepoIndex, build_edges, Endpoint, Edge, VERIFIED, _rel  # noqa: E402
 
 # Stable subprocess contract. Bump only on a breaking change to the JSON shape; consumers (e.g. QDD)
 # check `schema` and refuse an unknown major. Exit codes: 0 ok · 2 usage · 3 repo unreadable.
 SCHEMA = 1
 
 _FK_CALLS = {"ForeignKey", "OneToOneField"}
+
+# Background-job write paths lenscheck's *route* discovery can't see — but which absolutely write
+# shared tables (a cross-service write race usually lives in a worker/command, not a view). We treat
+# each as a pseudo-endpoint and run the SAME handler analyzer, so its table writes are attributed
+# exactly like an endpoint's. Routes are prefixed task:/command:/signal: so a reader can tell them apart.
+_TASK_DECOS = {"shared_task", "task", "periodic_task", "app_task"}      # celery @shared_task / @app.task
+_SIGNAL_DECOS = {"receiver"}                                           # django @receiver(post_save, …)
+
+
+def _deco_names(node):
+    names = set()
+    for d in getattr(node, "decorator_list", []):
+        f = d.func if isinstance(d, ast.Call) else d
+        names.add(f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", ""))
+    return names
+
+
+def _base_name(b):
+    return b.id if isinstance(b, ast.Name) else getattr(b, "attr", "")
+
+
+def _synthetic_ep(index, route, name, method_nodes, path, self_type=None, class_methods=None):
+    """A non-route entrypoint (job/command/signal) analyzed with the real handler analyzer."""
+    ep = Endpoint(route=route, handler=name)
+    ep.file, ep.line, ep.methods = _rel(index, path), method_nodes[0].lineno, ["<job>"]
+    ep.e1_route_handler = Edge(VERIFIED, [f"{name} @ {ep.file}:{ep.line}"])
+    build_edges(ep, method_nodes, index, path, self_type=self_type, class_methods=class_methods or {})
+    return ep
+
+
+def _nonroute_endpoints(index):
+    """Celery tasks, Django management-command handle() methods, and signal receivers — the write
+    paths outside the URL map. Best-effort: one bad def never sinks the run."""
+    out = []
+    for name, defs in index.funcs.items():                 # tasks + receivers are plain functions
+        for node, path, _toplevel in defs:
+            decos = _deco_names(node)
+            try:
+                if decos & _TASK_DECOS:
+                    out.append(_synthetic_ep(index, f"task:{name}", name, [node], path))
+                elif decos & _SIGNAL_DECOS:
+                    out.append(_synthetic_ep(index, f"signal:{name}", name, [node], path))
+            except Exception:
+                continue
+    for cname, defs in index.classes.items():              # management commands → their handle()
+        for node, path in defs:
+            if "management" + os.sep + "commands" not in path:
+                continue
+            if not any(_base_name(b).endswith("Command") for b in node.bases):
+                continue
+            handle = next((m for m in node.body if isinstance(m, ast.FunctionDef)
+                           and m.name in ("handle", "handle_noargs")), None)
+            if handle is None:
+                continue
+            cmd = os.path.splitext(os.path.basename(path))[0]      # Django: command name == file stem
+            methods = {m.name: m for m in node.body if isinstance(m, ast.FunctionDef)}
+            try:
+                out.append(_synthetic_ep(index, f"command:{cmd}", cname, [handle], path,
+                                         self_type=cname, class_methods=methods))
+            except Exception:
+                continue
+    return out
 
 
 def _fk_target(call):
@@ -87,8 +149,8 @@ def _item_model_kind(item):
 
 
 def build(repo):
-    eps = analyze_repo(repo)
     index = RepoIndex(repo)
+    eps = analyze_repo(repo) + _nonroute_endpoints(index)   # routed views + background-job writers
 
     # model -> db_table, merged from the index (explicit Meta.db_table / __tablename__) and what the
     # endpoints resolved. Gives FK targets a real table name to point a rule at.
