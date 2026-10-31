@@ -16,7 +16,7 @@ import sys
 import invariants as inv_mod
 from extractor.analyzer import analyze_repo
 from diff_pr import (endpoint_risk, auth_str, items, ops_of, is_open, unknowns, build_graph,
-                     CRIT, HIGH, MED, LOW)
+                     task_enqueues, CRIT, HIGH, MED, LOW)
 from gitutil import ensure_local
 
 SEV_ORDER = {CRIT: 0, HIGH: 1, MED: 2, LOW: 3}
@@ -137,6 +137,7 @@ def build_map(repo, risky=False, app=None):
     local = ensure_local(repo)
     apps_index = resolve_apps(local)
     eps = analyze_repo(local)
+    enqueues = task_enqueues(eps)       # the blast radius doesn't stop at the async boundary
     buckets = {}
     for ep in eps:
         sev, why = endpoint_risk(ep)
@@ -144,7 +145,8 @@ def build_map(repo, risky=False, app=None):
             continue
         rec = {"route": ep.route, "handler": ep.handler, "auth": auth_str(ep), "sev": sev,
                "why": _clean_why(why), "tags": tags(ep), "loc": f"{ep.file}:{ep.line}",
-               "unknowns": unknowns(ep), "graph": build_graph(ep)}
+               "unknowns": unknowns(ep), "graph": build_graph(ep),
+               "kind": ep.kind, "methods": ep.methods, "enqueues": enqueues.get(ep.route, [])}
         buckets.setdefault(app_of(ep, apps_index), []).append(rec)
 
     apps = []
@@ -155,8 +157,11 @@ def build_map(repo, risky=False, app=None):
         counts = {s: sum(1 for r in recs if r["sev"] == s) for s in (CRIT, HIGH, MED, LOW)}
         apps.append({"app": name, "endpoints": recs, "counts": counts, "worst": recs[0]["sev"]})
     apps.sort(key=lambda a: (SEV_ORDER[a["worst"]], -len(a["endpoints"]), a["app"]))
+    kinds = {}
+    for ep in eps:
+        kinds[ep.kind] = kinds.get(ep.kind, 0) + 1
     return {"repo": repo, "total": len(eps), "shown": sum(len(a["endpoints"]) for a in apps),
-            "apps": apps, "seed": seed_corpus(eps)}
+            "apps": apps, "seed": seed_corpus(eps), "kinds": kinds}
 
 
 def _counts_str(c):

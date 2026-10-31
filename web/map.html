@@ -148,7 +148,10 @@ const clip=(s,n)=>{s=s||"";return s.length>n?s.slice(0,n-1)+"…":s;};
 const graphZoom=1;
 let DATA=null, filter="all", REPO=null;
 const SEV=["🔴","🟠","🟡","🟢"];
-const FILTERS=[["all","all"],["🔴","🔴"],["🟠","🟠"],["open","open"],["write","write"],["pii","pii"],["external","external"]];
+const FILTERS=[["all","all"],["🔴","🔴"],["🟠","🟠"],["open","open"],["write","write"],["pii","pii"],["external","external"],
+  ["http","HTTP"],["task","tasks"],["command","commands"],["signal","signals"]];
+const KINDS=["http","task","command","signal"], kindOf=e=>e.kind||"http";
+const KIND_WORD={http:"HTTP",task:"tasks",command:"commands",signal:"signals"};
 
 $("#chips").innerHTML=FILTERS.map(([k,l])=>`<span class="chip${k==='all'?' on':''}" data-k="${k}" onclick="setFilter('${k}')">${l}</span>`).join("");
 function setFilter(k){filter=k;document.querySelectorAll('.chip').forEach(c=>c.classList.toggle('on',c.dataset.k===k));render();}
@@ -184,8 +187,9 @@ function epMatches(e){
   if(filter==="unauth-write"&&!(e.tags.includes("open")&&e.tags.includes("write")))return false;
   if(filter==="pii-egress"&&!(e.tags.includes("pii")&&e.tags.includes("external")))return false;
   if(["open","write","pii","external"].includes(filter)&&!e.tags.includes(filter))return false;
+  if(KINDS.includes(filter)&&kindOf(e)!==filter)return false;
   if(!q)return true;
-  const hay=(e.route+" "+e.handler+" "+e.auth+" "+e.tags.join(" ")+" "+
+  const hay=(e.route+" "+e.handler+" "+e.auth+" "+e.tags.join(" ")+" "+kindOf(e)+" "+(e.methods||[]).join(" ")+" "+
     e.graph.nodes.map(n=>n.label).join(" ")).toLowerCase();
   return hay.includes(q);
 }
@@ -194,7 +198,9 @@ function render(){
   if(!DATA)return;
   const apps=DATA.apps.map(a=>({...a,eps:a.endpoints.filter(epMatches)})).filter(a=>a.eps.length);
   const shown=apps.reduce((n,a)=>n+a.eps.length,0);
-  $("#summary").innerHTML=`<b>${DATA.total}</b> endpoints · <b>${DATA.apps.length}</b> apps`+
+  const kc=DATA.kinds||{}, kinds=KINDS.filter(k=>kc[k]).map(k=>`${kc[k]} ${KIND_WORD[k]}`).join(" · ");
+  $("#summary").innerHTML=`<b>${DATA.total}</b> entrypoints`+(kinds?` <span style="color:var(--mut)">(${kinds})</span>`:"")+
+    ` · <b>${DATA.apps.length}</b> apps`+
     (shown!==DATA.total?` · showing <b>${shown}</b>`:"")+` · <span style="color:var(--mut)">worst-first</span>`;
   // repo-wide posture — from ALL endpoints, one glance at security exposure. Click to filter.
   const all=DATA.apps.flatMap(a=>a.endpoints), has=(e,...t)=>t.every(x=>e.tags.includes(x));
@@ -218,8 +224,10 @@ function appHtml(a){
 }
 function epHtml(e){
   const tags=e.tags.map(t=>`<span class="tag ${t}">${t}</span>`).join("");
+  // a task / command / signal has no HTTP auth to show — show what triggers it instead
+  const who=kindOf(e)==="http"?e.auth:"↻ "+(e.methods||[]).join(", ");
   return `<details class="ep" ontoggle="if(this.open)drawEp(this)"><summary>${e.sev} `+
-    `<span class="route">${esc(e.route)}</span> <span class="auth">${esc(e.auth)}</span>`+
+    `<span class="route">${esc(e.route)}</span> <span class="auth">${esc(who)}</span>`+
     `<span class="tags">${tags}</span></summary>`+
     `<div class="detail" data-ep='${esc(JSON.stringify(e)).replace(/'/g,"&#39;")}'></div></details>`;
 }
@@ -229,7 +237,10 @@ function drawEp(det){
   const facts=e.graph.nodes.filter(n=>n.loc).map(n=>
     `<div class="fact clk" onclick="showSource('${esc(n.loc).replace(/'/g,'')}',this)"><span class="loc">${esc(n.loc)}</span>${esc(n.label)} <span style="color:var(--mut)">${esc(n.kind||n.type)}</span></div>`).join("");
   const unk=(e.unknowns||[]).map(u=>`<div class="fact" style="color:#d0b429">⚠ ${esc(u)}</div>`).join("");
+  const enq=(e.enqueues||[]).map(q=>`<div class="fact"><span class="loc">async</span>enqueues <b>${esc(q.task)}</b>`+
+    (q.writes.length?` → writes ${esc(q.writes.join(", "))}`:"")+`</div>`).join("");
   box.innerHTML=(e.sev==="🔴"||e.sev==="🟠"?`<div class="why">${e.sev} ${esc(e.why)}</div>`:"")+
+    (enq?`<div class="wtl"><h4>Enqueues (async)</h4>${enq}</div>`:"")+
     drawGraph(e.graph)+
     `<div class="wtl"><h4>Where to look</h4>${facts||'<div class="fact" style="color:var(--mut)">—</div>'}${unk}</div>`;
 }

@@ -90,8 +90,14 @@ class Candidate:
 
 # ---- property evaluators (run per snapshot) ------------------------------------------
 
+def _http(eps):
+    """Auth invariants are about HTTP exposure: a celery task / command / signal can't be reached from
+    outside, so its 'missing' auth is not a violation."""
+    return [e for e in eps if (getattr(e, "kind", "http") or "http") == "http"]
+
+
 def eval_auth_before_write(eps):
-    subjects = [e for e in eps if writes(e)]
+    subjects = [e for e in _http(eps) if writes(e)]
     ok = [e for e in subjects if authed(e)]
     exc = [(e.route, auth_label(e), f"{e.file}:{e.line}") for e in subjects if not authed(e)]
     return {"auth-before-write": (len(subjects), len(ok), exc)}
@@ -99,7 +105,7 @@ def eval_auth_before_write(eps):
 
 def eval_auth_by_group(eps):
     groups = {}
-    for e in eps:
+    for e in _http(eps):
         groups.setdefault(prefix(e.route), []).append(e)
     out = {}
     for g, members in groups.items():
@@ -113,7 +119,7 @@ def eval_auth_by_group(eps):
 
 def eval_pii_egress(eps):
     # "endpoints that read PII + have an egress path require auth"
-    subjects = [e for e in eps if e.e6_pii.status in {"✓", "⚠", "?"} and e.e6_pii.items]
+    subjects = [e for e in _http(eps) if e.e6_pii.status in {"✓", "⚠", "?"} and e.e6_pii.items]
     ok = [e for e in subjects if authed(e)]
     exc = [(e.route, auth_label(e), f"{e.file}:{e.line}") for e in subjects if not authed(e)]
     return {"pii-egress-authed": (len(subjects), len(ok), exc)}

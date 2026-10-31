@@ -102,6 +102,7 @@ class Endpoint:
     tables: dict = field(default_factory=dict)   # model -> {"table": name, "explicit": bool}
     follow_depth: int = 0     # deepest fact-bearing hop the adaptive follow actually reached
     follow_stop: str = ""     # why it stopped: 'dried_out' (complete) / 'ceiling' / 'budget' (⚠ maybe more)
+    kind: str = "http"        # what triggers it: http | task (celery) | command (manage.py) | signal (Django)
 
 
 # ---- repo index ----------------------------------------------------------------------
@@ -123,6 +124,7 @@ class RepoIndex:
         self.model_tables: dict[str, str] = {}     # Model -> explicit Meta.db_table (SQL table name)
         self.model_managers: dict[str, str] = {}   # Model -> its custom Manager class (from `objects = X()`)
         self.module_imports: dict[str, dict] = {}  # file -> {alias: stem} for relative module imports
+        self.signal_connects: list = []            # (handler, signal, sender) from `post_save.connect(h, sender=M)`
         self._build()
 
     def _iter_py(self):
@@ -167,6 +169,10 @@ class RepoIndex:
             # `from . import interactions` inside its `get()` to dodge a cycle), and that method-body
             # import is exactly the one whose `interactions.build_response(...)` we need to follow.
             for node in ast.walk(tree):
+                sig = _signal_connect(node)                 # `post_save.connect(handler, sender=Order)`
+                if sig:
+                    self.signal_connects.append(sig)
+                    continue
                 if not isinstance(node, ast.ImportFrom) or not node.level:
                     continue   # only relative imports (level > 0 means ".")
                 if node.module is None:
@@ -1853,6 +1859,103 @@ def _rel(index, path):
 
 # ---- top-level -----------------------------------------------------------------------
 
+# ---- non-HTTP entrypoints ---------------------------------------------------------------
+# Celery tasks, management commands and signal receivers write the same tables as HTTP views but route
+# discovery can't see them. Each becomes an entrypoint analyzed by the SAME handler analyzer; its `kind`
+# tells consumers it isn't network-reachable, so auth is n/a — never an "unauthenticated" finding.
+_TASK_DECOS = {"shared_task", "task", "periodic_task", "app_task"}      # celery @shared_task / @app.task
+_SIGNAL_DECOS = {"receiver"}                                           # django @receiver(post_save, …)
+DJANGO_SIGNALS = {"pre_save", "post_save", "pre_delete", "post_delete", "m2m_changed", "pre_init",
+                  "post_init", "pre_migrate", "post_migrate", "request_started", "request_finished",
+                  "got_request_exception", "user_logged_in", "user_logged_out", "user_login_failed"}
+
+
+def _signal_connect(node):
+    """`post_save.connect(handler, sender=Order)` → ("handler", "post_save", "Order"), else None. Only
+    Django's built-in signals, so `ssh.connect(host)` / `conn.connect()` are never taken for wiring."""
+    if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "connect"
+            and node.args and isinstance(node.args[0], ast.Name)):
+        return None
+    sig = _dotted(node.func.value).split(".")[-1]
+    if sig not in DJANGO_SIGNALS:
+        return None
+    sender = next((_dotted(k.value).split(".")[-1] for k in node.keywords if k.arg == "sender"), "")
+    return node.args[0].id, sig, sender
+
+
+def _deco_names(node):
+    names = set()
+    for d in getattr(node, "decorator_list", []):
+        f = d.func if isinstance(d, ast.Call) else d
+        names.add(f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", ""))
+    return names
+
+
+def _receiver_trigger(node):
+    """`@receiver(post_save, sender=Order)` → "post_save:Order" — what fires the handler."""
+    for d in node.decorator_list:
+        if isinstance(d, ast.Call) and _dotted(d.func).split(".")[-1] == "receiver" and d.args:
+            sig = _dotted(d.args[0]).split(".")[-1] or "signal"
+            sender = next((_dotted(k.value).split(".")[-1] for k in d.keywords if k.arg == "sender"), "")
+            return f"{sig}:{sender}" if sender else sig
+    return "signal"
+
+
+def _job_ep(index, kind, route, name, method_nodes, path, trigger, self_type=None, class_methods=None):
+    ep = Endpoint(route=route, handler=name, kind=kind)
+    ep.file, ep.line, ep.methods = _rel(index, path), method_nodes[0].lineno, [trigger]
+    ep.e1_route_handler = Edge(VERIFIED, [f"{name} @ {ep.file}:{ep.line}"])
+    ep.e2_auth = Edge(NA, note=f"not reachable over HTTP — runs as a {kind}")
+    build_edges(ep, method_nodes, index, path, self_type=self_type, class_methods=class_methods or {})
+    return ep
+
+
+def job_entrypoints(index):
+    """Celery tasks, management-command handle() methods and signal receivers (`@receiver` and
+    `post_save.connect(h, sender=M)`), each analyzed like an endpoint. Best-effort: one bad def never
+    sinks the run. `methods` carries the trigger (celery / manage.py / post_save:Order)."""
+    out, seen = [], {}
+
+    def add(kind, route, name, nodes, path, trigger, **kw):
+        if (route, path) in seen:                  # one receiver wired to several senders (or decorated AND
+            ep = seen[(route, path)]               # connected) → one entrypoint that lists every trigger
+            if trigger not in ep.methods:
+                ep.methods.append(trigger)
+            return
+        try:
+            ep = _job_ep(index, kind, route, name, nodes, path, trigger, **kw)
+        except Exception:
+            return
+        seen[(route, path)] = ep
+        out.append(ep)
+
+    for name, defs in index.funcs.items():                 # tasks + decorated receivers are functions
+        for node, path, _toplevel in defs:
+            decos = _deco_names(node)
+            if decos & _TASK_DECOS:
+                add("task", f"task:{name}", name, [node], path, "celery")
+            elif decos & _SIGNAL_DECOS:
+                add("signal", f"signal:{name}", name, [node], path, _receiver_trigger(node))
+    for handler, sig, sender in index.signal_connects:
+        node, path = index.find_func(handler, toplevel_only=True)
+        if node is not None:
+            add("signal", f"signal:{handler}", handler, [node], path, f"{sig}:{sender}" if sender else sig)
+    for cname, defs in index.classes.items():              # management commands → their handle()
+        for node, path in defs:
+            if "management" + os.sep + "commands" not in path:
+                continue
+            if not any(_dotted(b).split(".")[-1].endswith("Command") for b in node.bases):
+                continue
+            handle = next((m for m in node.body if isinstance(m, ast.FunctionDef)
+                           and m.name in ("handle", "handle_noargs")), None)
+            if handle is None:
+                continue
+            cmd = os.path.splitext(os.path.basename(path))[0]      # Django: command name == file stem
+            add("command", f"command:{cmd}", cname, [handle], path, "manage.py", self_type=cname,
+                class_methods={m.name: m for m in node.body if isinstance(m, ast.FunctionDef)})
+    return out
+
+
 def analyze_repo(root: str):
     index = RepoIndex(root)
     results = []
@@ -1871,6 +1974,7 @@ def analyze_repo(root: str):
             results.extend(frameworks.discover(index))
         except Exception:
             pass                                # decorator frameworks are additive; never break Django
+    results.extend(job_entrypoints(index))      # celery tasks / management commands / signal receivers
     # dedupe by (route, handler, file) — a repo could mix frameworks
     seen, out = set(), []
     for ep in results:

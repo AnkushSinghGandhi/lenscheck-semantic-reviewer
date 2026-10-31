@@ -217,7 +217,16 @@ def _open_item(x):
     return "AllowAny" in x or x.startswith("permission_classes=[]")   # AllowAny or no permission classes
 
 
+_NOUN = {"task": "celery task", "command": "management command", "signal": "signal receiver"}
+
+
+def _kind(ep):
+    return getattr(ep, "kind", "http") or "http"
+
+
 def auth_str(ep):
+    if _kind(ep) != "http":
+        return f"n/a — {_NOUN.get(_kind(ep), _kind(ep))}, not reachable over HTTP"
     e = ep.e2_auth
     if e.status == "?":
         return "unspecified"
@@ -229,6 +238,8 @@ def auth_str(ep):
 
 
 def is_open(ep):
+    if _kind(ep) != "http":
+        return False                    # a worker / CLI / signal entrypoint isn't reachable over HTTP at all
     return ep.e2_auth.status == "?" or any(_open_item(x) for x in ep.e2_auth.items)
 
 
@@ -283,6 +294,8 @@ def endpoint_risk(ep):
     """Inherent risk of one endpoint, from its facts — the single source of truth shared by the PR
     diff (rating a *new* endpoint) and the whole-repo map (rating *every* endpoint). Returns
     (severity, why), worst case first."""
+    if _kind(ep) != "http":
+        return _job_risk(ep)
     route = ep.route
     resolved = ep.e1_route_handler.status == "✓"
     pii = bool(ep.e6_pii.items) and ep.e6_pii.status in {"✓", "⚠", "?"}
@@ -304,6 +317,52 @@ def endpoint_risk(ep):
     return LOW, "new read-only endpoint"
 
 
+def _job_risk(ep):
+    """Risk of a celery task / management command / signal receiver. Nothing outside can call it, so
+    auth never escalates it (no CRIT): what counts is what it writes and where its data goes."""
+    noun = _NOUN.get(_kind(ep), _kind(ep))
+    pii = bool(ep.e6_pii.items) and ep.e6_pii.status in {"✓", "⚠", "?"}
+    writes = any(":write" in t for t in items(ep, "e3_db_tables"))
+    ext = bool(items(ep, "e4_external"))
+    money = any(k in (ep.route + ep.handler).lower() for k in ("payment", "order", "recharge", "invoice", "coupon"))
+    if pii and ext:
+        return HIGH, f"{noun} sends PII off-platform"
+    if money and writes:
+        return HIGH, f"{noun} writes on a money/payment path"
+    if pii or writes or ext:
+        return MED, f"{noun} with a DB write / external call / PII read"
+    return LOW, f"read-only {noun}"
+
+
+def task_triggers(eps):
+    """celery task name -> routes that enqueue it (`task.delay()` / `.apply_async()` /
+    `send_task('app.tasks.x')`), read off the async edge — so a change to a task reaches the
+    endpoints that kick it off."""
+    out = {}
+    for ep in eps:
+        for it in (ep.e5_async.items or []) if ep.e5_async else []:
+            if not it.startswith("celery.") or " -> " not in it:
+                continue
+            t = it.split(" -> ", 1)[1].rsplit(" @ ", 1)[0].replace(" (via call)", "").strip().strip("'\"")
+            routes = out.setdefault(t.split(".")[-1], [])
+            if ep.route not in routes:
+                routes.append(ep.route)
+    return out
+
+
+def task_enqueues(eps):
+    """route -> [{"task": "task:x", "writes": [models]}]: the celery tasks each entrypoint enqueues and
+    what they write — so a view's map row shows the writes it causes through a worker too."""
+    tasks = {ep.handler: ep for ep in eps if _kind(ep) == "task"}
+    out = {}
+    for name, routes in task_triggers(eps).items():
+        if name in tasks:
+            w = sorted({t.split(":")[0] for t in items(tasks[name], "e3_db_tables") if ":write" in t})
+            for r in routes:
+                out.setdefault(r, []).append({"task": tasks[name].route, "writes": w})
+    return out
+
+
 def diff(base_eps, head_eps):
     base, head = index(base_eps), index(head_eps)
     changes = []
@@ -316,11 +375,13 @@ def diff(base_eps, head_eps):
                      + locs_for(ep, "e6_pii", items(ep, "e6_pii"))
                      + [x for x in (ep.e3_db_tables.items or []) if ":write" in norm(x)])
             changes.append(dict(sev=sev, kind="NEW ENDPOINT", route=route, ep=ep, why=why,
-                                detail=f"auth: {auth_str(ep)}", locs=risky))
+                                detail=f"auth: {auth_str(ep)}", locs=risky, entry=_kind(ep)))
     for route, ep in base.items():
         if route not in head:
+            gone = ("endpoint no longer routed" if _kind(ep) == "http"
+                    else f"{_NOUN.get(_kind(ep), _kind(ep))} no longer defined")
             changes.append(dict(sev=MED, kind="REMOVED ENDPOINT", route=route, ep=ep,
-                                why="endpoint no longer routed", detail=f"was: {ep.handler}"))
+                                why=gone, detail=f"was: {ep.handler}", entry=_kind(ep)))
 
     # changed endpoints
     for route in set(base) & set(head):
@@ -356,16 +417,21 @@ def diff(base_eps, head_eps):
             sev = min((s for s, _ in sub), key=lambda x: [CRIT, HIGH, MED, LOW].index(x))
             changes.append(dict(sev=sev, kind="CHANGED", route=route, ep=h, base_ep=b,
                                 why="; ".join(t for _, t in sub), detail="", locs=locs,
-                                sub=[t for _, t in sub]))
+                                sub=[t for _, t in sub], entry=_kind(h)))
         elif b.handler != h.handler:
             changes.append(dict(sev=LOW, kind="REFACTOR", route=route, ep=h, base_ep=b,
                                 why=f"handler renamed {b.handler} → {h.handler}, semantics unchanged",
-                                detail="(refactor-stable: no semantic diff)"))
+                                detail="(refactor-stable: no semantic diff)", entry=_kind(h)))
 
     head_fan, base_fan = fanin_index(head_eps), fanin_index(base_eps)
+    triggers = task_triggers(head_eps)
     for c in changes:
         idx = base_fan if c["kind"] == "REMOVED ENDPOINT" else head_fan
         c["blast"] = blast_radius(c["ep"], idx)
+        by = triggers.get(c["ep"].handler) if _kind(c["ep"]) == "task" else None
+        if by:                           # a task change reaches every endpoint that enqueues it
+            c["triggered_by"] = by
+            c["why"] += f"; triggered by {_names(by)}"
     order = {CRIT: 0, HIGH: 1, MED: 2, LOW: 3}
     # severity first (colors unchanged); within a tier, the change more code depends on floats up
     changes.sort(key=lambda c: (order[c["sev"]], -c["blast"]))
@@ -515,6 +581,8 @@ def _behavior_evidence(changes, findings, include_refactor):
         if c["kind"] == "REFACTOR" and not include_refactor:
             continue
         label = kind_label.get(c["kind"]) or c["why"]      # CHANGED → its spelled-out sub-changes
+        if c.get("entry", "http") != "http":                # "adds an endpoint" → "adds a celery task"
+            label = label.replace("an endpoint", f"a {_NOUN.get(c['entry'], c['entry'])}")
         ev.append((label, c["route"], f"{c['ep'].file}:{c['ep'].line}"))
     for f in (findings or []):
         if f["kind"] == "NEW VIOLATION":
