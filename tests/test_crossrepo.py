@@ -223,3 +223,69 @@ def test_list_wrapped_queryset_keeps_its_model_for_the_loop_var(tmp_path):
     assert any(e["route"] == "cascade/" for e in tables["dus"]["written_by"])
     assert not any(e["route"] == "tags/" for e in tables["dus"]["written_by"])
     assert "<unresolved>" not in tables
+
+
+def test_full_routes_chain_include_prefixes_through_nesting_and_regex(tmp_path):
+    # include() reconstruction: root → app → app.admin (2 levels), plus a regex url() include whose ^/$
+    # anchors must be stripped before concatenation.
+    from extractor.analyzer import RepoIndex, full_routes
+    r = tmp_path / "proj"
+    _write(r, "urls.py", "from django.urls import path, include\n"
+           "urlpatterns = [path('api/v1/', include('app.urls')), path('', include('legacy.urls'))]\n")
+    _write(r, "app/urls.py", "from django.urls import path, include\nfrom . import views\n"
+           "urlpatterns = [path('leads/', views.lead_create), path('admin/', include('app.admin.urls'))]\n")
+    _write(r, "app/admin/urls.py", "from django.urls import path\nfrom . import views\n"
+           "urlpatterns = [path('<int:pk>/', views.edit)]\n")
+    _write(r, "legacy/urls.py", "from django.conf.urls import url, include\n"
+           "urlpatterns = [url(r'^old/', include('legacy.inner.urls'))]\n")
+    _write(r, "legacy/inner/urls.py", "from django.conf.urls import url\nfrom . import views\n"
+           "urlpatterns = [url(r'^items/$', views.items)]\n")
+    fr = full_routes(RepoIndex(str(r)))
+    assert fr[("leads/", "lead_create")] == ["api/v1/leads/"]
+    assert fr[("<int:pk>/", "edit")] == ["api/v1/admin/<int:pk>/"]
+    assert fr[("^items/$", "items")] == ["old/items/"]
+
+
+def test_full_route_kills_a_leaf_false_match_and_marks_the_real_link_exact(tmp_path):
+    # svcB serves health/ under an include() prefix `internal/`. Matching the bare leaf, an unrelated call
+    # to /api/health/ tail-matched it (a false link). Matching the full route it doesn't — and the real
+    # call to /internal/health/ links as "exact".
+    a, b = tmp_path / "svcA", tmp_path / "svcB"
+    _write(a, "app/urls.py", "from django.urls import path\nfrom . import views\n"
+           "urlpatterns = [path('ping/', views.ping), path('probe/', views.probe)]\n")
+    _write(a, "app/views.py", "import requests\n"
+           "def ping(request):\n    requests.get('https://x.example/api/health/')\n"
+           "def probe(request):\n    requests.get('https://x.example/internal/health/')\n")
+    _write(b, "urls.py", "from django.urls import path, include\n"
+           "urlpatterns = [path('internal/', include('ops.urls'))]\n")
+    _write(b, "ops/urls.py", "from django.urls import path\nfrom . import views\n"
+           "urlpatterns = [path('health/', views.health)]\n")
+    _write(b, "ops/views.py", "def health(request):\n    return None\n")
+    by_caller = {l["from"]["handler"]: l for l in crossrepo.build([str(a), str(b)])["api_links"]}
+    assert "ping" not in by_caller                       # /api/health/ ≠ internal/health/ → no false link
+    assert by_caller["probe"]["match"] == "exact"
+    assert by_caller["probe"]["to"]["route"] == "internal/health/"
+
+
+def test_unfoldable_include_prefix_falls_back_to_the_leaf_not_a_poisoned_route(tmp_path):
+    # legacy mounts every app under path('{}'.format(settings.URL_PREFIX), include(...)) — a runtime setting
+    # we can't fold ("?"). Concatenating it gave '?dj-api/…', which matches nothing, and silently dropped
+    # REAL links. Honest behaviour: no full route → leaf fallback, labelled "tail".
+    a, b = tmp_path / "svcA", tmp_path / "svcB"
+    _write(a, "app/urls.py", "from django.urls import path\nfrom . import views\n"
+           "urlpatterns = [path('m/', views.menu)]\n")
+    _write(a, "app/views.py", "import requests\n"
+           "def menu(request):\n    requests.get('https://legacy.example/dj-api/v1/bs-menu')\n")
+    _write(b, "urls.py", "from django.urls import path, include\nfrom django.conf import settings\n"
+           "urlpatterns = [path('{}'.format(settings.URL_PREFIX), include('core.urls'))]\n")
+    _write(b, "core/urls.py", "from django.urls import path\nfrom . import views\n"
+           "urlpatterns = [path('dj-api/v1/bs-menu', views.MenuAPIView.as_view())]\n")
+    _write(b, "core/views.py", "class MenuAPIView:\n    def get(self, request):\n        return None\n")
+    links = crossrepo.build([str(a), str(b)])["api_links"]
+    assert len(links) == 1 and links[0]["to"]["handler"] == "MenuAPIView"
+    assert links[0]["match"] == "tail"                    # prefix unknown → honest "tail", never a fake exact
+
+
+def test_regex_fragment_segment_is_a_wildcard():
+    # `url(r'^api/v?\d+/…')` versioned mounts: the regex fragment is a variable part, not a literal
+    assert crossrepo._route_segs(r"api/v?\d+/leads/") == ["api", "*", "leads"]

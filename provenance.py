@@ -23,7 +23,7 @@ import warnings
 warnings.filterwarnings("ignore", category=SyntaxWarning)
 
 from extractor import analyze_repo                                      # noqa: E402
-from extractor.analyzer import RepoIndex, build_edges, Endpoint, Edge, VERIFIED, _rel  # noqa: E402
+from extractor.analyzer import RepoIndex, build_edges, Endpoint, Edge, VERIFIED, _rel, full_routes  # noqa: E402
 
 # Stable subprocess contract. Bump only on a breaking change to the JSON shape; consumers (e.g. QDD)
 # check `schema` and refuse an unknown major. Exit codes: 0 ok · 2 usage · 3 repo unreadable.
@@ -294,8 +294,11 @@ def build(repo, with_calls=False):
     if with_calls:
         # per-endpoint route + outbound-call paths — lets a cross-repo pass match "A calls /x" to the
         # repo whose route serves /x (HTTP coupling, the complement to shared-table coupling).
+        # `full_routes` = the include()-chained path(s); `route` stays the local leaf (an identity key).
+        fr = full_routes(index)
         out["endpoints"] = [
             {"route": e.route, "handler": e.handler, "loc": f"{e.file}:{e.line}", "methods": e.methods,
+             "full_routes": fr.get((e.route, e.handler), []),
              "calls": sorted({p for it in (getattr(e.e4_external, "items", None) or [])
                               for p in (_call_path(it),) if p})}
             for e in eps]

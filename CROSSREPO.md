@@ -62,10 +62,13 @@ can violate the other's constraint (the duplicate-entry class). The per-repo end
 tells you exactly which route/handler in each service to coordinate.
 
 ## Known limits (see lenscheck-plan for the roadmap)
-- **API links are heuristic:** lenscheck routes carry no `include()` prefix, so an outbound call
-  path is matched on its tail segments (params as wildcards). Every link is surfaced as
-  needs-verify — expect occasional noise on short/common paths.
+- **API links: `exact` vs `tail`.** Full routes are rebuilt by chaining `include()` prefixes, so a link
+  is **exact** when the outbound call path IS the callee's full route (trustworthy). It's **tail**
+  (verify) when the callee only has a leaf route or the call carries an extra prefix (e.g. a proxy
+  mount). A prefix that can't be folded statically — e.g. legacy's `'{}'.format(settings.URL_PREFIX)`
+  mount — yields no full route, so that repo's links stay `tail` rather than claiming false precision.
 - **db_table residue:** background-job writes are now attributed, but a `managed=False` model with
   *no* explicit `db_table` still falls back to the `applabel_model` convention — if two repos name
   that model differently and the real table isn't the convention, the join can miss it.
-- **Caching:** re-extracts each repo per run.
+- **Caching:** per-repo provenance is cached by git HEAD + an engine fingerprint (a tool upgrade
+  busts it), clean trees only — a dirty working tree always re-extracts. `--no-cache` forces it.

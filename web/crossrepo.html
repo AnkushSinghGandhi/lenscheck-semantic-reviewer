@@ -94,12 +94,17 @@ function cardHtml(s){
 function renderApiLinks(){
  var links=DATA.api_links||[],el=document.getElementById("apilinks");
  if(!links.length){el.innerHTML="";return;}
- var rows=links.map(function(l){return '<li><b>'+esc(l.from_repo)+'</b> <code>'+esc(l.from.handler)
+ function badge(l){return l.match==="exact"
+  ? '<span class="badge" style="background:#e6f4ea;color:#1e7e34">exact</span>'
+  : '<span class="badge amber">tail · verify</span>';}
+ var nExact=links.filter(function(l){return l.match==="exact";}).length;
+ var rows=links.map(function(l){return '<li>'+badge(l)+' <b>'+esc(l.from_repo)+'</b> <code>'+esc(l.from.handler)
   +'</code> <span class="loc">'+esc(l.from.loc)+'</span> → call <code>'+esc(l.call)+'</code> → <b>'
   +esc(l.to_repo)+'</b> <code>'+esc(l.to.handler)+'</code> <span class="h">'+esc(l.to.route)
   +'</span> <span class="loc">'+esc(l.to.loc)+'</span></li>';}).join("");
  el.innerHTML='<h2 style="font-size:1.05rem;margin:1.6rem 0 .2rem">Cross-repo API calls ('+links.length+')</h2>'
-  +'<p class="legend">⚠ <b>heuristic</b>: routes carry no include() prefix, matched on the path tail — <b>verify each</b>.</p>'
+  +'<p class="legend"><b>exact</b> ('+nExact+'): the call path is the endpoint\'s full include()-chained route — trustworthy. · '
+  +'<b>tail</b> ('+(links.length-nExact)+'): matched on a leaf route or with an extra prefix (e.g. a proxy mount) — <b>verify</b>.</p>'
   +'<ul style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:.6rem 1.4rem">'+rows+'</ul>';
 }
 function render(){

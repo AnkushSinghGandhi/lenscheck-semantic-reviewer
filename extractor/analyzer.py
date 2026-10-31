@@ -351,6 +351,100 @@ def parse_endpoints(index: RepoIndex) -> list:
     return out
 
 
+def _strip_anchors(p):
+    """`^api/` / `leads/$` → `api/` / `leads/`. Regex anchors only belong at a pattern's edges, so they must
+    go BEFORE pieces are concatenated — else `api/^leads/` turns into a literal `^leads` segment."""
+    return (p or "").lstrip("^").rstrip("$")
+
+
+def _unresolved(p):
+    """A route piece `_resolve_route` couldn't fold: the whole thing ("?", e.g. a
+    `'{}'.format(settings.URL_PREFIX)` mount) or an f-string placeholder (`{NAME}` / `{?}`). A regex
+    quantifier (`{4}`, `{2,3}`) is not one."""
+    return p == "?" or bool(re.search(r"\{(?![\d,]+\})[^}]*\}", p or ""))
+
+
+def full_routes(index: RepoIndex) -> dict:
+    """Each URLconf endpoint's FULL route, built by chaining `path(prefix, include('dotted.urls'))` from the
+    root down to the leaf. `ep.route` deliberately stays the local leaf pattern — it's an identity key
+    across the tool (baselines, runtime joins) — so this is a separate map, used only where a full path
+    must match (cross-repo API links). Returns {(leaf_route, handler): [full_route, ...]}: a module
+    included under two prefixes yields two. Dotted-string includes only; router / inline-list / tuple
+    includes are skipped, and a prefix we can't fold (a settings-driven mount) yields an EMPTY list — in
+    both cases the endpoint simply keeps its leaf route."""
+    def dotted(p):
+        rel = os.path.relpath(p, index.root)[:-3]                      # drop ".py"
+        if rel.endswith(os.sep + "__init__"):                          # `urls/` package
+            rel = rel[: -len(os.sep + "__init__")]
+        return rel.replace(os.sep, ".")
+    mods = {p: dotted(p) for p in index.url_files}
+
+    def resolve(mod):
+        hits = [p for p, d in mods.items() if d == mod or d.endswith("." + mod)]
+        return hits[0] if len(hits) == 1 else None                      # unknown / ambiguous → unresolved
+
+    leaves, parents = {}, {}
+    for path in index.url_files:
+        try:
+            tree = ast.parse(open(path, encoding="utf-8").read())
+        except Exception:
+            continue
+        str_consts = {}                                                 # mirrors parse_endpoints → keys match
+        for n in tree.body:
+            if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name):
+                s = _const_str(n.value)
+                if s is not None:
+                    str_consts[n.targets[0].id] = s
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, (ast.Name, ast.Attribute))):
+                continue
+            fname = node.func.id if isinstance(node.func, ast.Name) else node.func.attr
+            if fname not in {"path", "re_path", "url"} or len(node.args) < 2:
+                continue
+            route, tgt = _resolve_route(node.args[0], str_consts), node.args[1]
+            inc = tgt.func if isinstance(tgt, ast.Call) else None
+            if inc is not None and (getattr(inc, "id", None) or getattr(inc, "attr", None)) == "include":
+                mod = _const_str(tgt.args[0]) if tgt.args else None
+                child = resolve(mod) if mod else None
+                if child and child != path:
+                    parents.setdefault(child, []).append((path, route))
+                continue
+            handler = _handler_name(tgt)
+            if handler:
+                leaves.setdefault(path, []).append((route, handler))
+
+    memo = {}
+
+    def prefixes(f, stack=()):
+        """Every root→f prefix; None marks a chain with a piece we couldn't fold."""
+        if f in memo:
+            return memo[f]
+        if f in stack:                                                  # include cycle (invalid Django)
+            return [None]
+        out = [None if (pp is None or _unresolved(p)) else pp + _strip_anchors(p)
+               for parent, p in parents.get(f, []) for pp in prefixes(parent, stack + (f,))]
+        memo[f] = out or [""]                                           # included by nobody → a root
+        return memo[f]
+
+    result, unknown = {}, set()
+    for f, items in leaves.items():
+        pre = prefixes(f)
+        for route, handler in items:
+            if None in pre or _unresolved(route):
+                unknown.add((route, handler))
+                continue
+            bucket = result.setdefault((route, handler), [])
+            for pp in pre:
+                full = pp + _strip_anchors(route)
+                if full not in bucket:
+                    bucket.append(full)
+    # Never claim a full path we can't see: concatenating an unfolded "?" yields a route that matches
+    # nothing and silently drops REAL links. No full route → the caller falls back to the leaf ("tail").
+    for key in unknown:
+        result[key] = []
+    return result
+
+
 # ---- view analysis -------------------------------------------------------------------
 
 class FactCollector(ast.NodeVisitor):

@@ -102,7 +102,7 @@ _BADGE = {
 }
 _ORDER = {"multi_writer": 0, "producer_consumer": 1, "read_only": 2}
 
-_PARAM = re.compile(r"[<>{}():]|\?P")        # a param segment: <int:pk> {id} :id (?P<pk>…)
+_PARAM = re.compile(r"[<>{}():\\?+*\[\]|^$]")    # a param segment: <int:pk> {id} :id (?P<pk>…), or a regex fragment (v?\d+)
 
 
 def _seg(s):
@@ -119,9 +119,9 @@ def _route_segs(route):
 
 
 def _route_match(call_segs, route_segs):
-    """True if a route's (prefix-less) pattern is a segment-suffix of an outbound call path, params
-    as wildcards, with ≥1 real literal matched. Heuristic: lenscheck routes carry no include()
-    prefix, so only the tail is matchable — every link is surfaced as needs-verify."""
+    """True if a route pattern is a segment-suffix of an outbound call path, params as wildcards, with
+    ≥1 real literal matched. Suffix (not equality) so a proxy mount prefix (`/svc/api/x` vs route `api/x`)
+    still links. Fed an include()-chained FULL route this is precise; fed a bare leaf it's a heuristic."""
     if not route_segs or len(route_segs) > len(call_segs):
         return False
     lits = 0
@@ -134,12 +134,21 @@ def _route_match(call_segs, route_segs):
     return lits >= 1
 
 
+def _link_targets(e):
+    """The route(s) an endpoint is served at: its include()-chained full routes when known (precise),
+    else the local leaf pattern (heuristic)."""
+    full = e.get("full_routes") or []
+    return [(r, True) for r in full] or [(e.get("route", ""), False)]
+
+
 def _api_links(per):
     """Cross-repo HTTP coupling: repo A's endpoint makes an outbound call whose path matches a route
-    served by repo B. The complement to shared-table coupling. Heuristic (see _route_match)."""
-    routes = {name: [(e, _route_segs(e.get("route", ""))) for e in data.get("endpoints", [])]
+    served by repo B — the complement to shared-table coupling. `match` is "exact" when the call path IS
+    the full route (trustworthy), else "tail" (a leaf-only route, or an unexplained extra prefix — verify)."""
+    routes = {name: [(e, r, _route_segs(r), full) for e in data.get("endpoints", [])
+                     for r, full in _link_targets(e)]
               for name, data in per.items()}
-    links, seen = [], set()
+    links = {}
     for name, data in per.items():
         for e in data.get("endpoints", []):
             for call in e.get("calls", []):
@@ -149,19 +158,19 @@ def _api_links(per):
                 for other, rlist in routes.items():
                     if other == name:
                         continue
-                    for tgt, rsegs in rlist:
+                    for tgt, r, rsegs, full in rlist:
                         if not _route_match(cs, rsegs):
                             continue
                         key = (name, e["loc"], other, tgt["loc"], call)
-                        if key in seen:
-                            continue
-                        seen.add(key)
-                        links.append({
-                            "from_repo": name, "call": call,
+                        exact = full and len(cs) == len(rsegs)
+                        if key in links and (links[key]["match"] == "exact" or not exact):
+                            continue                   # keep the first hit, but let an exact one replace a tail
+                        links[key] = {
+                            "from_repo": name, "call": call, "match": "exact" if exact else "tail",
                             "from": {k: e.get(k, "") for k in ("route", "handler", "loc")},
                             "to_repo": other,
-                            "to": {k: tgt.get(k, "") for k in ("route", "handler", "loc")}})
-    return sorted(links, key=lambda x: (x["from_repo"], x["to_repo"], x["call"]))
+                            "to": {"route": r, "handler": tgt.get("handler", ""), "loc": tgt.get("loc", "")}}
+    return sorted(links.values(), key=lambda x: (x["from_repo"], x["to_repo"], x["call"]))
 
 
 def _changed_files(repo_path, since):
@@ -425,15 +434,20 @@ def _api_links_html(data):
     links = data.get("api_links") or []
     if not links:
         return ""
+    def badge(l):
+        return ('<span class="badge" style="background:#e6f4ea;color:#1e7e34">exact</span>'
+                if l.get("match") == "exact" else '<span class="badge amber">tail · verify</span>')
     rows = "".join(
-        f'<li><b>{_h.escape(l["from_repo"])}</b> <code>{_h.escape(l["from"]["handler"])}</code> '
+        f'<li>{badge(l)} <b>{_h.escape(l["from_repo"])}</b> <code>{_h.escape(l["from"]["handler"])}</code> '
         f'<span class="loc">{_h.escape(l["from"]["loc"])}</span> &rarr; call <code>{_h.escape(l["call"])}</code> '
         f'&rarr; <b>{_h.escape(l["to_repo"])}</b> <code>{_h.escape(l["to"]["handler"])}</code> '
         f'<span class="h">{_h.escape(l["to"]["route"])}</span> '
         f'<span class="loc">{_h.escape(l["to"]["loc"])}</span></li>' for l in links)
+    n_exact = sum(1 for l in links if l.get("match") == "exact")
     return (f'<h2 style="font-size:1.05rem;margin:1.6rem 0 .2rem">Cross-repo API calls ({len(links)})</h2>'
-            '<p class="legend">⚠ <b>heuristic</b>: lenscheck routes carry no include() prefix, so an '
-            'outbound path is matched on its tail segments — <b>verify each link</b>.</p>'
+            f'<p class="legend"><b>exact</b> ({n_exact}): the call path is the endpoint\'s full '
+            f'include()-chained route — trustworthy. · <b>tail</b> ({len(links) - n_exact}): matched on a '
+            'leaf route or with an extra prefix (e.g. a proxy mount) — <b>verify</b>.</p>'
             f'<ul style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:.6rem 1.4rem">{rows}</ul>')
 
 
