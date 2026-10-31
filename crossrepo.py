@@ -202,6 +202,28 @@ def _blast(data, changed_name, changed_files):
     return tables, links
 
 
+_ENGINE_FP = None
+
+
+def _engine_fingerprint():
+    """Hash of the extraction code, folded into the cache key. `provenance.SCHEMA` only bumps on a
+    JSON-*shape* change, so a recall/precision fix to the extractor (e.g. the `cls.x()` follow) leaves
+    it unchanged — without this a clean repo would keep returning pre-upgrade facts from a stale entry."""
+    global _ENGINE_FP
+    if _ENGINE_FP is None:
+        import extractor.analyzer
+        import extractor.frameworks
+        h = hashlib.sha1()
+        for mod in (provenance, extractor.analyzer, extractor.frameworks):
+            try:
+                with open(mod.__file__, "rb") as f:
+                    h.update(f.read())
+            except OSError:
+                h.update(b"?")
+        _ENGINE_FP = h.hexdigest()[:12]
+    return _ENGINE_FP
+
+
 def _cache_dir():
     d = os.path.join(tempfile.gettempdir(), "lenscheck_provcache")
     try:
@@ -233,7 +255,8 @@ def _provenance(path, with_calls, use_cache):
     head, d = _clean_head(path), _cache_dir()
     if not head or not d:
         return provenance.build(path, with_calls=with_calls)
-    fp = os.path.join(d, hashlib.sha1(f"{head}|{with_calls}|{provenance.SCHEMA}".encode()).hexdigest() + ".json")
+    fp = os.path.join(d, hashlib.sha1(
+        f"{head}|{with_calls}|{provenance.SCHEMA}|{_engine_fingerprint()}".encode()).hexdigest() + ".json")
     try:
         with open(fp, encoding="utf-8") as f:
             return json.load(f)
@@ -266,6 +289,8 @@ def build(repos, writes_only=False, schema=None, use_cache=True):
     merged = {}
     for name, data in per.items():
         for tbl, rec in data.get("tables", {}).items():
+            if tbl == "<unresolved>":          # a per-repo "couldn't name this write" bucket — not a real
+                continue                       # shared table; two repos' unresolved writes aren't the same one
             merged.setdefault(tbl, {})[name] = {
                 "written_by": rec.get("written_by", []),
                 "read_by": rec.get("read_by", []),

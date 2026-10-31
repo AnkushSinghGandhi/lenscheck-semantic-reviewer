@@ -131,3 +131,52 @@ def test_provenance_cache_hits_on_second_call_for_a_clean_repo(tmp_path, monkeyp
     git("rm", "-q", "app/models.py")                  # dirty tree → never cached, always fresh
     crossrepo._provenance(str(repo), True, True)
     assert len(calls) == 2
+
+
+def test_cache_invalidates_when_engine_fingerprint_changes(tmp_path, monkeypatch):
+    # C1: a tool upgrade that changes extraction (not the JSON shape) must bust a clean-repo cache.
+    repo = tmp_path / "r"
+    (repo / "app").mkdir(parents=True)
+    (repo / "app" / "models.py").write_text(
+        "from django.db import models\nclass M(models.Model):\n    class Meta:\n        db_table = 't'\n")
+
+    def git(*a):
+        subprocess.run(["git", "-C", str(repo), *a], check=True, capture_output=True)
+    git("init", "-q")
+    git("add", "-A")
+    git("-c", "user.email=a@b.c", "-c", "user.name=t", "commit", "-qm", "x")
+
+    calls, real = [], crossrepo.provenance.build
+    monkeypatch.setattr(crossrepo.provenance, "build",
+                        lambda p, with_calls=False: (calls.append(1), real(p, with_calls=with_calls))[1])
+    monkeypatch.setattr(crossrepo, "_engine_fingerprint", lambda: "aaaaaaaaaaaa")
+    crossrepo._provenance(str(repo), True, True)      # miss
+    crossrepo._provenance(str(repo), True, True)      # hit (same fingerprint)
+    assert len(calls) == 1
+    monkeypatch.setattr(crossrepo, "_engine_fingerprint", lambda: "bbbbbbbbbbbb")   # tool "upgraded"
+    crossrepo._provenance(str(repo), True, True)      # miss again — key changed
+    assert len(calls) == 2
+
+
+def test_unresolved_write_is_surfaced_not_dropped(tmp_path):
+    # C2: a write on a var whose type we can't resolve (`<instance>`) must surface under a visible
+    # `<unresolved>` table, not vanish — else a real writer (and a multi-writer) hides silently.
+    r = tmp_path / "svc"
+    _write(r, "app/urls.py",
+           "from django.urls import path\nfrom . import views\nurlpatterns = [path('go/', views.go)]\n")
+    _write(r, "app/views.py", "def go(request):\n    h = make_thing()\n    h.save()\n")
+    tables = crossrepo.provenance.build(str(r))["tables"]
+    assert "<unresolved>" in tables
+    assert any(e["route"] == "go/" for e in tables["<unresolved>"]["written_by"])
+
+
+def test_unresolved_is_not_a_cross_repo_multi_writer(tmp_path):
+    # C2 guard: the per-repo `<unresolved>` bucket must NOT merge into a false cross-repo multi-writer.
+    def mk(name):
+        r = tmp_path / name
+        _write(r, "app/urls.py",
+               "from django.urls import path\nfrom . import views\nurlpatterns = [path('go/', views.go)]\n")
+        _write(r, "app/views.py", "def go(request):\n    h = make_thing()\n    h.save()\n")
+        return str(r)
+    data = crossrepo.build([mk("a"), mk("b")])
+    assert all(s["table"] != "<unresolved>" for s in data["shared_tables"])
