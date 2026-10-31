@@ -451,7 +451,7 @@ class FactCollector(ast.NodeVisitor):
     """Walk a function body; collect lens facts. Records callees for 1-level follow."""
 
     def __init__(self, file: str = "", consts=None, class_models=None, self_type=None, known_models=None,
-                 manager_model=None):
+                 manager_model=None, index=None, ret_depth=0):
         self.file = file
         self.class_models = class_models or {}   # Serializer/Form name -> its Meta.model table
         self.known_models = known_models or set()  # all repo model/class names — for FK traversal detection
@@ -489,6 +489,8 @@ class FactCollector(ast.NodeVisitor):
         self._fn_depth = 0        # nesting level while walking, so we don't treat the root fn's own
                                   # name as "local" (a facade `X()` that delegates to a module `X` must
                                   # still be followed — only genuinely nested defs are closures)
+        self.index = index        # attached while walking a followed frame → enables return-type inference
+        self._ret_depth = ret_depth
 
     def _loc(self, node):
         return (self.file, getattr(node, "lineno", 0))
@@ -567,7 +569,7 @@ class FactCollector(ast.NodeVisitor):
         # but skip non-ORM receivers (cache/session/storage) so they aren't mislabeled DB writes.
         if isinstance(f, ast.Attribute) and f.attr in {"save", "delete"} and not model \
                 and not _is_non_orm_receiver(f.value):
-            who = self.var_types.get(_receiver_key(f.value))
+            who = self._value_model(f.value)                 # a typed var, or `self.get_object(pk).save()`
             who = self.class_models.get(who, who)            # FooSerializer.save() → its Meta.model
             if who and who.endswith(NON_MODEL_SUFFIXES):     # a serializer/form we couldn't map → unknown
                 who = None
@@ -578,7 +580,7 @@ class FactCollector(ast.NodeVisitor):
         # shortcut: `.extra(tables=,where=)` and dynamic `apps.get_model(...)` writes still miss — rare/deprecated.
         if isinstance(f, ast.Attribute) and f.attr == "update" and not model \
                 and not _is_non_orm_receiver(f.value):
-            who = self.var_types.get(_receiver_key(f.value))
+            who = self._value_model(f.value)                 # a typed var, or `self.get_object(pk).save()`
             who = self.class_models.get(who, who)
             if who and not who.endswith(NON_MODEL_SUFFIXES):
                 self.db.append((who, "write", fl, ln))
@@ -685,8 +687,9 @@ class FactCollector(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Assign(self, node: ast.Assign):
-        # remember `x = <something that reveals a Model>` so a later `x.save()` names the table
-        model = self._model_of(node.value)
+        # remember `x = <something that reveals a Model>` so a later `x.save()` names the table — an ORM
+        # chain, a typed var (`row = qs.first()`, `x = y`), or a repo helper's return type (`obj = self.get_object(pk)`)
+        model = self._value_model(node.value)
         if not model and isinstance(node.value, ast.Name) and node.value.id in self.known_models:
             model = node.value.id                                      # `link_model = SynonymLink`
             # a bare class alias: a later `link_model.objects.filter()` now resolves to the real model
@@ -733,11 +736,12 @@ class FactCollector(ast.NodeVisitor):
     visit_AsyncFunctionDef = visit_FunctionDef
 
     def visit_For(self, node: ast.For):
-        # `for order in Order.objects.filter(...)` → loop var is an Order (resolves `order.save()`)
+        # `for order in Order.objects.filter(...)` → loop var is an Order (resolves `order.save()`). Not when
+        # iterating `.values()`/`.values_list()` directly: those rows are dicts/tuples, not instances.
         if isinstance(node.target, ast.Name):
-            model = self._model_of(node.iter)
-            if not model and isinstance(node.iter, ast.Name):
-                model = self.var_types.get(node.iter.id)
+            it = node.iter
+            rows = isinstance(it, ast.Call) and _orm_model_method(it.func)[1] in ("values", "values_list")
+            model = None if rows else self._value_model(it)
             if model:
                 self.var_types[node.target.id] = model
             labels = self._taint_labels(node.iter)           # iterating a tainted collection
@@ -826,6 +830,41 @@ class FactCollector(ast.NodeVisitor):
                 out.append(None)
         return out
 
+    def _value_model(self, expr):
+        """Model an assigned / iterated / saved expression evaluates to: `_expr_model`, else return-type
+        inference on the repo call at the root of a same-model chain (`get_rows(...).first()`)."""
+        m = _expr_model(expr, self.var_types)
+        if m:
+            return m
+        root = _chain_root(expr)
+        return self._call_return_model(root) if isinstance(root, ast.Call) else None
+
+    def _call_return_model(self, call):
+        """Model returned by the repo function/method `call` invokes (return-type inference), else None.
+        Only while walking a followed frame (an `index` is attached), and within RET_DEPTH hops."""
+        if self.index is None or self._ret_depth >= RET_DEPTH:
+            return None
+        fn, ffile, owner = self._resolve_callee(call.func)
+        return _return_model(self.index, fn, ffile, owner, self._ret_depth) if fn is not None else None
+
+    def _resolve_callee(self, f):
+        """(def, file, owner class) for a call target we can pin to a repo def — `helper(...)`,
+        `self.m(...)` / `cls.m(...)`, `Cls.m(...)`, `obj.m(...)` with `obj = Cls(...)` — else (None,)*3."""
+        idx = self.index
+        if isinstance(f, ast.Name):
+            if f.id in self.local_names or f.id[:1].isupper():   # a closure/param, or a class being built
+                return None, None, None
+            fn, ffile = idx.find_func(f.id, near=os.path.join(idx.root, self.file), toplevel_only=True)
+            return fn, ffile, None
+        if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name):
+            recv = f.value.id
+            owner = self.self_type if recv in ("self", "cls") else self.instance_types.get(recv, recv)
+            if owner and owner[:1].isupper():
+                meth, mfile = _find_method(idx, owner, f.attr)
+                if meth is not None:
+                    return meth, mfile, owner
+        return None, None, None
+
     @staticmethod
     def _model_of(value):
         # `list(qs)` / `tuple(qs)` / `sorted(qs)` / `reversed(qs)` keep the element type — common when a
@@ -864,6 +903,129 @@ def _orm_model_method(f):
     if isinstance(cur, ast.Attribute) and cur.attr == "objects" and isinstance(cur.value, ast.Name):
         return cur.value.id, method
     return None, None
+
+
+# ---- return-type inference ------------------------------------------------------------
+# Methods that hand back the SAME model as their receiver (a queryset of it, or an instance), so
+# `qs.filter(...).order_by(...).first()` on a typed `qs` is still that model. Deliberately NOT values()/
+# values_list() (dicts/tuples), count()/exists() (scalars), update()/delete() (row counts).
+_SAME_MODEL_METHODS = {"filter", "exclude", "all", "order_by", "distinct", "select_related",
+                       "prefetch_related", "using", "select_for_update", "only", "defer", "annotate",
+                       "reverse", "none", "first", "last", "get", "latest", "earliest", "create"}
+RET_DEPTH = 3                     # helper → helper hops followed to resolve a returned value
+_NON_MODEL_RETURN_SUFFIXES = NON_MODEL_SUFFIXES + ("Response", "Exception", "Error")
+_MODEL_BASES = {"AbstractUser", "AbstractBaseUser"}
+
+
+def _chain_root(expr):
+    """Strip same-model queryset methods: `qs.filter(...).order_by(...).first()` → `qs`."""
+    while isinstance(expr, ast.Call) and isinstance(expr.func, ast.Attribute) \
+            and expr.func.attr in _SAME_MODEL_METHODS:
+        expr = expr.func.value
+    return expr
+
+
+def _expr_model(expr, var_types):
+    """The model an expression evaluates to (an instance, or a queryset of it), else None: an ORM chain /
+    model ctor / get_object_or_404 (`_model_of`), or a typed variable — bare (`return group`), indexed
+    (`qs[0]`), or through same-model queryset methods (`qs.filter(...).order_by(...).first()`)."""
+    m = FactCollector._model_of(expr)
+    if m:
+        return m
+    cur = _chain_root(expr)
+    if isinstance(cur, ast.Subscript):
+        cur = cur.value
+    key = _receiver_key(cur)
+    return var_types.get(key) if key else None
+
+
+def _ctor_name(expr):
+    """`X(...)` / `mod.X(...)` → "X" (a Capitalized call: a class being instantiated), else None."""
+    if not isinstance(expr, ast.Call):
+        return None
+    f = expr.func
+    n = f.id if isinstance(f, ast.Name) else (f.attr if isinstance(f, ast.Attribute) else "")
+    return n if n[:1].isupper() else None
+
+
+def _is_model(index, name, _stack=()):
+    """True if `name` is a repo class that is (or inherits from) a Django model. Bases from outside the
+    repo count when they look like one (`models.Model`, `TimeStampedModel`, `AbstractUser`). Memoized."""
+    memo = index.__dict__.setdefault("_is_model_memo", {})
+    if name in memo:
+        return memo[name]
+    cls, _ = index.find_class(name)
+    ok = False
+    if cls is not None and name not in _stack:
+        for b in cls.bases:
+            bn = b.id if isinstance(b, ast.Name) else getattr(b, "attr", "")
+            if bn.endswith("Model") or bn in _MODEL_BASES or (bn and _is_model(index, bn, _stack + (name,))):
+                ok = True
+                break
+    memo[name] = ok
+    return ok
+
+
+def _find_method(index, cls_name, meth, _stack=()):
+    """(def, file) of `meth` on repo class `cls_name`, searching up its bases; else (None, None)."""
+    cls, cfile = index.find_class(cls_name)
+    if cls is None or cls_name in _stack:
+        return None, None
+    for m in cls.body:
+        if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)) and m.name == meth:
+            return m, cfile
+    for b in cls.bases:
+        bn = b.id if isinstance(b, ast.Name) else getattr(b, "attr", "")
+        if bn:
+            hit = _find_method(index, bn, meth, _stack + (cls_name,))
+            if hit[0] is not None:
+                return hit
+    return None, None
+
+
+def _own_returns(fn):
+    """`return` statements of `fn` itself — not of closures / lambdas / classes nested inside it."""
+    stack = list(fn.body)
+    while stack:
+        n = stack.pop()
+        if isinstance(n, ast.Return):
+            yield n
+        if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+            stack.extend(ast.iter_child_nodes(n))
+
+
+def _return_model(index, fn, ffile, owner, depth):
+    """Return-type inference: the ONE model a repo function hands back across its `return`s, else None.
+    Error-path returns (`Response(status=404)`, None, a dict) don't count, so
+    `try: return Campaign.objects.get(pk=pk)` / `except …: return Response(404)` is a Campaign. Two
+    different models → None (ambiguous — stay conservative). The body is walked with a fresh collector
+    so a local `qs = M.objects…; return qs.first()` resolves through `qs`. Memoized per def; depth-capped."""
+    memo = index.__dict__.setdefault("_ret_memo", {})
+    if id(fn) in memo:
+        return memo[id(fn)]
+    memo[id(fn)] = None                                         # recursion guard
+    known = index.__dict__.get("_known_models")
+    if known is None:
+        known = index.__dict__["_known_models"] = set(index.classes)
+    c = FactCollector(_rel(index, ffile), consts=index.consts_for(ffile), class_models=index.class_models,
+                      self_type=owner, known_models=known, index=index, ret_depth=depth + 1)
+    c.visit(fn)
+    models = set()
+    for r in _own_returns(fn):
+        if r.value is None:
+            continue
+        ctor = _ctor_name(r.value)
+        if ctor:                                                # a bare `X(...)`: only a repo MODEL counts
+            m = ctor if _is_model(index, ctor) else None
+        else:
+            m = c._value_model(r.value)
+            if m and (m.endswith(_NON_MODEL_RETURN_SUFFIXES)
+                      or (index.find_class(m)[0] is not None and not _is_model(index, m))):
+                m = None                                        # a typed Helper / Response var, not a table
+        if m:
+            models.add(m)
+    memo[id(fn)] = models.pop() if len(models) == 1 else None
+    return memo[id(fn)]
 
 
 # ---- raw SQL --------------------------------------------------------------------------
@@ -1414,7 +1576,7 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
     owner_rel = _rel(index, owner_file)
     local = FactCollector(owner_rel, consts=index.consts_for(owner_file),
                           class_models=index.class_models, self_type=self_type,
-                          known_models=set(index.classes), manager_model=manager_model)
+                          known_models=set(index.classes), manager_model=manager_model, index=index)
     if seed_types:
         local.var_types.update(seed_types)     # bind params to the models passed at the call site
     local.visit(fn)
