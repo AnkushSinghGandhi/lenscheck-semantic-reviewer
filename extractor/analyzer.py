@@ -478,6 +478,16 @@ class FactCollector(ast.NodeVisitor):
             if who and who.endswith(NON_MODEL_SUFFIXES):     # a serializer/form we couldn't map → unknown
                 who = None
             self.db.append((who or "<instance>", "write", fl, ln))
+        # queryset write via a typed var: `qs = Model.objects.filter(...); qs.update(...)` — the `.objects`
+        # chain is gone by the time we reach `qs.update`, so only the var's resolved type names the table.
+        # Unlike save/delete, require a KNOWN model: a bare `x.update(...)` is almost always a dict/context.
+        # shortcut: `.extra(tables=,where=)` and dynamic `apps.get_model(...)` writes still miss — rare/deprecated.
+        if isinstance(f, ast.Attribute) and f.attr == "update" and not model \
+                and not _is_non_orm_receiver(f.value):
+            who = self.var_types.get(_receiver_key(f.value))
+            who = self.class_models.get(who, who)
+            if who and not who.endswith(NON_MODEL_SUFFIXES):
+                self.db.append((who, "write", fl, ln))
         # SQLAlchemy (Flask/FastAPI stacks) — high-signal patterns, never a false ✓:
         #   session.query(Model) / db.session.query(Model)  → read
         if isinstance(f, ast.Attribute) and f.attr == "query" and node.args \
@@ -724,6 +734,12 @@ class FactCollector(ast.NodeVisitor):
 
     @staticmethod
     def _model_of(value):
+        # `list(qs)` / `tuple(qs)` / `sorted(qs)` / `reversed(qs)` keep the element type — common when a
+        # queryset must be forced inside an atomic block (`list(M.objects.select_for_update()…)`). Not
+        # `set()`: `set.update()` is a real method and would turn into a false write.
+        while isinstance(value, ast.Call) and isinstance(value.func, ast.Name) \
+                and value.func.id in {"list", "tuple", "sorted", "reversed"} and len(value.args) == 1:
+            value = value.args[0]
         if not isinstance(value, ast.Call):
             return None
         f = value.func

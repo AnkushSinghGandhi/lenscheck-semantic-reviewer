@@ -180,3 +180,46 @@ def test_unresolved_is_not_a_cross_repo_multi_writer(tmp_path):
         return str(r)
     data = crossrepo.build([mk("a"), mk("b")])
     assert all(s["table"] != "<unresolved>" for s in data["shared_tables"])
+
+
+def test_typed_queryset_var_update_is_a_write_but_dict_update_is_not(tmp_path):
+    # C3: `qs = Model.objects.filter(...); qs.update(...)` is a real bulk write the `.objects` matcher can't
+    # see (the chain is gone by the call); a bare `c.update({...})` on a dict must NOT become a write.
+    r = tmp_path / "svc"
+    _write(r, "app/models.py",
+           "from django.db import models\nclass Lead(models.Model):\n"
+           "    class Meta:\n        db_table = 'leads'\n")
+    _write(r, "app/urls.py",
+           "from django.urls import path\nfrom . import views\n"
+           "urlpatterns = [path('bump/', views.bump), path('ctx/', views.ctx)]\n")
+    _write(r, "app/views.py",
+           "from .models import Lead\n"
+           "def bump(request):\n    qs = Lead.objects.filter(status=1)\n    qs.update(status=2)\n"
+           "def ctx(request):\n    c = {}\n    c.update({'a': 1})\n")
+    tables = crossrepo.provenance.build(str(r))["tables"]
+    assert any(e["route"] == "bump/" for e in tables["leads"]["written_by"])
+    assert "<unresolved>" not in tables      # the dict update must not leak in as an unresolved write
+
+
+def test_list_wrapped_queryset_keeps_its_model_for_the_loop_var(tmp_path):
+    # `dus = list(M.objects.select_for_update().filter(...))`; `for du in dus: du.save()` — the list()
+    # wrapper used to strip the type, so every du.save() fell into <unresolved> (the real cms pattern in
+    # apply_campaign_action). A set() wrapper must NOT propagate: set.update() is a real method.
+    r = tmp_path / "svc"
+    _write(r, "app/models.py",
+           "from django.db import models\nclass DU(models.Model):\n"
+           "    class Meta:\n        db_table = 'dus'\n")
+    _write(r, "app/urls.py",
+           "from django.urls import path\nfrom . import views\n"
+           "urlpatterns = [path('cascade/', views.cascade), path('tags/', views.tags)]\n")
+    _write(r, "app/views.py",
+           "from .models import DU\n"
+           "def cascade(request):\n"
+           "    dus = list(DU.objects.select_for_update().filter(campaign_id=1))\n"
+           "    for du in dus:\n        du.save()\n"
+           "def tags(request):\n"
+           "    s = set(DU.objects.all())\n    s.update({1})\n")
+    tables = crossrepo.provenance.build(str(r))["tables"]
+    assert any(e["route"] == "cascade/" for e in tables["dus"]["written_by"])
+    assert not any(e["route"] == "tags/" for e in tables["dus"]["written_by"])
+    assert "<unresolved>" not in tables
