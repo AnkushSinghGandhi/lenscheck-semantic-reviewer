@@ -74,7 +74,8 @@ def ensure_local(repo, update=True):
             last_err = e
             continue
         try:
-            r = subprocess.run(["git", "clone", "--quiet", "--depth=1",
+            # "--": a repo string like `--upload-pack=…x.git` passes is_url() — never let it parse as an option
+            r = subprocess.run(["git", "clone", "--quiet", "--depth=1", "--",
                                 repo, dest], capture_output=True, text=True, timeout=GIT_TIMEOUT)
         except subprocess.TimeoutExpired:
             last_err = RuntimeError(f"git clone timed out after {GIT_TIMEOUT}s for {repo}")
@@ -89,6 +90,8 @@ def export(repo, ref, dest):
     """Extract a clean snapshot of `ref` into `dest` — working tree untouched."""
     if not ref:
         raise RuntimeError("cannot export an empty git ref")
+    if ref.startswith("-"):              # `git archive --remote=<url>` / `--output=<file>`: never an option
+        raise RuntimeError(f"refusing an option-like git ref: {ref!r}")
     p = subprocess.Popen(["git", "-C", repo, "archive", ref], stdout=subprocess.PIPE)
     try:
         subprocess.run(["tar", "-x", "-C", dest], stdin=p.stdout, check=True, timeout=GIT_TIMEOUT)

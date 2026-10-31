@@ -16,6 +16,7 @@ Deployed (e.g. Render) it reads these env vars:
     LENSCHECK_INVARIANTS     default invariant corpus path
 """
 import argparse
+import hmac
 import json
 import os
 import sys
@@ -57,8 +58,14 @@ def source_snippet(repo, ref, rel, line, ctx=6):
     (what the whole-repo map analyzed — works regardless of where the git root sits); any other ref
     reads that exact git snapshot via `git show`. `{found: False}` if missing."""
     if ref in (None, "", "WORKTREE"):
+        # `rel` comes from the request: an absolute path makes os.path.join drop `repo` entirely, and
+        # `../` (or a symlink) walks out of it — resolve first and refuse anything outside the repo
+        root = os.path.realpath(repo)
+        full = os.path.realpath(os.path.join(root, rel))
+        if full != root and not full.startswith(root + os.sep):
+            return {"found": False, "path": rel, "line": line}
         try:
-            with open(os.path.join(repo, rel), encoding="utf-8", errors="replace") as f:
+            with open(full, encoding="utf-8", errors="replace") as f:
                 return _snippet_from(f.read(), rel, line, ctx)
         except OSError:
             return {"found": False, "path": rel, "line": line}
@@ -110,12 +117,16 @@ def make_handler(cfg):
         def _authorized(self, g):
             if not cfg["token"]:
                 return True
-            return (g("token") or self.headers.get("X-Lenscheck-Token")) == cfg["token"]
+            got = g("token") or self.headers.get("X-Lenscheck-Token") or ""
+            return hmac.compare_digest(got.encode(), cfg["token"].encode())    # constant-time
 
         def _repo_ok(self, repo):
             if not cfg["allowed"]:
                 return True
-            return any(a and a in repo for a in cfg["allowed"])
+            # match the RESOLVED path, so `<allowed>/../../home/x` can't ride an allowed substring; a URL is
+            # matched without its ?query/#fragment (else `https://evil/x?<allowed>` would pass)
+            target = repo.split("?")[0].split("#")[0] if is_url(repo) else os.path.realpath(repo)
+            return any(a and a in target for a in cfg["allowed"])
 
         def do_GET(self):
             u = urlparse(self.path)
@@ -156,6 +167,12 @@ def make_handler(cfg):
 
                 if path.startswith("/api/") and not self._authorized(g):
                     return self._json(401, {"error": "unauthorized — append ?token=…"})
+                # these values end up in a git argv, where a leading "-" is parsed as an OPTION
+                # (`base=--output=/x` → `git diff --output=/x` writes a file). No real ref, sha, path or
+                # URL starts with "-", so refuse them here, at the trust boundary.
+                for k in ("repo", "repos", "base", "head", "merge", "commit", "ref", "pr", "schema"):
+                    if any(v.strip().startswith("-") for v in (g(k) or "").split(",")):
+                        return self._json(400, {"error": f"invalid {k}"})
 
                 if path == "/api/config":
                     return self._json(200, {"repo": cfg["repo"], "invariants": cfg["invariants"],
@@ -178,9 +195,12 @@ def make_handler(cfg):
                         rp = head if (sep and os.path.isdir(head)) else spec
                         if not self._repo_ok(rp):
                             return self._json(403, {"error": f"repo not in allowlist: {rp}"})
+                    schema_path = g("schema")        # a server-side path: same allowlist as repos, and JSON only
+                    if schema_path and not (schema_path.endswith(".json") and self._repo_ok(schema_path)):
+                        return self._json(403, {"error": "schema must be a .json file inside an allowed path"})
                     import crossrepo, schema_dump
                     try:
-                        schema = schema_dump.load(g("schema")) if g("schema") else None
+                        schema = schema_dump.load(schema_path) if schema_path else None
                         data = crossrepo.build(repos, writes_only=(g("writes_only") == "1"), schema=schema)
                     except Exception as e:
                         return self._json(500, {"error": str(e)})
@@ -285,8 +305,8 @@ def make_handler(cfg):
                         return self._json(400, {"error": "confirming needs a local corpus file — "
                                                 "start `lenscheck serve --invariants <path.json>`"})
                     repo = body.get("repo") or cfg["repo"]
-                    if not repo:
-                        return self._json(400, {"error": "no repo given"})
+                    if not repo or str(repo).startswith("-"):        # a leading "-" would be a git option
+                        return self._json(400, {"error": "no / invalid repo"})
                     if not self._repo_ok(repo):
                         return self._json(403, {"error": "repo not in allowlist"})
                     inv_id = body.get("id")
