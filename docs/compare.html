@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lenscheck vs CodeRabbit, Copilot, SonarQube & Semgrep — code review compared</title>
+<meta name="description" content="How Lenscheck compares to the tools you already review code with — CodeRabbit, GitHub Copilot review, SonarQube and Semgrep. Deterministic, no LLM, reviews what a PR actually changes.">
+<meta name="keywords" content="lenscheck vs coderabbit, lenscheck vs copilot, lenscheck vs sonarqube, lenscheck vs semgrep, deterministic code review, PR reviewer comparison">
+<link rel="canonical" href="https://warriorwhocodes.com/lenscheck-semantic-reviewer/compare.html">
+<link rel="icon" type="image/png" href="images/lenscheck-mark.png">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Lenscheck vs CodeRabbit, Copilot, SonarQube & Semgrep">
+<meta property="og:description" content="Deterministic, no-LLM PR review — compared with the code-review tools you already use.">
+<meta property="og:url" content="https://warriorwhocodes.com/lenscheck-semantic-reviewer/compare.html">
+<script>(function(){try{var t=localStorage.getItem('lc-theme');if(t==='dark'||(!t&&matchMedia('(prefers-color-scheme:dark)').matches))document.documentElement.setAttribute('data-theme','dark');}catch(e){}})();</script>
+<link rel="stylesheet" href="site.css?v=20260922">
+</head>
+<body>
+<div class="spectrum"></div>
+
+<nav><div class="wrap">
+  <a class="logo" href="index.html">
+    <svg class="lc-mark" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10.5" cy="10.5" r="7.5"/><path d="m21 21-5.2-5.2"/><path d="m7.5 10.8 2.2 2.2 4-4.5"/></svg>
+    <b>lenscheck</b><span class="lc-dim">-semantic-reviewer</span>
+  </a>
+  <div class="links">
+    <a href="index.html#how">How it works</a>
+    <a href="features.html">Features</a>
+    <a href="contract.html">Contract</a>
+    <a href="compare.html" class="active">Compare</a>
+    <a href="docs.html">Docs</a>
+    <a class="lc-gh" href="https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer2" aria-label="Lenscheck on GitHub" title="GitHub">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 .5C5.65.5.5 5.65.5 12a11.5 11.5 0 0 0 7.86 10.92c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.2 1.77 1.2 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.8 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.43-2.69 5.4-5.25 5.69.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z"/></svg>
+    </a>
+    <button class="lc-theme" type="button" aria-label="Toggle dark mode" title="Toggle theme" onclick="lcTheme()">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"/></svg>
+    </button>
+    <a class="btn primary sm" href="index.html#request">Get free token</a>
+  </div>
+</div></nav>
+
+<header class="page-head"><div class="wrap">
+  <div class="eyebrow">Comparison</div>
+  <h1>Where Lenscheck fits among code-review tools</h1>
+  <p>Every tool here is good at what it's built for. This page is about one specific job: telling you what a pull request <em>actually changes</em> — reliably, and without a token bill.</p>
+</div></header>
+
+<!-- the two camps -->
+<section><div class="wrap">
+  <div class="eyebrow">Two camps</div>
+  <h2>Smart-but-guessing, or exact-but-noisy</h2>
+  <p class="lead">The tools you'd reach for split cleanly in two. <b>LLM reviewers</b> read like a teammate but drift, hallucinate, and bill per PR. <b>Static scanners</b> are precise and free but report whole-file findings and can't tell a rename from a real change. Lenscheck takes the third path: deterministic like a scanner, behavior-aware like a reviewer.</p>
+  <div class="grid g2">
+    <div class="card">
+      <div class="ico">🤖</div>
+      <h3>LLM reviewers — CodeRabbit, Copilot</h3>
+      <p>Great prose and context, but the same PR can produce a different review twice, findings can be invented, and every run costs tokens. Nothing traces to a guaranteed <code>file:line</code>.</p>
+    </div>
+    <div class="card">
+      <div class="ico">🔬</div>
+      <h3>Static scanners — SonarQube, Semgrep</h3>
+      <p>Deterministic and exact, but they flag rule matches across the whole file, not what a PR <i>changed</i> in behavior — and a pure refactor lights them up with noise.</p>
+    </div>
+  </div>
+</div></section>
+
+<!-- the matrix -->
+<section><div class="wrap">
+  <div class="eyebrow">Head to head</div>
+  <h2>On a real pull request</h2>
+  <p class="lead">Rows reflect each tool's default PR-review behavior — not everything it can be configured to do.</p>
+  <div style="overflow-x:auto">
+  <table class="cmp">
+    <thead><tr><th></th><th>CodeRabbit</th><th>Copilot review</th><th>SonarQube</th><th>Semgrep</th><th class="col-lenscheck">Lenscheck</th></tr></thead>
+    <tbody>
+      <tr><td>Deterministic — same PR, same review</td><td class="n">✗</td><td class="n">✗</td><td class="y">✓</td><td class="y">✓</td><td class="col-lenscheck y">✓</td></tr>
+      <tr><td>No LLM — nothing to hallucinate</td><td class="n">✗</td><td class="n">✗</td><td class="y">✓</td><td class="y">✓</td><td class="col-lenscheck y">✓</td></tr>
+      <tr><td>No per-token LLM bill</td><td class="n">✗</td><td class="n">✗</td><td class="y">✓</td><td class="y">✓</td><td class="col-lenscheck y">✓</td></tr>
+      <tr><td>Reviews the behavior <i>change</i>, not whole files</td><td class="p">~</td><td class="p">~</td><td class="p">~</td><td class="p">~</td><td class="col-lenscheck y">✓</td></tr>
+      <tr><td>Endpoint lens — routes · auth · PII · db · calls</td><td class="p">~</td><td class="p">~</td><td class="n">✗</td><td class="p">~</td><td class="col-lenscheck y">✓</td></tr>
+      <tr><td>Refactor-stable (renames = no noise)</td><td class="n">✗</td><td class="n">✗</td><td class="n">✗</td><td class="n">✗</td><td class="col-lenscheck y">✓</td></tr>
+      <tr><td>Learns your repo's own rules</td><td class="n">✗</td><td class="n">✗</td><td class="n">✗</td><td class="n">✗</td><td class="col-lenscheck y">✓</td></tr>
+      <tr><td>Honest about the unknown — never "safe" when unseen</td><td class="n">✗</td><td class="n">✗</td><td class="p">~</td><td class="p">~</td><td class="col-lenscheck y">✓</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="lead" style="font-size:13px;margin-top:12px"><span class="y" style="font-weight:700">✓</span> yes &nbsp;·&nbsp; <span class="p">~</span> partial / with setup &nbsp;·&nbsp; <span class="n">✗</span> no.</p>
+</div></section>
+
+<!-- why -->
+<section id="why"><div class="wrap">
+  <div class="eyebrow">Why it's different</div>
+  <h2>Four things a diff, an LLM, or a scanner won't give you</h2>
+  <div class="grid g2">
+    <div class="card"><div class="ico">🎯</div><h3>Facts, not vibes</h3><p>It reads your code with Python's own parser and reports what's there — it never runs it, and never guesses. Every finding traces to a <code>file:line</code>, so there's nothing to fact-check.</p></div>
+    <div class="card"><div class="ico">🤫</div><h3>Honest about the unknown</h3><p>A tool that wrongly says "all clear" ships the bug. Lenscheck fails toward <i>look here</i> — ✓ / ⚠ / ? — and never renders "didn't see it" as "it's safe."</p></div>
+    <div class="card"><div class="ico">🔁</div><h3>Refactor-proof</h3><p>Facts are matched on the URL route, not class names. Rename every class in the repo and a pure refactor produces <b>zero</b> noise — so the real change stands out.</p></div>
+    <div class="card"><div class="ico">🔒</div><h3>Your rules, enforced</h3><p>It learns the promises your codebase already keeps and flags the PR that breaks one. That confirmed corpus is yours — the piece a competitor can't clone.</p></div>
+  </div>
+  <p class="lead" style="font-size:14px;margin-top:16px">It doesn't replace your tests or type-checker — it sees a different layer: <b>behavior at the endpoint</b>, and whether a change broke a promise.</p>
+</div></section>
+
+<!-- cta -->
+<section style="border-top:none;padding-top:0"><div class="wrap">
+  <div class="cta-band">
+    <h2>See what your next PR actually changes</h2>
+    <p>Deterministic and free. Review a pull request in under a minute — your source never leaves your machine.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://pypi.org/project/lenscheck-semantic-reviewer/">Install from PyPI</a>
+      <a class="btn ghost" href="index.html#how">See how it works</a>
+    </div>
+  </div>
+</div></section>
+
+<footer class="site-footer"><div class="wrap">
+  <div class="f-top">
+    <div class="f-brand">
+      <div class="f-logo"><svg class="lc-mark" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px"><circle cx="10.5" cy="10.5" r="7.5"/><path d="m21 21-5.2-5.2"/><path d="m7.5 10.8 2.2 2.2 4-4.5"/></svg> <span>Lenscheck</span></div>
+      <p>Deterministic semantic PR review for Python — no LLM, no token bill. Everything runs on your machine; nothing is uploaded.</p>
+      <p class="f-colophon"><a class="star" href="https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer2">★ Star on GitHub</a> <span class="sep">·</span> <a class="sponsor" href="https://github.com/sponsors/AnkushSinghGandhi">♥ Sponsor</a> <span class="sep">·</span> by <a href="https://warriorwhocodes.com">Ankush Singh Gandhi</a></p>
+    </div>
+    <div class="f-cols">
+      <div class="f-col"><h4>Product</h4>
+        <a href="index.html#how">How it works</a>
+        <a href="features.html">Features</a>
+        <a href="contract.html">Contract</a>
+        <a href="compare.html">Comparison</a>
+      </div>
+      <div class="f-col"><h4>Docs</h4>
+        <a href="docs.html">Documentation</a>
+        <a href="docs.html#r-action">GitHub Action</a>
+        <a href="https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer2/blob/main/blog/lenscheck-complete-guide.md">Full guide</a>
+      </div>
+      <div class="f-col"><h4>Install</h4>
+        <a href="https://pypi.org/project/lenscheck-semantic-reviewer/">PyPI · reviewer</a>
+        <a href="https://pypi.org/project/lenscheck-contract/">PyPI · contract</a>
+        <a href="https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer2">GitHub</a>
+      </div>
+      <div class="f-col"><h4>Connect</h4>
+        <a href="https://warriorwhocodes.com">warriorwhocodes.com</a>
+        <a href="https://github.com/sponsors/AnkushSinghGandhi">Sponsor ♥</a>
+        <a href="mailto:ankushsinghgandhi@gmail.com">Email</a>
+      </div>
+    </div>
+  </div>
+  <div class="f-bottom">
+    <span>© 2026 Ankush Singh Gandhi · <a href="https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer2/blob/main/LICENSE">Elastic License 2.0</a></span>
+    <span>Two tools, one promise: always know what your backend does.</span>
+  </div>
+</div></footer>
+
+<script>function lcTheme(){var d=document.documentElement,dark=d.getAttribute('data-theme')==='dark';if(dark){d.removeAttribute('data-theme');try{localStorage.setItem('lc-theme','light')}catch(e){}}else{d.setAttribute('data-theme','dark');try{localStorage.setItem('lc-theme','dark')}catch(e){}}}</script>
+</body>
+</html>

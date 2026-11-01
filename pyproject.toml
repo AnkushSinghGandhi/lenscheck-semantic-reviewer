@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lenscheck-semantic-reviewer"
-version = "1.0.0"
+version = "3.0.0"
 description = "Semantic PR Reviewer for Python Web Applications"
 readme = "PYPI_README.md"
 requires-python = ">=3.8"
@@ -20,8 +20,8 @@ classifiers = [
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer"
-Repository = "https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer"
+Homepage = "https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer2"
+Repository = "https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer2"
 
 [project.scripts]
 lenscheck = "cli:main"

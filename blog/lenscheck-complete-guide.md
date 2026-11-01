@@ -65,7 +65,7 @@ at the exact line to look at. It's built for Python web apps (Django / Django RE
 It is **not** an AI that guesses. It reads your code with Python's own parser and reports **facts**.
 When it isn't sure, it says so (you'll see a ⚠). It never dresses up "I didn't see it" as "it's safe."
 
-![The Lenscheck landing page](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer/blob/main/blog/images/00-welcome.png?raw=true)
+![The Lenscheck landing page](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer2/blob/main/blog/images/00-welcome.png?raw=true)
 
 ---
 
@@ -164,7 +164,7 @@ repo, it auto-detects that repo for you.
 
 ### The top bar — choosing what to review
 
-![A finished review in the web UI](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer/blob/main/blog/images/01-review.png?raw=true)
+![A finished review in the web UI](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer2/blob/main/blog/images/01-review.png?raw=true)
 
 Along the top you pick **what** to compare. You have four ways:
 
@@ -203,18 +203,18 @@ Once a review runs, you read it top-to-bottom. Using the screenshot above:
 7. **The "Where to look" tab** — switch the detail pane from the graph to a flat, ranked list of
    every fact with its exact `file:line` — the **WHERE** of the review, including the traced leak.
 
-![The "Where to look" tab — every fact at its exact line](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer/blob/main/blog/images/03-where-to-look.png?raw=true)
+![The "Where to look" tab — every fact at its exact line](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer2/blob/main/blog/images/03-where-to-look.png?raw=true)
 
 Click any block in the graph (or a line here) and Lenscheck shows you the **source**, with the exact
 line highlighted:
 
-![Click a block to see its source, the exact line highlighted](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer/blob/main/blog/images/04-source-snippet.png?raw=true)
+![Click a block to see its source, the exact line highlighted](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer2/blob/main/blog/images/04-source-snippet.png?raw=true)
 
 ### The Invariants panel — teach Lenscheck your rules
 
 Click **⚖ Invariants** in the top bar:
 
-![The invariants panel: discover, confirm, blame](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer/blob/main/blog/images/02-invariants.png?raw=true)
+![The invariants panel: discover, confirm, blame](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer2/blob/main/blog/images/02-invariants.png?raw=true)
 
 Lenscheck samples your git history and shows **candidate rules** it noticed your codebase following. In
 the screenshot:
@@ -258,12 +258,12 @@ steps (commit, open a PR). Start advisory; switch to `--gate` once your rules ar
 
 Analyze a PR / branch / commit and print a review.
 
-![`lenscheck review` in the terminal](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer/blob/main/blog/images/07-cli.png?raw=true)
+![`lenscheck review` in the terminal](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer2/blob/main/blog/images/07-cli.png?raw=true)
 
 The same review as a **self-contained HTML file** (`--html`) you can send to anyone — no install
 needed:
 
-![The self-contained HTML report — what changed, how it flows, where to look](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer/blob/main/blog/images/06-html-report.png?raw=true)
+![The self-contained HTML report — what changed, how it flows, where to look](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer2/blob/main/blog/images/06-html-report.png?raw=true)
 
 ```bash
 lenscheck review                       # no args: review THIS branch vs the default branch
@@ -423,7 +423,7 @@ lenscheck digest --org my-org --slack "$SLACK_WEBHOOK"
 With `--slack`, that lands in your channel every morning — one number the whole team (and leadership)
 can read without opening a single PR:
 
-![The digest posted to Slack](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer/blob/main/blog/images/09-digest-slack.png?raw=true)
+![The digest posted to Slack](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer2/blob/main/blog/images/09-digest-slack.png?raw=true)
 
 | Flag | What it does |
 |------|--------------|
@@ -555,7 +555,7 @@ If it can't fetch a version (offline, or the package has no source), it says **�
 Turn the network scan off with `LENSCHECK_SCAN_DEPS=0` (or the Action's `scan_deps: false`) and you'll
 always get the fast ⚠ mode.
 
-![The dependency capability panel — bumped packages, honest about the unresolved ones](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer/blob/main/blog/images/05-dependencies.png?raw=true)
+![The dependency capability panel — bumped packages, honest about the unresolved ones](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer2/blob/main/blog/images/05-dependencies.png?raw=true)
 
 ### A text list does not show the flow
 
@@ -578,7 +578,7 @@ sequenceDiagram
 GitHub renders that right inside the PR comment — a real picture of the endpoint's behavior, drawn
 from facts:
 
-![The Mermaid flow diagram as GitHub renders it in the PR comment](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer/blob/main/blog/images/08-mermaid.png?raw=true)
+![The Mermaid flow diagram as GitHub renders it in the PR comment](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer2/blob/main/blog/images/08-mermaid.png?raw=true)
 
 ### The finding is not next to the code
 
@@ -623,7 +623,7 @@ jobs:
   lenscheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer@v1
+      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer2@main
         with:
           fail_on: none          # or: violation | crit
 ```
@@ -674,7 +674,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer@v1
+      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer2@main
         with:
           comment: 'true'
           fail_on: none          # observe mode — never blocks a merge (yet)
@@ -755,7 +755,7 @@ Once people trust the reviews, flip the switch in your **one** central file — 
 highest-confidence signal:
 
 ```yaml
-      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer@v1
+      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer2@main
         with:
           fail_on: violation     # block only when a PR breaks a confirmed rule
 ```
@@ -921,4 +921,4 @@ promise, two moments: **the reviewer catches it in the PR; the contract stops it
 ---
 
 *Lenscheck is source-available (Elastic-2.0). Built by [Ankush Singh Gandhi](https://warriorwhocodes.com). Questions,
-stars, and sponsorships welcome on [GitHub](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer).*
+stars, and sponsorships welcome on [GitHub](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer2).*

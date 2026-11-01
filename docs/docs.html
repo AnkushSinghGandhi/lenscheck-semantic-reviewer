@@ -60,7 +60,7 @@
     <a href="#reviewer">Reviewer</a>
     <a href="#contract">Contract</a>
     <a href="#bridge">Bridge</a>
-    <a href="https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer">GitHub</a>
+    <a href="https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer2">GitHub</a>
   </div>
 </div></nav>
 
@@ -187,7 +187,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer@v1
+      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer2@main
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           fail_on: crit          # violation | crit | none
@@ -303,7 +303,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer@v1
+      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer2@main
         with: { github_token: "${{ secrets.GITHUB_TOKEN }}", fail_on: crit }
 
   # 2) the contract — hard gate on structural change (+ feeds the reviewer)
@@ -320,7 +320,7 @@ jobs:
       - run: lenscheck-contract diff base.json head.json --markdown --fail-on risky</code></pre>
   <p>The third catch — the runtime <b>guard</b> — runs in your test/staging job, because it needs the app actually running (<code>guard.install(mode="error")</code>).</p>
 
-  <p style="margin-top:40px"><a href="index.html">← Back to home</a> &nbsp;·&nbsp; <a href="https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer">Reviewer on GitHub</a> &nbsp;·&nbsp; <a href="https://github.com/AnkushSinghGandhi/lenscheck-contract">Contract on GitHub</a></p>
+  <p style="margin-top:40px"><a href="index.html">← Back to home</a> &nbsp;·&nbsp; <a href="https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer2">Reviewer on GitHub</a> &nbsp;·&nbsp; <a href="https://github.com/AnkushSinghGandhi/lenscheck-contract">Contract on GitHub</a></p>
 </main>
 </div>
 </body>

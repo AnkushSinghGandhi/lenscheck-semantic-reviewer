@@ -35,7 +35,7 @@ pip install lenscheck-semantic-reviewer      # gives you the `lenscheck` command
 Zero third-party dependencies (pure Python standard library). Needs **Python 3.8+**, plus **git**
 and **tar** on the PATH.
 
-*From source instead?* `git clone https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer` and use
+*From source instead?* `git clone https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer2` and use
 `python3 diff_pr.py …` / `python3 serve.py …` / `python3 invariants.py …` — the exact same
 commands as `lenscheck review` / `lenscheck serve` / `lenscheck invariants`.
 
@@ -198,7 +198,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer@v1
+      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer2@main
         with:
           fail_on: violation                 # violation | crit | none (default: none)
           invariants: lenscheck-invariants.json  # optional: enforce your confirmed rules

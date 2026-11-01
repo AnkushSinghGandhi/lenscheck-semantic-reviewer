@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>lenscheck-contract — your Python backend can't lie about what it does</title>
+<meta name="description" content="lenscheck-contract records what your Django, Flask, or FastAPI app really does — routes, models, effects, background jobs — fails CI on a risky change, and blocks undeclared calls at runtime. The inside-out half of the Lenscheck ecosystem.">
+<meta name="keywords" content="lenscheck-contract, django flask fastapi contract testing, runtime egress guard, api contract, declared effects, pydantic celery CI gate">
+<link rel="canonical" href="https://warriorwhocodes.com/lenscheck-semantic-reviewer/contract.html">
+<link rel="icon" type="image/png" href="images/lenscheck-mark.png">
+<meta property="og:type" content="website">
+<meta property="og:title" content="lenscheck-contract — your backend can't lie about what it does">
+<meta property="og:description" content="Records routes, models & effects at runtime, gates risky changes in CI, and blocks undeclared calls in production.">
+<meta property="og:url" content="https://warriorwhocodes.com/lenscheck-semantic-reviewer/contract.html">
+<script>(function(){try{var t=localStorage.getItem('lc-theme');if(t==='dark'||(!t&&matchMedia('(prefers-color-scheme:dark)').matches))document.documentElement.setAttribute('data-theme','dark');}catch(e){}})();</script>
+<link rel="stylesheet" href="site.css?v=20260922">
+</head>
+<body>
+<div class="spectrum"></div>
+
+<nav><div class="wrap">
+  <a class="logo" href="index.html">
+    <svg class="lc-mark" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10.5" cy="10.5" r="7.5"/><path d="m21 21-5.2-5.2"/><path d="m7.5 10.8 2.2 2.2 4-4.5"/></svg>
+    <b>lenscheck</b><span class="lc-dim">-semantic-reviewer</span>
+  </a>
+  <div class="links">
+    <a href="index.html#how">How it works</a>
+    <a href="features.html">Features</a>
+    <a href="contract.html" class="active">Contract</a>
+    <a href="docs.html">Docs</a>
+    <a class="lc-gh" href="https://github.com/AnkushSinghGandhi/lenscheck-contract" aria-label="lenscheck-contract on GitHub" title="GitHub">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 .5C5.65.5.5 5.65.5 12a11.5 11.5 0 0 0 7.86 10.92c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.2 1.77 1.2 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11 11 0 0 1 5.8 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.43-2.69 5.4-5.25 5.69.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z"/></svg>
+    </a>
+    <button class="lc-theme" type="button" aria-label="Toggle dark mode" title="Toggle theme" onclick="lcTheme()">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"/></svg>
+    </button>
+    <a class="btn primary sm" href="index.html#request">Get free token</a>
+  </div>
+</div></nav>
+
+<header class="page-head"><div class="wrap">
+  <div class="eyebrow">lenscheck-contract · inside-out</div>
+  <h1>Your backend can't lie about what it does</h1>
+  <p>The reviewer reads your PR from the outside. lenscheck-contract watches the running app from the inside — so the two together catch what neither can alone.</p>
+  <div class="cta" style="margin-top:26px">
+    <a class="btn primary" href="https://pypi.org/project/lenscheck-contract/">pip install lenscheck-contract</a>
+    <a class="btn ghost" href="docs.html#contract">Read the docs</a>
+  </div>
+</div></header>
+
+<!-- three levels -->
+<section><div class="wrap">
+  <div class="eyebrow">How it works · Django · Flask · FastAPI</div>
+  <h2>Three levels — start at zero code</h2>
+  <p class="lead">Static analysis can't see routers, loops, mixins, or dependency trees — but your framework already resolved all of it at startup. So lenscheck-contract asks the running app instead of parsing files. Works with <b>Django, Flask, and FastAPI</b>.</p>
+  <div class="grid g3">
+    <div class="card lvl" style="border-top-color:var(--cyan)"><h3 style="color:var(--cyan)">1 · Zero code</h3><span class="tag">lenscheck-contract export</span><p>Reads your framework's real routes + models — Django's registry, SQLAlchemy, <b>Pydantic</b> schemas — and <b>Celery</b> jobs → <code>contract.json</code>. Coverage reported, not hidden.</p></div>
+    <div class="card lvl" style="border-top-color:var(--accent)"><h3 style="color:var(--accent)">2 · Declare</h3><span class="tag">a decorator, done</span><p>Mark the routes + effects that matter — a decorator that looks like every framework one.</p></div>
+    <div class="card lvl" style="border-top-color:var(--low)"><h3 style="color:var(--low)">3 · Enforce</h3><span class="tag">the runtime guard</span><p>One hook at the socket layer — <b>sync and async</b> (httpx, aiohttp): an undeclared call fails loudly. The bad code doesn't ship.</p></div>
+  </div>
+</div></section>
+
+<!-- money shot -->
+<section><div class="wrap">
+  <div class="eyebrow">The payoff</div>
+  <h2>3 bad things in. 0 shipped.</h2>
+  <p class="lead">A PR that "looks harmless" — caught on <b>two layers</b>: structural (the CI diff) and runtime (the guard).</p>
+  <div class="split">
+    <div class="shot"><img src="images/money-shot.png" alt="lenscheck-contract catching three bad things across CI and runtime"></div>
+    <ul class="layerlist">
+      <li><b style="color:var(--cyan)">Layer 2 · CI diff</b> — auth <span class="c-crit">weakened</span> (user → public) and a model field <span class="c-crit">dropped</span> → <b>CI blocked</b> before merge.</li>
+      <li><b style="color:var(--low)">Layer 3 · runtime guard</b> — an <span class="c-crit">undeclared exfiltration</span> call <b style="color:var(--low)">blocked</b> before it ever left the process.</li>
+      <li>Structural mistakes → this. Logic mistakes → your tests. <b>You need both.</b></li>
+    </ul>
+  </div>
+</div></section>
+
+<!-- the bridge -->
+<section id="bridge"><div class="wrap">
+  <div class="eyebrow">The bridge</div>
+  <h2>Runtime truth feeds the reviewer</h2>
+  <p class="lead">On its own the reviewer <i>guesses</i> your invariants from git history. lenscheck-contract hands it the truth instead: your app's declared destinations become an <b>enforced allowlist</b>, so a brand-new domain sneaking into a PR is a <span class="c-crit">🔴 critical</span> alert — grounded in fact, not a hunch.</p>
+  <div class="term">
+    <div class="bar">◭ the bridge — runtime <i>truth</i> feeds the reviewer</div>
+    <pre>$ lenscheck-contract invariants -o invariants.json        <span class="muted"># the app's real declared egress + rules</span>
+$ lenscheck review &lt;repo&gt; --pr 128 --invariants invariants.json   <span class="muted"># the reviewer stops guessing</span></pre>
+  </div>
+  <p class="lead" style="margin-top:16px"><a href="docs.html#bridge">See the full bridge docs →</a></p>
+</div></section>
+
+<!-- cta -->
+<section style="border-top:none;padding-top:0"><div class="wrap">
+  <div class="cta-band">
+    <h2>Make your backend keep its promises</h2>
+    <p>Zero-code export, one decorator to declare, one hook to enforce. It ships as a normal Python dependency.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://pypi.org/project/lenscheck-contract/">Install from PyPI</a>
+      <a class="btn ghost" href="index.html">Back to overview</a>
+    </div>
+  </div>
+</div></section>
+
+<footer class="site-footer"><div class="wrap">
+  <div class="f-top">
+    <div class="f-brand">
+      <div class="f-logo"><svg class="lc-mark" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px"><circle cx="10.5" cy="10.5" r="7.5"/><path d="m21 21-5.2-5.2"/><path d="m7.5 10.8 2.2 2.2 4-4.5"/></svg> <span>Lenscheck</span></div>
+      <p>Deterministic semantic PR review for Python — no LLM, no token bill. Everything runs on your machine; nothing is uploaded.</p>
+      <p class="f-colophon"><a class="star" href="https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer2">★ Star on GitHub</a> <span class="sep">·</span> <a class="sponsor" href="https://github.com/sponsors/AnkushSinghGandhi">♥ Sponsor</a> <span class="sep">·</span> by <a href="https://warriorwhocodes.com">Ankush Singh Gandhi</a></p>
+    </div>
+    <div class="f-cols">
+      <div class="f-col"><h4>Product</h4>
+        <a href="index.html#how">How it works</a>
+        <a href="features.html">Features</a>
+        <a href="contract.html">Contract</a>
+        <a href="compare.html">Comparison</a>
+      </div>
+      <div class="f-col"><h4>Docs</h4>
+        <a href="docs.html">Documentation</a>
+        <a href="docs.html#r-action">GitHub Action</a>
+        <a href="https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer2/blob/main/blog/lenscheck-complete-guide.md">Full guide</a>
+      </div>
+      <div class="f-col"><h4>Install</h4>
+        <a href="https://pypi.org/project/lenscheck-semantic-reviewer/">PyPI · reviewer</a>
+        <a href="https://pypi.org/project/lenscheck-contract/">PyPI · contract</a>
+        <a href="https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer2">GitHub</a>
+      </div>
+      <div class="f-col"><h4>Connect</h4>
+        <a href="https://warriorwhocodes.com">warriorwhocodes.com</a>
+        <a href="https://github.com/sponsors/AnkushSinghGandhi">Sponsor ♥</a>
+        <a href="mailto:ankushsinghgandhi@gmail.com">Email</a>
+      </div>
+    </div>
+  </div>
+  <div class="f-bottom">
+    <span>© 2026 Ankush Singh Gandhi · <a href="https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer2/blob/main/LICENSE">Elastic License 2.0</a></span>
+    <span>Two tools, one promise: always know what your backend does.</span>
+  </div>
+</div></footer>
+
+<script>function lcTheme(){var d=document.documentElement,dark=d.getAttribute('data-theme')==='dark';if(dark){d.removeAttribute('data-theme');try{localStorage.setItem('lc-theme','light')}catch(e){}}else{d.setAttribute('data-theme','dark');try{localStorage.setItem('lc-theme','dark')}catch(e){}}}</script>
+</body>
+</html>

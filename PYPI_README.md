@@ -125,7 +125,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer@v1
+      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer2@main
         with:
           fail_on: violation   # violation | crit | none
 ```
@@ -135,7 +135,7 @@ Inputs include `fail_on`, `invariants`, `comment`, `inline`, `label`, `scan_deps
 skipped and the check stays green).
 
 Full documentation, the graph UI, and architecture details:
-[GitHub repository](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer).
+[GitHub repository](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer2).
 
 ## License
 
