@@ -30,7 +30,7 @@ CRIT, HIGH, MED, LOW = "🔴", "🟠", "🟡", "🟢"
 EDGES = [("e3_db_tables", "db"), ("e4_external", "external"),
          ("e5_async", "async"), ("e6_pii", "pii"), ("e7_cache", "cache")]
 
-INFO_URI = "https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer2"
+INFO_URI = "https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer"
 # GitHub code-scanning alert level per Lenscheck severity tier.
 SARIF_LEVEL = {CRIT: "error", HIGH: "error", MED: "warning", LOW: "note"}
 # Optional numeric on each result for the Security-tab Critical/High/Medium/Low sort.

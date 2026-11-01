@@ -43,7 +43,7 @@ management commands, signal receivers), grouped worst-first:
 
 It also lists **cross-repo API calls** (service A calls a route service B serves). `--schema` adds a
 column-level rule ("coordinate on unique key (order_id, user_id)"). Results are cached per repo by git
-HEAD. Also in the UI: `lenscheck serve` → **Cross-repo** tab. Details: [CROSSREPO.md](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer2/blob/main/CROSSREPO.md).
+HEAD. Also in the UI: `lenscheck serve` → **Cross-repo** tab. Details: [CROSSREPO.md](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer/blob/main/CROSSREPO.md).
 
 ### `lenscheck map` — every endpoint, worst-first
 
@@ -165,7 +165,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer2@main
+      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer@main
         with:
           fail_on: violation   # violation | crit | none
 ```
@@ -175,7 +175,7 @@ Inputs include `fail_on`, `invariants`, `comment`, `inline`, `label`, `scan_deps
 skipped and the check stays green).
 
 Full documentation, the graph UI, and architecture details:
-[GitHub repository](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer2).
+[GitHub repository](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer).
 
 ## License
 

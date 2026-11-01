@@ -20,7 +20,7 @@ jobs:
   lenscheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer2@main
+      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer@main
         with:
           fail_on: {fail_on}          # advisory: comments, never blocks. Use `violation` to gate later.
 """

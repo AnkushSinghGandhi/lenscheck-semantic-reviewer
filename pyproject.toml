@@ -20,8 +20,8 @@ classifiers = [
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer2"
-Repository = "https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer2"
+Homepage = "https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer"
+Repository = "https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer"
 
 [project.scripts]
 lenscheck = "cli:main"
