@@ -10,6 +10,9 @@ couldn't figure out.
 
 > One line: it makes it impossible for an important change to hide inside a large PR.
 
+**Free.** No account, no API key, no paid tier, and nothing is uploaded: everything runs on your machine or in your CI.
+**New in 3.0:** [cross-repo review](CROSSREPO.md) for services that share a database, background jobs as writers, and fewer blind spots in the extractor.
+
 **📖 New here? Read [The Complete Guide](blog/lenscheck-complete-guide.md)** — every feature, command,
 flag, and concept explained in plain English, with screenshots.
 
@@ -43,7 +46,7 @@ commands as `lenscheck review` / `lenscheck serve` / `lenscheck invariants`.
 
 ## Commands
 
-Lenscheck has five commands:
+Lenscheck has nine commands:
 
 | Command | What it does |
 |---------|--------------|
@@ -52,12 +55,56 @@ Lenscheck has five commands:
 | `lenscheck serve`  | the interactive web UI (graph view), auto-selects your current repo |
 | `lenscheck invariants` | learn, **confirm**, enforce, and **blame** the rules your codebase follows |
 | `lenscheck digest` | org-wide roll-up: open PRs by `lenscheck:*` label across every repo (for leadership) |
+| `lenscheck crossrepo` | **new:** shared DB tables across 2+ repos: who writes, who reads, cross-service API calls |
+| `lenscheck map` | every endpoint in a repo, grouped by app, worst-first |
+| `lenscheck provenance` | table → endpoint map + data-consistency rules as JSON (facts only, shareable) |
+| `lenscheck init` | add the GitHub Action to a repo in one command |
 
 Run `lenscheck review` with **no arguments** inside a repo to review the current branch vs. the default
 branch. Full flag-by-flag reference: **[the Complete Guide](blog/lenscheck-complete-guide.md)**.
 
 The **repo** can be a **local path** *or* a **GitHub URL** (URLs are cloned into a cache at
 `~/.cache/lenscheck` and reused).
+
+### `lenscheck crossrepo` — shared tables across services (new in 3.0)
+
+```bash
+lenscheck crossrepo ./orders ./billing --html crossrepo.html     # 2+ repos, PATH or PATH@BRANCH
+lenscheck crossrepo ./orders ./billing --writes-only --schema schema.json
+lenscheck crossrepo ./orders ./billing --changed ./orders --since main   # only what this change touches
+```
+
+Give it two or more repos that share a database. For every shared table it lists who **writes** and who
+**reads**, down to `route → handler → file:line`, across views **and background jobs** (Celery tasks,
+management commands, signal receivers), grouped worst-first:
+
+- 🔴 **multi-writer**: 2+ services write it → they must agree on schema and write logic
+- 🟡 **producer → consumer**: one writes, the others read → the writer owns the shape
+- **read-only**: a shared lookup, usually safe
+
+It also lists **cross-repo API calls** (service A calls a route service B serves). `--schema` adds a
+column-level rule ("coordinate on unique key (order_id, user_id)"). Results are cached per repo by git
+HEAD. Also in the UI: `lenscheck serve` → **Cross-repo** tab. Details: [CROSSREPO.md](CROSSREPO.md).
+
+### `lenscheck map` — every endpoint, worst-first
+
+```bash
+lenscheck map .                      # whole repo, grouped by app
+lenscheck map . --risky --html map.html
+```
+
+### `lenscheck provenance` — table → endpoint map as JSON
+
+```bash
+lenscheck provenance . --out facts.json   # facts only (table/endpoint names, no source) — safe to share
+```
+
+### `lenscheck init` — one-command GitHub Action setup
+
+```bash
+lenscheck init            # writes .github/workflows/lenscheck.yml in advisory mode
+lenscheck init --gate     # block merges on a confirmed-rule violation
+```
 
 ### `lenscheck review`
 
@@ -277,12 +324,17 @@ diff_pr.py     # lenscheck review — the semantic diff engine (+ enforce + outp
 serve.py       # lenscheck serve  — the web UI / API
 invariants.py  # lenscheck invariants — discover rules from git history
 digest.py      # lenscheck digest — org-wide roll-up from lenscheck:* labels (no GHAS needed)
+crossrepo.py   # lenscheck crossrepo — shared tables + API calls across repos
+map_repo.py    # lenscheck map — whole-repo endpoint map
+provenance.py  # lenscheck provenance — table → endpoint facts as JSON
+schema_dump.py # dump DB unique keys for crossrepo --schema
 enforce.py     # check a PR against confirmed rules
 deps.py        # dependency capability-delta scan (bumped deps that gain new powers)
 extractor/     # reads code → facts (the 7-edge lens)
 gitutil.py     # git helpers (URL clone/cache, repo detection)
 cli.py         # the `lenscheck` entry point
-web/           # app.html (live UI + graph), viewer.template.html (offline report)
+web/           # app.html (live UI + graph), map.html, crossrepo.html, glossary.js, viewer.template.html
+docs/          # the landing site (index, features, compare, contract, docs)
 ci/            # post_review.py (sticky PR comment), reusable workflow
 action.yml     # the published GitHub Action
 ```
@@ -290,4 +342,4 @@ action.yml     # the published GitHub Action
 ## License
 
 [Elastic License 2.0](LICENSE) — free to use, self-host internally, and modify; you may **not**
-resell it or offer it as a hosted service.
+resell it or offer it as a hosted service. There is no paid tier.

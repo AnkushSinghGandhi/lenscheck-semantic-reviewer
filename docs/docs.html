@@ -76,6 +76,10 @@
   <a href="#r-serve">lenscheck serve</a>
   <a href="#r-invariants">lenscheck invariants</a>
   <a href="#r-digest">lenscheck digest</a>
+  <a href="#r-crossrepo">lenscheck crossrepo</a>
+  <a href="#r-map">lenscheck map</a>
+  <a href="#r-provenance">lenscheck provenance</a>
+  <a href="#r-init">lenscheck init</a>
   <a href="#r-action">GitHub Action</a>
   <h4>Contract</h4>
   <a href="#contract">Overview</a>
@@ -175,6 +179,35 @@
     <tr><td><code>--repos FILE</code></td><td>Optional file of <code>owner/repo</code> lines → adds an adoption line.</td></tr>
     <tr><td><code>--slack URL</code></td><td>Slack incoming-webhook to post the digest to.</td></tr>
   </table>
+
+  <h4 class="cmd" id="r-crossrepo">lenscheck crossrepo</h4>
+  <p>Shared database tables across two or more repos: who writes, who reads, down to <code>route → handler → file:line</code>, including background jobs. Grouped worst-first: 🔴 multi-writer, 🟡 producer → consumer, read-only. Also lists cross-repo API calls. <span class="pill">new in 3.0</span></p>
+  <pre><code>lenscheck crossrepo ./orders ./billing --html crossrepo.html</code></pre>
+  <table>
+    <tr><td><code>repos</code></td><td>Two or more repos as <code>PATH</code> or <code>PATH@BRANCH</code> (a branch is analyzed in a throwaway worktree).</td></tr>
+    <tr><td><code>--html FILE</code> / <code>--out FILE</code></td><td>Self-contained HTML report / JSON.</td></tr>
+    <tr><td><code>--writes-only</code></td><td>Keep only write coupling (multi-writer + producer/consumer).</td></tr>
+    <tr><td><code>--schema FILE</code></td><td>DB unique keys (from <code>schema_dump</code>) → a column-level "coordinate on unique key" rule.</td></tr>
+    <tr><td><code>--changed PATH</code> / <code>--since REF</code></td><td>Blast-radius mode: only the shared tables and API links this repo's changes touch.</td></tr>
+    <tr><td><code>--no-cache</code></td><td>Re-extract every repo (default caches per repo by git HEAD).</td></tr>
+  </table>
+
+  <h4 class="cmd" id="r-map">lenscheck map</h4>
+  <p>Every endpoint in a repo, grouped by app, worst-first.</p>
+  <pre><code>lenscheck map . --risky --html map.html</code></pre>
+  <table>
+    <tr><td><code>--risky</code></td><td>Only 🔴/🟠 endpoints (the security view).</td></tr>
+    <tr><td><code>--app APP</code></td><td>One app only.</td></tr>
+    <tr><td><code>--json</code> / <code>--html</code></td><td>Write JSON / a self-contained HTML map.</td></tr>
+  </table>
+
+  <h4 class="cmd" id="r-provenance">lenscheck provenance</h4>
+  <p>Table → endpoint code map plus candidate data-consistency rules, as JSON. Facts only (table, endpoint and FK names, no source), so it is safe to share.</p>
+  <pre><code>lenscheck provenance . --out facts.json</code></pre>
+
+  <h4 class="cmd" id="r-init">lenscheck init</h4>
+  <p>Writes <code>.github/workflows/lenscheck.yml</code> in advisory mode (comments, never blocks). <code>--gate</code> blocks merges on a confirmed-rule violation; <code>--force</code> overwrites.</p>
+  <pre><code>lenscheck init</code></pre>
 
   <h3 id="r-action">GitHub Action</h3>
   <p>The zero-setup path. Add it to a <code>pull_request</code> workflow.</p>

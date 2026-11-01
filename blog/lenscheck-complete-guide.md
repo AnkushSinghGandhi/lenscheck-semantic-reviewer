@@ -437,6 +437,39 @@ fake `0`. Run it on a schedule (a weekly cron in a central repo) and it becomes 
 answer to "is Lenscheck worth keeping on?" — because the labels feed it, keep `label: true` and
 `issues: write` on your review workflow.
 
+### `lenscheck crossrepo` — shared tables across services (new in 3.0)
+
+```bash
+lenscheck crossrepo ./orders ./billing --html crossrepo.html     # 2+ repos, PATH or PATH@BRANCH
+lenscheck crossrepo ./orders ./billing --writes-only --schema schema.json
+lenscheck crossrepo ./orders ./billing --changed ./orders --since main   # only what this change touches
+```
+
+Give it two or more repos that share a database. For every shared table it lists who **writes** and who
+**reads**, down to `route → handler → file:line`, across views **and background jobs** (Celery tasks,
+management commands, signal receivers), grouped worst-first:
+
+- 🔴 **multi-writer**: 2+ services write it → they must agree on schema and write logic
+- 🟡 **producer → consumer**: one writes, the others read → the writer owns the shape
+- **read-only**: a shared lookup, usually safe
+
+It also lists **cross-repo API calls** (service A calls a route service B serves). `--schema` adds a
+column-level rule ("coordinate on unique key (order_id, user_id)"). Results are cached per repo by git
+HEAD. Also in the UI: `lenscheck serve` → **Cross-repo** tab. Details: [CROSSREPO.md](../CROSSREPO.md).
+
+### `lenscheck map` — every endpoint, worst-first
+
+```bash
+lenscheck map .                      # whole repo, grouped by app
+lenscheck map . --risky --html map.html
+```
+
+### `lenscheck provenance` — table → endpoint map as JSON
+
+```bash
+lenscheck provenance . --out facts.json   # facts only (table/endpoint names, no source) — safe to share
+```
+
 ---
 
 ## 7. Every feature explained
