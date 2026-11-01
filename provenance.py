@@ -135,9 +135,9 @@ def build(repo, with_calls=False):
         for it in (e.e3_db_tables.items or []):
             model, kind = _item_model_kind(it)
             if model == "<instance>":
-                if not kind.startswith("write"):
-                    continue                 # an unresolved READ is low-signal noise — drop it
-                model = "<unresolved>"       # but SURFACE an unresolved WRITE: a dropped writer can hide a multi-writer
+                # SURFACE what we couldn't name, reads too: a dropped writer can hide a multi-writer, and a
+                # dropped reader hides a consumer — this bucket is the measurable recall work-list
+                model = "<unresolved>"
             tbl = table_of(model)
             rec = tables.setdefault(tbl, {"models": set(), "written_by": [], "read_by": [],
                                           "pii_off_platform": set(), "pii_to_client": set()})

@@ -870,6 +870,7 @@ def build_review(changes, findings, meta, changed=None):
         return {"sev": c["sev"], "kind": c["kind"], "route": c["route"], "why": c["why"],
                 "detail": c.get("detail", ""), "auth": auth_str(ep), "flow": flow(ep),
                 "blast": c.get("blast", 0), "ops": ops_of(ep),
+                "entry": c.get("entry", "http"), "triggered_by": c.get("triggered_by", []),
                 "investigate": investigate, "unknowns": unknowns(ep), "graph": graph}
     return {"title": meta["title"], "base": meta["base"], "head": meta["head"],
             "shortstat": meta["shortstat"], "summary": meta.get("summary", ""),
@@ -1187,11 +1188,19 @@ def run_review(repo, base=None, head=None, merge=None, pr=None, commit=None, inv
                 auto_target=auto)
 
 
+def inline_glossary(html):
+    """Swap the page's `<script src="glossary.js">` for the file itself, so an exported .html opened from
+    file:// (no server) keeps its hover explanations."""
+    src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web", "glossary.js")
+    js = open(src, encoding="utf-8").read().replace("</script", "<\\/script")
+    return html.replace('<script src="glossary.js"></script>', "<script>" + js + "</script>", 1)
+
+
 def write_html(review, path):
     tpl = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web", "viewer.template.html")
     html = open(tpl, encoding="utf-8").read().replace(
         "__REVIEW_DATA__", json.dumps(review, ensure_ascii=False))
-    open(path, "w", encoding="utf-8").write(html)
+    open(path, "w", encoding="utf-8").write(inline_glossary(html))
 
 
 def main():

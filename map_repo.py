@@ -12,12 +12,13 @@ import ast
 import json
 import os
 import sys
+import tempfile
 
 import invariants as inv_mod
 from extractor.analyzer import analyze_repo
 from diff_pr import (endpoint_risk, auth_str, items, ops_of, is_open, unknowns, build_graph,
-                     task_enqueues, CRIT, HIGH, MED, LOW)
-from gitutil import ensure_local
+                     task_enqueues, inline_glossary, CRIT, HIGH, MED, LOW)
+from gitutil import ensure_local, export
 
 SEV_ORDER = {CRIT: 0, HIGH: 1, MED: 2, LOW: 3}
 
@@ -132,9 +133,16 @@ def seed_corpus(eps):
     return inv_mod.corpus(cands)
 
 
-def build_map(repo, risky=False, app=None):
-    """Analyze the whole repo → apps, each with its endpoints ranked worst-first + a risk rollup."""
+def build_map(repo, risky=False, app=None, ref=None):
+    """Analyze the whole repo → apps, each with its endpoints ranked worst-first + a risk rollup.
+    `ref` (a branch / sha) maps a read-only `git archive` snapshot — the working tree is untouched."""
     local = ensure_local(repo)
+    if ref:
+        with tempfile.TemporaryDirectory(prefix="lc_map_") as snap:
+            export(local, ref, snap)
+            out = build_map(snap, risky=risky, app=app)
+        out.update(repo=repo, ref=ref)
+        return out
     apps_index = resolve_apps(local)
     eps = analyze_repo(local)
     enqueues = task_enqueues(eps)       # the blast radius doesn't stop at the async boundary
@@ -193,7 +201,7 @@ def write_html(m, path):
     inject = "<script>window.__MAP_EMBEDDED__=" + json.dumps(m, ensure_ascii=False) + ";</script>\n"
     html = tpl.replace("<script>", inject + "<script>", 1)   # runs before the page's own script
     with open(path, "w", encoding="utf-8") as f:
-        f.write(html)
+        f.write(inline_glossary(html))
 
 
 def main():

@@ -125,6 +125,7 @@ class RepoIndex:
         self.model_managers: dict[str, str] = {}   # Model -> its custom Manager class (from `objects = X()`)
         self.module_imports: dict[str, dict] = {}  # file -> {alias: stem} for relative module imports
         self.signal_connects: list = []            # (handler, signal, sender) from `post_save.connect(h, sender=M)`
+        self.instance_consts: dict[str, list] = {}  # NAME -> [(Call, file)] for a module-level `NAME = Cls(...)`
         self._build()
 
     def _iter_py(self):
@@ -161,6 +162,10 @@ class RepoIndex:
                     pamb.add(name)
                 pseen[name] = lst
             self._index_defs(tree, path)
+            for n in tree.body:                        # config singletons: `SPEC_X = QueueSpec(model=M, …)`
+                if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name) \
+                        and _ctor_name(n.value):
+                    self.instance_consts.setdefault(n.targets[0].id, []).append((n.value, path))
             # collect relative module imports: `from . import rows` / `from .rows import fn`
             # so `rows.fn()` typed calls can be resolved as module-level functions in rows.py
             file_dir = os.path.dirname(path)
@@ -173,8 +178,16 @@ class RepoIndex:
                 if sig:
                     self.signal_connects.append(sig)
                     continue
-                if not isinstance(node, ast.ImportFrom) or not node.level:
-                    continue   # only relative imports (level > 0 means ".")
+                if not isinstance(node, ast.ImportFrom):
+                    continue
+                if not node.level:
+                    # `from pkg.sub import mod` — a repo module imported absolutely; `mod.fn()` follows like a
+                    # relative one. shortcut: resolved against the repo root only (not a src/ layout or sys.path)
+                    for alias in node.names:
+                        f = os.path.join(self.root, *(node.module or "").split("."), alias.name + ".py")
+                        if node.module and os.path.isfile(f):
+                            mod_imports[alias.asname or alias.name] = f
+                    continue
                 if node.module is None:
                     # `from . import rows, tiles` — each alias IS the module stem
                     for alias in node.names:
@@ -261,6 +274,16 @@ class RepoIndex:
         """Return {alias: module_file} for relative module imports in `path` (e.g. `from . import rows`).
         Used to resolve `module.fn()` typed calls where the callee is a sibling module, not a class."""
         return self.module_imports.get(path, {})
+
+    def instance_const(self, name: str, near: str = ""):
+        """(Cls, {field: model}) of a module-level `NAME = Cls(...)` config object, else None."""
+        call, _ = _pick(self.instance_consts.get(name), near)
+        if call is None:
+            return None
+        memo = self.__dict__.setdefault("_instance_const_memo", {})
+        if id(call) not in memo:
+            memo[id(call)] = _ctor_binding(self, call)
+        return memo[id(call)]
 
 
 def _pick(candidates, near: str):
@@ -477,6 +500,9 @@ class FactCollector(ast.NodeVisitor):
         self.manager_fallback = []  # (Model, method, file, line) — a read added only if the Manager is unresolved
         self.call_arg_models = {}  # call-key -> [model|None per positional arg]; binds a helper's param
                                    # to the model actually passed (`fetch_all(Product)` → param=Product)
+        self.call_arg_insts = {}   # call-key -> [[binding|None per positional arg], …] — one list per distinct
+                                   # call site, so `deliver(SPEC_A, …)` + `deliver(SPEC_B, …)` follow both
+        self.inst_fields = {}      # var key ("spec", "self.spec") -> (Cls, {field: model}) — a config object
         self.var_types = {}    # local var name -> Model (so `order.save()` → Order:write)
         self.instance_types = {}  # local var name -> repo class it holds (`h = mod.Helper(req)` → Helper),
                                   # so a later `h.method()` follows into Helper.method (the write hides there)
@@ -511,10 +537,12 @@ class FactCollector(ast.NodeVisitor):
                 and f.value.id == "self" and f.attr in (ORM_WRITE | ORM_READ):
             self.db.append((self.manager_model, "write" if f.attr in ORM_WRITE else "read", fl, ln))
         # ORM:  <Model>.objects.<method>(...)  and chained querysets
-        model, method = _orm_model_method(f)
+        model, method = _orm_model_method(f, dotted=True)
         if model and method:
             if model in ("self", "cls"):                 # `self.objects.x()` in a model method →
                 model = self.self_type or "<instance>"   # the enclosing class, not a table named "self"
+            elif "." in model:                           # `self.model.objects` / `spec.model.objects` /
+                model = self._attr_model(model) or "<instance>"   # `models.Job.objects` (see _attr_model)
             elif model[:1].islower():
                 # a lowercase receiver before `.objects` is a *variable* (a param, a local, a runtime
                 # `apps.get_model(...)` result), never a model class — Django/SQLAlchemy models are
@@ -655,27 +683,28 @@ class FactCollector(ast.NodeVisitor):
         # follow targets
         if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id in ("self", "cls"):
             self.self_calls.append(f.attr)   # a classmethod reaches siblings via `cls.x()`, same as `self.x()`
+            self._note_args(f"self.{f.attr}", node)
         elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) \
                 and f.value.id[:1].isupper() and f.attr not in {"objects", "as_view"}:
             # Class.classmethod(...)  e.g. OrderedItems.insert_ordered_item(...) / OrderService.create(...).
             # ORM-verb names (create/update/…) are NOT excluded: a service/repo method is often named
             # exactly `create`/`save`, and an unresolved callee simply doesn't follow (see _walk_follow).
             self.typed_calls.append((f.value.id, f.attr))
-            self.call_arg_models[f"{f.value.id}.{f.attr}"] = self._arg_models(node)
+            self._note_args(f"{f.value.id}.{f.attr}", node)
         elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) \
                 and f.value.id[:1].islower() and f.value.id not in {"self", "cls"}:
             # module.fn(...) / instance.method(...) — e.g. rows.list_entities(...) or uc.create(...).
             # Same: don't exclude ORM verbs; resolution (mod_imports / instance_types) gates the follow.
             self.typed_calls.append((f.value.id, f.attr))
-            self.call_arg_models[f"{f.value.id}.{f.attr}"] = self._arg_models(node)
+            self._note_args(f"{f.value.id}.{f.attr}", node)
         elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Call) \
                 and isinstance(f.value.func, ast.Name) and f.value.func.id[:1].isupper():
             # Service().method(...)  e.g. ProductService().get_product_details(...)
             self.typed_calls.append((f.value.func.id, f.attr))
-            self.call_arg_models[f"{f.value.func.id}.{f.attr}"] = self._arg_models(node)
+            self._note_args(f"{f.value.func.id}.{f.attr}", node)
         elif isinstance(f, ast.Name):
             self.func_calls.append(f.id)
-            self.call_arg_models[f.id] = self._arg_models(node)
+            self._note_args(f.id, node)
         # taint sink: a tainted (sensitive) value passed into an egress call → a traced leak
         sink = _sink_label(f)
         if sink:
@@ -707,6 +736,13 @@ class FactCollector(ast.NodeVisitor):
                 callee.attr if isinstance(callee, ast.Attribute) else None)
             if cls and cls[:1].isupper():
                 self.instance_types[node.targets[0].id] = cls
+        # `spec = self.spec` / `spec = SPEC_X` / `svc = Service(Job)` → the config object, and the models it
+        # carries, ride along so `spec.jobs()` follows into its class with `self.model` bound
+        if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            b = self._binding_of(node.value)
+            if b:
+                self.inst_fields[node.targets[0].id] = b
+                self.instance_types[node.targets[0].id] = b[0]
         for tgt in node.targets:
             if isinstance(tgt, ast.Name):
                 self.assigned_names.add(tgt.id)                        # a locally-bound name (see __init__)
@@ -830,11 +866,49 @@ class FactCollector(ast.NodeVisitor):
         for a in node.args:
             if isinstance(a, ast.Name) and a.id in self.known_models:
                 out.append(a.id)                       # a model class passed by name
-            elif isinstance(a, ast.Name) and self.var_types.get(a.id):
-                out.append(self.var_types[a.id])       # a local already known to hold a model
+            elif self.var_types.get(_receiver_key(a) or ""):
+                out.append(self.var_types[_receiver_key(a)])   # a local / `self.model` known to hold a model
             else:
                 out.append(None)
         return out
+
+    def _note_args(self, key, node):
+        """Record what a call passes: models (`fetch_all(Product)`) and config objects (`deliver(spec)`)."""
+        self.call_arg_models[key] = self._arg_models(node)
+        insts = [self._binding_of(a) if isinstance(a, (ast.Name, ast.Attribute)) else None for a in node.args]
+        if any(insts) and insts not in self.call_arg_insts.setdefault(key, []):
+            self.call_arg_insts[key].append(insts)
+
+    def _binding_of(self, expr):
+        """The config object an expression holds: a bound var (`spec`, `self.spec`), a module const
+        (`SPEC_X`), or a repo-class ctor with model args (`Service(Job)`) — else None."""
+        key = _receiver_key(expr)
+        if key in self.inst_fields:
+            return self.inst_fields[key]
+        if self.index is None:
+            return None
+        near = os.path.join(self.index.root, self.file)
+        if isinstance(expr, ast.Name) and expr.id[:1].isupper() and expr.id not in self.known_models:
+            return self.index.instance_const(expr.id, near=near)
+        if isinstance(expr, ast.Attribute) and isinstance(expr.value, ast.Name) \
+                and expr.value.id not in ("self", "cls") and expr.attr[:1].isupper():
+            return self.index.instance_const(expr.attr, near=near)     # `push_queue.SPEC_FRESH`
+        if isinstance(expr, ast.Call):
+            b = _ctor_binding(self.index, expr, lambda e: self.var_types.get(_receiver_key(e) or ""))
+            return b if b and b[1] else None      # a plain `Helper(req)` is already in instance_types
+        return None
+
+    def _attr_model(self, key):
+        """Model behind a dotted `.objects` receiver: a bound attribute (`self.model`, `spec.model`), or a
+        module-qualified class (`models.Job`, `serializers.MarketingCampaign`) — else None."""
+        if key in self.var_types:
+            return self.var_types[key]
+        base, _, attr = key.rpartition(".")
+        if base in self.inst_fields:
+            return self.inst_fields[base][1].get(attr)
+        if base not in ("self", "cls") and attr in self.known_models:
+            return attr
+        return None
 
     def _value_model(self, expr):
         """Model an assigned / iterated / saved expression evaluates to: `_expr_model`, else return-type
@@ -896,8 +970,9 @@ class FactCollector(ast.NodeVisitor):
         return None
 
 
-def _orm_model_method(f):
-    """Match Model.objects.method — return (Model, method)."""
+def _orm_model_method(f, dotted=False):
+    """Match Model.objects.method — return (Model, method). `dotted=True` also matches an attribute
+    receiver and returns it dotted (`self.model.objects.x` → "self.model") for the caller to resolve."""
     # f is Attribute like  <...>.method ; walk down looking for `.objects`
     if not isinstance(f, ast.Attribute):
         return None, None
@@ -908,6 +983,9 @@ def _orm_model_method(f):
     # cur should be Attribute `<Model>.objects` or Name via manager
     if isinstance(cur, ast.Attribute) and cur.attr == "objects" and isinstance(cur.value, ast.Name):
         return cur.value.id, method
+    if dotted and isinstance(cur, ast.Attribute) and cur.attr == "objects" \
+            and isinstance(cur.value, ast.Attribute) and _root_name(cur.value) is not None:
+        return _dotted(cur.value), method          # a pure name chain only (not `x().model.objects`)
     return None, None
 
 
@@ -987,6 +1065,101 @@ def _find_method(index, cls_name, meth, _stack=()):
             if hit[0] is not None:
                 return hit
     return None, None
+
+
+# ---- injected models ------------------------------------------------------------------
+# A model can reach `.objects` through an attribute instead of its name: a class attribute (`class
+# JobList(View): model = Job` → `self.model.objects`), or a config object built with it (`SPEC = QueueSpec(
+# model=M)`, `svc = Service(Article)` whose `__init__` stores `self.Article = article_model`). A binding is
+# `"self.model" → "Job"` or `"self.spec" → ("QueueSpec", {"model": "M"})`, made ONLY on a static chain to a
+# repo model — anything else stays an honest `<instance>` (a wrong table is worse than a miss).
+
+def _name_of(expr):
+    """`X` / `mod.X` → "X", else None."""
+    if isinstance(expr, ast.Name):
+        return expr.id
+    return expr.attr if isinstance(expr, ast.Attribute) else None
+
+
+def _ctor_binding(index, call, arg_model=None):
+    """`Cls(...)` on a repo class → (Cls, {field: model}) for the args that are repo models: by kwarg name
+    when the class has no `__init__` (a dataclass), else through `__init__`'s `self.<field> = <param>`.
+    `arg_model(expr)` resolves a caller-local variable to a model. None when Cls isn't a repo class."""
+    cls = _ctor_name(call)
+    if not cls or index.find_class(cls)[0] is None:
+        return None
+
+    def model_of(e):
+        n = _name_of(e)
+        if n and _is_model(index, n):
+            return n
+        return arg_model(e) if arg_model else None
+    init, _ = _find_method(index, cls, "__init__")
+    fields = {}
+    if init is None:
+        # shortcut: positional args to a dataclass need its field order — only kwargs bind
+        for kw in call.keywords:
+            m = model_of(kw.value) if kw.arg else None
+            if m:
+                fields[kw.arg] = m
+    else:
+        params = [a.arg for a in init.args.posonlyargs + init.args.args][1:]
+        bound = {p: model_of(a) for p, a in zip(params, call.args)}
+        bound.update({kw.arg: model_of(kw.value) for kw in call.keywords if kw.arg})
+        for st in ast.walk(init):
+            if isinstance(st, ast.Assign) and len(st.targets) == 1 and isinstance(st.targets[0], ast.Attribute) \
+                    and isinstance(st.targets[0].value, ast.Name) and st.targets[0].value.id == "self":
+                v = st.value
+                m = bound.get(v.id) if isinstance(v, ast.Name) and v.id in bound else model_of(v)
+                if m:
+                    fields[st.targets[0].attr] = m
+    return cls, fields
+
+
+def _class_bindings(index, cls, cfile, _stack=()):
+    """`self.<attr>` / `cls.<attr>` bindings a class body declares, its repo bases' first (nearest wins):
+    `model = Job`, `spec = SPEC_X` (a config const), `spec = Cfg(model=M)`."""
+    memo = index.__dict__.setdefault("_class_bindings_memo", {})
+    if not _stack and id(cls) in memo:
+        return memo[id(cls)]
+    out = {}
+    if cls.name in _stack:
+        return out
+    for b in cls.bases:
+        bn = _name_of(b)
+        bcls, bfile = index.find_class(bn, near=cfile) if bn else (None, None)
+        if bcls is not None and bcls is not cls:
+            out.update(_class_bindings(index, bcls, bfile, _stack + (cls.name,)))
+    for st in cls.body:
+        if isinstance(st, ast.Assign) and len(st.targets) == 1:
+            tgt, v = st.targets[0], st.value
+        elif isinstance(st, ast.AnnAssign) and st.value is not None:
+            tgt, v = st.target, st.value
+        else:
+            continue
+        if not isinstance(tgt, ast.Name):
+            continue
+        n = _name_of(v)
+        if n and _is_model(index, n):
+            b = n
+        elif n:
+            b = index.instance_const(n, near=cfile)
+        else:
+            b = _ctor_binding(index, v) if isinstance(v, ast.Call) else None
+        if b:
+            out[f"self.{tgt.id}"] = out[f"cls.{tgt.id}"] = b
+    if not _stack:
+        memo[id(cls)] = out
+    return out
+
+
+def _bind_sig(bindings):
+    """Stable text form of a binding set — part of a follow key, so one helper reached with two
+    different config objects is analyzed for each."""
+    if not bindings:
+        return ""
+    return "|" + repr(sorted((k, v if isinstance(v, str) else (v[0], sorted(v[1].items())))
+                             for k, v in bindings.items()))
 
 
 def _own_returns(fn):
@@ -1476,11 +1649,12 @@ def analyze_handler(name: str, index: RepoIndex) -> Endpoint:
     same_module_classmethods = {m.name: m for m in (cls.body if cls else []) if isinstance(m, ast.FunctionDef)}
     build_edges(ep, methods, index, owner_file,
                 self_type=(name if cls is not None else None),
-                class_methods=same_module_classmethods)
+                class_methods=same_module_classmethods,
+                bindings=_class_bindings(index, cls, cfile) if cls is not None else None)
     return ep
 
 
-def build_edges(ep, method_nodes, index, owner_file, self_type=None, class_methods=None):
+def build_edges(ep, method_nodes, index, owner_file, self_type=None, class_methods=None, bindings=None):
     """Fill an Endpoint's behaviour edges (E3–E7 + resolved tables) by walking the handler's
     function bodies, following 1–2 levels into helpers. Framework-agnostic — Django resolves a
     class/func handler upstream and passes its methods here; Flask/FastAPI pass the single
@@ -1491,7 +1665,7 @@ def build_edges(ep, method_nodes, index, owner_file, self_type=None, class_metho
     stop = {"reason": "dried_out", "depth": 0, "first_fact": None}   # adaptive-follow outcome
     for m in method_nodes:
         _walk_follow(m, agg, index, owner_file, class_methods or {}, followed, depth=0,
-                     self_type=self_type, seen=seen, dry_streak=0, stop=stop)
+                     self_type=self_type, seen=seen, dry_streak=0, stop=stop, bindings=bindings)
     ep.follow_depth = stop["depth"]                 # deepest fact-bearing hop reached (observability)
     ep.follow_stop = stop["reason"]                 # 'dried_out' complete, else possibly-incomplete
     ep.e3_db_tables = _score_db(agg)
@@ -1560,8 +1734,18 @@ def _seed_from_args(callee, arg_models):
             for i in range(min(len(params), len(arg_models))) if arg_models[i]}
 
 
+def _arg_bindings(fn, sets):
+    """{param: config object} per distinct call site that passes one; `[{}]` when none does."""
+    out = []
+    for s in sets or []:
+        b = _seed_from_args(fn, s)
+        if b not in out:
+            out.append(b)
+    return out or [{}]
+
+
 def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self_type=None,
-                 seen=None, dry_streak=0, stop=None, seed_types=None, manager_model=None):
+                 seen=None, dry_streak=0, stop=None, seed_types=None, manager_model=None, bindings=None):
     """Collect facts in `fn`; recurse into the functions it calls with an ADAPTIVE, findings-driven
     depth (see the constants above). A branch keeps descending while it reveals NEW facts and brakes
     once it dries out — so deep service/repository stacks get chased and thin handlers stop early,
@@ -1585,6 +1769,13 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
                           known_models=set(index.classes), manager_model=manager_model, index=index)
     if seed_types:
         local.var_types.update(seed_types)     # bind params to the models passed at the call site
+    for k, b in (bindings or {}).items():      # injected models: class attrs / a config object's fields
+        if isinstance(b, str):
+            local.var_types[k] = b
+        else:
+            local.inst_fields[k] = b
+            if "." not in k:
+                local.instance_types[k] = b[0]
     local.visit(fn)
     # A custom-manager call (`Order.objects.import_batch()`) records NO fact at the call site — the
     # Manager is followed below and its body supplies the real reads/writes. If the Manager can't be
@@ -1651,31 +1842,44 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
     # NOTE: all three follow loops iterate `sorted(set(...))`, not a bare `set(...)`: under the
     # shared FOLLOW_BUDGET cap, which calls get followed first decides the result, and a set's
     # iteration order depends on PYTHONHASHSEED — sorting makes the extraction deterministic.
+    # A follow key carries the binding set (`_bind_sig`), so a helper reached with two different config
+    # objects is analyzed once per object; with no bindings the key is exactly what it always was.
+    self_b = {k: v for k, v in (bindings or {}).items() if k.startswith(("self.", "cls."))}
     for mname in sorted(set(local.self_calls)):
-        key = f"self:{owner_rel}:{mname}"
-        if mname in classmethods and key not in followed:
+        meth = classmethods.get(mname)
+        if meth is None:
+            continue
+        for arg_b in _arg_bindings(meth, local.call_arg_insts.get(f"self.{mname}")):
+            sub = {**self_b, **arg_b}                # same instance → its bindings carry to siblings
+            key = f"self:{owner_rel}:{mname}" + _bind_sig(sub)
+            if key in followed:
+                continue
             if _capped():
                 return
             followed.add(key)
-            _walk_follow(classmethods[mname], agg, index, owner_file, classmethods, followed,
+            _walk_follow(meth, agg, index, getattr(meth, "lc_file", owner_file), classmethods, followed,
                          child_depth, self_type=self_type,
-                         seen=child_seen, dry_streak=child_streak, stop=stop)
+                         seen=child_seen, dry_streak=child_streak, stop=stop,
+                         seed_types=_seed_from_args(meth, local.call_arg_models.get(f"self.{mname}")),
+                         bindings=sub)
 
     # module-level func(...) defined in the repo (no `self`). Names bound locally — nested
     # closures, params — are excluded: a call to a local `resolve()` must not bind to a same-named
     # module function in another app.
     for fname in sorted(set(local.func_calls) - local.local_names):
-        key = f"func:{fname}"
-        if key in followed:
-            continue
         node, ffile = index.find_func(fname, near=owner_file, toplevel_only=True)
-        if node is not None:
+        if node is None:
+            continue
+        for arg_b in _arg_bindings(node, local.call_arg_insts.get(fname)):
+            key = f"func:{fname}" + _bind_sig(arg_b)
+            if key in followed:
+                continue
             if _capped():
                 return
             followed.add(key)
             _walk_follow(node, agg, index, ffile, {}, followed, child_depth,
                          seen=child_seen, dry_streak=child_streak, stop=stop,
-                         seed_types=_seed_from_args(node, local.call_arg_models.get(fname)))
+                         seed_types=_seed_from_args(node, local.call_arg_models.get(fname)), bindings=arg_b)
 
     # Model.classmethod(...) / Service().method(...) — recurse with THAT class's methods,
     # so a `self.x()` inside the service resolves correctly at the next level down.
@@ -1687,31 +1891,44 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
         # `profile_helper = cus_api_helper.UpdateProfileFlow(req)` → follow UpdateProfileFlow.validate.
         target_cls = local.instance_types.get(cname, cname)
         key = f"{target_cls}.{mname}"
-        if key in followed:
-            continue
         cls, cfile = index.find_class(target_cls, near=owner_file)
         if cls is not None:
             method = next((m for m in cls.body if isinstance(m, ast.FunctionDef) and m.name == mname), None)
             if method is None:
                 continue
-            if _capped():
-                return
-            followed.add(key)
+            # the receiver's bindings: its class attrs, under the fields of the config object it holds
+            inst = local.inst_fields.get(cname)
+            recv_b = {**_class_bindings(index, cls, cfile),
+                      **({f"self.{k}": v for k, v in inst[1].items()} if inst else {})}
             cls_methods = {m.name: m for m in cls.body if isinstance(m, ast.FunctionDef)}
-            _walk_follow(method, agg, index, cfile, cls_methods, followed, child_depth, self_type=target_cls,
-                         seen=child_seen, dry_streak=child_streak, stop=stop,
-                         seed_types=_seed_from_args(method, local.call_arg_models.get(f"{cname}.{mname}")))
-        elif cname in mod_imports:
-            # `cname` is a sibling module (`from . import cname`); treat as a bare module-level call
-            mod_file = mod_imports[cname]
-            node, ffile = index.find_func(mname, near=mod_file, toplevel_only=True)
-            if node is not None:
+            for arg_b in _arg_bindings(method, local.call_arg_insts.get(f"{cname}.{mname}")):
+                sub = {**recv_b, **arg_b}
+                bkey = key + _bind_sig(sub)
+                if bkey in followed:
+                    continue
                 if _capped():
                     return
-                followed.add(key)
+                followed.add(bkey)
+                _walk_follow(method, agg, index, cfile, cls_methods, followed, child_depth, self_type=target_cls,
+                             seen=child_seen, dry_streak=child_streak, stop=stop,
+                             seed_types=_seed_from_args(method, local.call_arg_models.get(f"{cname}.{mname}")),
+                             bindings=sub)
+        elif cname in mod_imports:
+            # `cname` is a repo module (`from . import cname` / `from pkg import cname`); a module-level call
+            mod_file = mod_imports[cname]
+            node, ffile = index.find_func(mname, near=mod_file, toplevel_only=True)
+            if node is None:
+                continue
+            for arg_b in _arg_bindings(node, local.call_arg_insts.get(key)):
+                bkey = key + _bind_sig(arg_b)
+                if bkey in followed:
+                    continue
+                if _capped():
+                    return
+                followed.add(bkey)
                 _walk_follow(node, agg, index, ffile, {}, followed, child_depth,
                              seen=child_seen, dry_streak=child_streak, stop=stop,
-                             seed_types=_seed_from_args(node, local.call_arg_models.get(key)))
+                             seed_types=_seed_from_args(node, local.call_arg_models.get(key)), bindings=arg_b)
 
     # Model.objects.<custom>() — a custom Manager method. Resolve the model's Manager class and follow
     # its body with `manager_model` set to the managed Model, so `self.create()` inside surfaces as a
@@ -1901,13 +2118,35 @@ def _receiver_trigger(node):
     return "signal"
 
 
-def _job_ep(index, kind, route, name, method_nodes, path, trigger, self_type=None, class_methods=None):
+def _job_ep(index, kind, route, name, method_nodes, path, trigger, self_type=None, class_methods=None,
+            line=None, owner_file=None, via="", bindings=None):
+    """`path`/`line` is where the entrypoint is declared; `owner_file` is where its code lives, when
+    that differs (a command whose handle() is inherited from a base in another module)."""
     ep = Endpoint(route=route, handler=name, kind=kind)
-    ep.file, ep.line, ep.methods = _rel(index, path), method_nodes[0].lineno, [trigger]
-    ep.e1_route_handler = Edge(VERIFIED, [f"{name} @ {ep.file}:{ep.line}"])
+    ep.file, ep.line, ep.methods = _rel(index, path), line or method_nodes[0].lineno, [trigger]
+    ep.e1_route_handler = Edge(VERIFIED, [f"{name} @ {ep.file}:{ep.line}"] + ([via] if via else []))
     ep.e2_auth = Edge(NA, note=f"not reachable over HTTP — runs as a {kind}")
-    build_edges(ep, method_nodes, index, path, self_type=self_type, class_methods=class_methods or {})
+    build_edges(ep, method_nodes, index, owner_file or path, self_type=self_type,
+                class_methods=class_methods or {}, bindings=bindings)
     return ep
+
+
+def _inherited_methods(index, cls_name, _stack=()):
+    """{name: def} of repo class `cls_name` plus what it inherits from repo bases — nearest class wins.
+    Each def is tagged with its own module (`lc_file`), so a followed self.x() resolves and reports there."""
+    cls, cfile = index.find_class(cls_name)
+    if cls is None or cls_name in _stack:
+        return {}
+    out = {}
+    for b in reversed(cls.bases):
+        bn = b.id if isinstance(b, ast.Name) else getattr(b, "attr", "")
+        if bn:
+            out.update(_inherited_methods(index, bn, _stack + (cls_name,)))
+    for m in cls.body:
+        if isinstance(m, ast.FunctionDef):
+            m.lc_file = cfile
+            out[m.name] = m
+    return out
 
 
 def job_entrypoints(index):
@@ -1946,13 +2185,25 @@ def job_entrypoints(index):
                 continue
             if not any(_dotted(b).split(".")[-1].endswith("Command") for b in node.bases):
                 continue
-            handle = next((m for m in node.body if isinstance(m, ast.FunctionDef)
-                           and m.name in ("handle", "handle_noargs")), None)
+            methods = {m.name: m for m in node.body if isinstance(m, ast.FunctionDef)}
+            handle = methods.get("handle") or methods.get("handle_noargs")
+            kw = {}
+            if handle is None:              # a thin subclass whose handle() comes from a shared base command
+                for b in node.bases:
+                    bn = _dotted(b).split(".")[-1]
+                    handle, hfile = _find_method(index, bn, "handle")
+                    if handle is not None:
+                        for m in methods.values():
+                            m.lc_file = path
+                        methods = {**_inherited_methods(index, bn), **methods}   # subclass overrides win
+                        kw = dict(line=node.lineno, owner_file=hfile,
+                                  via=f"handle() inherited from {bn} @ {_rel(index, hfile)}:{handle.lineno}")
+                        break
             if handle is None:
                 continue
             cmd = os.path.splitext(os.path.basename(path))[0]      # Django: command name == file stem
             add("command", f"command:{cmd}", cname, [handle], path, "manage.py", self_type=cname,
-                class_methods={m.name: m for m in node.body if isinstance(m, ast.FunctionDef)})
+                class_methods=methods, bindings=_class_bindings(index, node, path), **kw)
     return out
 
 

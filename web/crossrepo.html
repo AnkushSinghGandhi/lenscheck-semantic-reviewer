@@ -1,150 +1,286 @@
 <!doctype html>
-<html><head><meta charset="utf-8"><title>Lenscheck — Cross-repo</title>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lenscheck — Cross-repo</title>
+<script>try{document.documentElement.setAttribute("data-theme",localStorage.getItem("lenscheck.theme")||"dark")}catch(e){}</script>
 <style>
-*{box-sizing:border-box}
-body{font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;margin:0;background:#fafafa;color:#1a1a1a}
-.wrap{max-width:1100px;margin:0 auto;padding:1.2rem 2rem 3rem}
-h1{font-size:1.3rem;margin:.2rem 0}.sub{color:#555;font-size:13px;margin:0 0 .8rem}
-a.back{font-size:13px;color:#2471a3;text-decoration:none}
-.setup{background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:1rem;margin:.6rem 0 1rem}
-.setup textarea{width:100%;font:12px ui-monospace,Menlo,monospace;padding:.6rem;border:1px solid #d1d5db;border-radius:6px}
-.setup .row{display:flex;gap:.8rem;align-items:center;margin-top:.5rem}
-.setup button{padding:.5rem 1.1rem;border:0;border-radius:6px;background:#2471a3;color:#fff;font-weight:600;cursor:pointer}
-#status{color:#777;font-size:12px}
-.legend{color:#666;font-size:12px;margin:.3rem 0 .9rem;line-height:1.7}.legend b{font-weight:600}
-.toolbar{position:sticky;top:0;background:rgba(250,250,250,.96);backdrop-filter:blur(4px);padding:.6rem 0;margin-bottom:1rem;border-bottom:1px solid #e5e7eb;z-index:5}
-.toolbar input[type=search]{width:100%;padding:.5rem .8rem;font-size:14px;border:1px solid #d1d5db;border-radius:8px;margin-bottom:.5rem}
-.chips{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
-.chip{display:inline-flex;align-items:center;gap:.35rem;padding:.2rem .6rem;border:1px solid #d1d5db;border-radius:999px;font-size:12px;cursor:pointer;user-select:none;background:#fff}
-.chip.mw{border-color:#f1b0b7}.chip.pc{border-color:#f0dca0}.chip input{margin:0}
-.btn{font-size:12px;color:#2471a3;cursor:pointer;background:none;border:none;padding:0 .3rem}
-#count{margin-left:auto;color:#777;font-size:12px}
-.card{background:#fff;border:1px solid #e5e7eb;border-left:4px solid #cbd5e1;border-radius:8px;margin-bottom:.45rem;overflow:hidden}
-.card[data-kind=multi_writer]{border-left-color:#c0392b}.card[data-kind=producer_consumer]{border-left-color:#d4a017}
-summary{cursor:pointer;padding:.55rem .9rem;font-size:13px;display:flex;align-items:center;gap:.5rem;list-style:none}
-summary::-webkit-details-marker{display:none}summary:hover{background:#f8fafc}summary code{font-weight:600}
-.meta{color:#999;font-weight:400;font-size:12px;margin-left:auto}
-.body{padding:.2rem .9rem 1rem;border-top:1px solid #f0f0f0}
-.repos{display:flex;gap:1rem;flex-wrap:wrap;margin-top:.5rem}
-.repo{flex:1;min-width:260px;border-left:3px solid #ddd;padding-left:.7rem}.repo.absent{opacity:.45}
-.rw{margin:.3rem 0}.w{color:#c0392b;font-weight:700;font-size:11px}.r{color:#2471a3;font-weight:700;font-size:11px}
-ul{margin:.2rem 0;padding-left:1rem}li{font-size:12px}code{font-family:ui-monospace,Menlo,monospace;font-size:12px}
-.h{color:#555}.loc{color:#999;font-size:11px}.none{color:#bbb}
-.badge{display:inline-block;padding:.1rem .5rem;border-radius:4px;font-size:11px;font-weight:600;background:#eef;color:#446}
-.badge.red{background:#fdecea;color:#c0392b}.badge.amber{background:#fef3cd;color:#8a6d0b}.more{color:#999;list-style:none}
-#empty{display:none;color:#999;padding:2rem;text-align:center}
-</style></head>
-<body><div class="wrap">
-<a class="back" href="app.html">← Review</a>
-<h1>Cross-repo provenance</h1>
-<p class="sub">Which DB tables are written/read by endpoints across more than one repo — endpoint-level, with cross-service multi-writer flagged.</p>
+:root{--bg:#0a0d13;--panel:#141922;--sidebar:#0d1119;--card:#11151d;--line:#232a36;
+  --fg:#e6edf3;--mut:#8b93a3;--faint:#5b6473;
+  --crit:#f85149;--high:#db8f2b;--med:#d0b429;--low:#3fb950;--link:#7aa2ff;--purple:#bc8cff;
+  --acc:#7c74f0;--acc2:#6d64f5;}
+[data-theme="light"]{--bg:#f5f6f9;--panel:#ffffff;--sidebar:#eef0f4;--card:#ffffff;--line:#e2e5ec;
+  --fg:#1b2130;--mut:#5b6572;--faint:#98a1ad;
+  --crit:#d1242f;--high:#b06a00;--med:#8a7200;--low:#1a7f37;--link:#2f5bd8;--purple:#7c3aed;
+  --acc:#6d64f5;--acc2:#5a50e8;}
+[data-theme="light"] .controls{background:#f5f6f9ee}
+[data-theme="light"] .app>summary:hover{background:rgba(0,0,0,.03)}
+[data-theme="light"] .tag.open,[data-theme="light"] .tag.write,[data-theme="light"] .tag.pii{color:#b42318;border-color:#f0c2be;background:rgba(209,36,47,.06)}
+[data-theme="light"] .why{color:#b42318}
+[data-theme="light"] .fact,[data-theme="light"] .snc{color:#374151}
+[data-theme="light"] svg .elabel{fill:#6b7280}
+*{box-sizing:border-box}html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif}
+a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline}
+code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
 
-<div class="setup">
-  <textarea id="repos" rows="4" placeholder="One repo per line, optional @branch:&#10;/path/to/cms&#10;/path/to/legacy@develop"></textarea>
-  <input id="schema" placeholder="optional: path to schema.json (DB unique keys → column-level coordinate rules)"
-         style="width:100%;font:12px ui-monospace,Menlo,monospace;padding:.5rem;border:1px solid #d1d5db;border-radius:6px;margin-top:.5rem">
-  <div class="row">
-    <label><input type="checkbox" id="wonly"> writes-only (drop read-only noise)</label>
-    <button id="run">Analyze</button>
+/* ---- top nav (matches the review UI) ---- */
+nav.top{display:flex;align-items:center;gap:14px;height:54px;padding:0 18px;
+  border-bottom:1px solid var(--line);background:var(--sidebar);position:sticky;top:0;z-index:10}
+nav.top .brand{display:flex;align-items:center;gap:9px;font-weight:800;letter-spacing:.3px}
+nav.top .brand .lens{font-size:17px}
+  nav.top .brand img.lensmark{height:26px;width:auto;display:block}
+nav.top .brand .g{background:linear-gradient(90deg,var(--acc),var(--purple),var(--link));
+  -webkit-background-clip:text;background-clip:text;color:transparent}
+nav.top small{color:var(--mut);font-weight:400;font-size:12.5px}
+nav.top .spacer{flex:1}
+nav.top .navbtn{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:8px;
+  border:1px solid var(--line);background:var(--panel);color:var(--fg);font-size:12.5px;font-weight:600;
+  cursor:pointer;transition:border-color .15s,transform .15s}
+nav.top .navbtn:hover{transform:translateY(-1px);border-color:var(--acc);text-decoration:none}
+nav.top .navbtn.on{border-color:var(--acc);color:#fff;background:rgba(124,116,240,.14)}
+nav.top .sep{width:1px;height:26px;background:var(--line)}
+nav.top .who{font-size:12px;color:var(--mut)}nav.top .who a{font-weight:600}
+nav.top .domain{display:inline-flex;align-items:center;gap:6px;font-family:ui-monospace,Menlo,monospace;
+  font-size:11.5px;color:var(--mut);padding:5px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
+nav.top .domain:hover{border-color:var(--acc);color:var(--fg);text-decoration:none}
+nav.top .domain b{color:var(--acc);font-weight:700}
+
+/* ---- controls bar ---- */
+.controls{position:sticky;top:54px;background:#0a0d13ee;backdrop-filter:blur(6px);
+  border-bottom:1px solid var(--line);padding:12px 20px;z-index:5}
+.crow{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+input,select,button{background:var(--panel);border:1px solid var(--line);color:var(--fg);border-radius:8px;
+  padding:8px 11px;font-size:13px;font-family:inherit}
+input.mono{font-family:ui-monospace,Menlo,monospace;font-size:12.5px}
+#repo{min-width:320px}#q{min-width:240px;flex:1;max-width:420px}
+button{cursor:pointer}button:hover{border-color:var(--acc)}
+button.primary{font-weight:700;color:#fff;background:linear-gradient(180deg,var(--acc),var(--acc2));border-color:transparent}
+button.primary:hover{filter:brightness(1.08)}
+.seed{margin-left:auto;font-size:12.5px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.chip{border:1px solid var(--line);border-radius:2em;padding:3px 11px;font-size:12.5px;cursor:pointer;color:var(--mut)}
+.chip:hover{border-color:var(--acc)}
+.chip.on{background:rgba(124,116,240,.16);color:#fff;border-color:var(--acc)}
+
+.wrap{max-width:1180px;margin:0 auto;padding:16px 20px 60px}
+textarea{width:100%;background:var(--panel);border:1px solid var(--line);color:var(--fg);border-radius:8px;
+  padding:9px 11px;font:12.5px ui-monospace,Menlo,monospace;resize:vertical}
+#schema{width:100%;margin-top:8px}
+.crow2{display:flex;align-items:center;gap:12px;margin-top:10px;flex-wrap:wrap}
+label.chk{display:inline-flex;gap:6px;align-items:center;color:var(--mut);font-size:12.5px;cursor:pointer}
+#status{color:var(--mut);font-size:12.5px}
+.legend{color:var(--mut);font-size:12.5px;margin:4px 0 12px;line-height:1.7}.legend b{color:var(--fg)}
+.toolbar{position:sticky;top:54px;background:var(--bg);padding:10px 0;margin-bottom:12px;
+  border-bottom:1px solid var(--line);z-index:4}
+#q{width:100%;max-width:none}
+.chip input{margin:0 5px 0 0;vertical-align:middle}
+.klbl{color:var(--faint);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;align-self:center;margin-right:2px}
+.chips select{font-size:12.5px;padding:3px 8px;border-radius:2em}
+#branches input{width:260px;font-size:12px;padding:2px 8px;margin-left:4px}
+.chip.mw{border-color:rgba(248,81,73,.45)}.chip.pc{border-color:rgba(219,143,43,.45)}
+.btn{font-size:12.5px;color:var(--link);background:none;border:none;padding:0 6px;cursor:pointer}
+#count{margin-left:auto;color:var(--mut);font-size:12.5px}
+.card{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--faint);border-radius:10px;
+  margin-bottom:8px;overflow:hidden}
+.card[data-kind=multi_writer]{border-left-color:var(--crit)}.card[data-kind=producer_consumer]{border-left-color:var(--high)}
+.card>summary{cursor:pointer;padding:10px 14px;display:flex;align-items:center;gap:10px;list-style:none;font-size:13px}
+.card>summary::-webkit-details-marker{display:none}.card>summary:hover{background:rgba(255,255,255,.03)}
+[data-theme="light"] .card>summary:hover{background:rgba(0,0,0,.03)}
+.card code,.links code{font-family:ui-monospace,Menlo,monospace;font-size:12.5px}.card>summary code{font-weight:700}
+.meta{color:var(--mut);font-size:12px;margin-left:auto}
+.body{padding:6px 14px 14px;border-top:1px solid var(--line)}
+.repos{display:flex;gap:16px;flex-wrap:wrap;margin-top:8px}
+.repo{flex:1;min-width:280px;border-left:3px solid var(--line);padding-left:10px}.repo.absent{opacity:.45}
+.rw{margin:5px 0}.w{color:var(--crit);font-weight:700;font-size:11px}.r{color:var(--link);font-weight:700;font-size:11px}
+ul{margin:3px 0;padding-left:16px}li{font-size:12.5px}
+.h{color:var(--mut)}.loc{color:var(--faint);font-size:11.5px}.none{color:var(--faint)}.more{color:var(--faint);list-style:none}
+.badge{display:inline-block;padding:1px 8px;border-radius:5px;font-size:11px;font-weight:700;
+  background:rgba(124,116,240,.14);color:var(--acc)}
+.badge.red{background:rgba(248,81,73,.14);color:var(--crit)}.badge.amber{background:rgba(219,143,43,.14);color:var(--high)}
+.badge.green{background:rgba(63,185,80,.14);color:var(--low)}
+.coord{color:var(--crit);font-weight:600;font-size:12.5px;margin:4px 0 8px}
+#empty{display:none;color:var(--mut);padding:30px;text-align:center}
+h2{font-size:15px;margin:26px 0 4px}
+.links{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 26px}.links li{margin:5px 0}
+</style></head>
+<body>
+<nav class="top">
+  <div class="brand"><img class="lensmark" src="data:image/png;base64,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" alt=""> <span class="g">Lenscheck</span></div>
+  <small>cross-repo</small>
+  <div class="spacer"></div>
+  <a class="navbtn" id="navReview" href="./" data-g="nav-review">☑ Review</a>
+  <a class="navbtn" id="navMap" href="map" data-g="nav-map">🗺 Repo Map</a>
+  <button class="navbtn on" data-g="nav-crossrepo">🔀 Cross-repo</button>
+  <button class="navbtn" onclick="lcGlossaryOpen()" data-g="nav-glossary">📖 Glossary</button>
+  <button class="navbtn" id="themeBtn" onclick="toggleTheme()" data-g="nav-theme">☀</button>
+  <a class="domain" href="https://api.lenscheck.dev" target="_blank" rel="noopener" title="Lenscheck — visit the site">🌐 <b>api.lenscheck.dev</b></a>
+  <div class="sep"></div>
+  <span class="who">by <a href="https://warriorwhocodes.com" target="_blank" rel="noopener">Ankush Singh Gandhi</a></span>
+</nav>
+<div class="controls">
+  <textarea id="repos" rows="3" data-g="x-repos" placeholder="One repo per line, optional @branch:&#10;/path/to/cms&#10;/path/to/legacy@develop"></textarea>
+  <div class="chips" id="branches"></div>
+  <input id="schema" class="mono" data-g="x-schema" placeholder="optional: path to schema.json (DB unique keys → column-level coordinate rules)">
+  <div class="crow2">
+    <label class="chk" data-g="x-writes-only"><input type="checkbox" id="wonly"> writes-only (drop read-only noise)</label>
+    <button class="primary" id="run">Analyze</button>
     <span id="status"></span>
   </div>
 </div>
-
+<div class="wrap">
 <div id="results" style="display:none">
   <p class="legend">
-    🔴 <b>multi-writer</b>: 2+ repos WRITE it → coordinate schema &amp; write logic. ·
-    🟡 <b>producer→consumer</b>: one writes, others read → writer owns the shape. ·
-    <b>read-only</b>: none write → usually safe.
+    🔴 <b data-g="x-multi-writer">multi-writer</b>: 2+ repos WRITE it → coordinate schema &amp; write logic. ·
+    🟠 <b data-g="x-producer-consumer">producer→consumer</b>: one writes, others read → writer owns the shape. ·
+    <b data-g="x-read-only">read-only</b>: none write → usually safe.
   </p>
   <div class="toolbar">
-    <input id="q" type="search" placeholder="filter by table name…">
+    <input id="q" class="mono" type="search" data-g="search" placeholder="🔎 table, route, handler, file…">
     <div class="chips">
-      <label class="chip mw"><input type="checkbox" class="kf" value="multi_writer" checked> 🔴 multi-writer <span id="c-mw"></span></label>
-      <label class="chip pc"><input type="checkbox" class="kf" value="producer_consumer" checked> 🟡 producer→consumer <span id="c-pc"></span></label>
-      <label class="chip"><input type="checkbox" class="kf" value="read_only" checked> read-only <span id="c-ro"></span></label>
-      <button class="btn" id="expand">expand all</button>
-      <button class="btn" id="collapse">collapse all</button>
+      <label class="chip mw" data-g="x-multi-writer"><input type="checkbox" class="kf" value="multi_writer" checked>🔴 multi-writer <span id="c-mw"></span></label>
+      <label class="chip pc" data-g="x-producer-consumer"><input type="checkbox" class="kf" value="producer_consumer" checked>🟠 producer→consumer <span id="c-pc"></span></label>
+      <label class="chip" data-g="x-read-only"><input type="checkbox" class="kf" value="read_only" checked>read-only <span id="c-ro"></span></label>
+      <label class="chip" data-g="x-has-uk"><input type="checkbox" id="ukonly">⚠ has unique key</label>
+      <select id="wrepo" data-g="x-written-by"><option value="">written by: any repo</option></select>
+      <button class="btn" id="expand" data-g="x-expand">expand all</button>
+      <button class="btn" id="collapse" data-g="x-expand">collapse all</button>
       <span id="count"></span>
     </div>
+    <div class="chips" id="entchips"></div>
   </div>
   <div id="list"></div><div id="empty">no tables match</div>
   <div id="apilinks"></div>
 </div>
-
+</div>
+<script src="glossary.js"></script>
 <script>
-var TOKEN=new URLSearchParams(location.search).get("token")||"";
-var BADGE={multi_writer:["badge red","cross-service multi-writer"],producer_consumer:["badge amber","producer → consumer"],read_only:["badge","read-only shared"]};
+function applyTheme(t){document.documentElement.setAttribute("data-theme",t);
+  const b=document.getElementById("themeBtn"); if(b) b.textContent=t==="light"?"🌙":"☀";
+  try{localStorage.setItem("lenscheck.theme",t)}catch(e){}}
+function toggleTheme(){applyTheme(document.documentElement.getAttribute("data-theme")==="light"?"dark":"light");}
+applyTheme(document.documentElement.getAttribute("data-theme")||"dark");
+var Q=new URLSearchParams(location.search), TOKEN=Q.get("token")||"";
+var BADGE={multi_writer:["badge red","cross-service multi-writer","x-multi-writer"],producer_consumer:["badge amber","producer → consumer","x-producer-consumer"],read_only:["badge","read-only shared","x-read-only"]};
+var GK_ENT={http:"ent-http",task:"ent-task",command:"ent-command",signal:"ent-signal"};   // glossary keys
 var ORDER={multi_writer:0,producer_consumer:1,read_only:2};
-var DATA=null;
+var DATA=null, cards=[], links=[];
+var ENTRY=[["http","🌐 api"],["task","⏱ task"],["command","⌘ command"],["signal","⚡ signal"]];
+function entOf(route){var m=/^(task|command|signal):/.exec(route||"");return m?m[1]:"http";}
+function allEps(s){var out=[];DATA.repos.forEach(function(rp){var a=s.by_repo[rp];if(a)out=out.concat(a.written_by||[],a.read_by||[]);});return out;}
+function checked(sel){var on={};[].slice.call(document.querySelectorAll(sel)).forEach(function(k){on[k.value]=k.checked;});return on;}
+function $(id){return document.getElementById(id);}
 function esc(s){return (s==null?"":""+s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
+function repoList(){return $("repos").value.split("\n").map(function(s){return s.trim();}).filter(Boolean);}
+// "path@branch" → [path, branch]. Only a local path takes a branch (git refs never contain ":"), so
+// "git@github.com:org/x" stays one repo.
+function splitSpec(l){var i=l.lastIndexOf("@");return (i>0&&/^[\/~.]/.test(l)&&l.slice(i+1).indexOf(":")<0)?[l.slice(0,i),l.slice(i+1)]:[l,""];}
+function navLinks(){   // carry the token, and open the map on the first repo (and its branch)
+  var t=TOKEN?"token="+encodeURIComponent(TOKEN):"", r=repoList()[0], p=r?splitSpec(r):["",""];
+  var qs=[p[0]?"repo="+encodeURIComponent(p[0]):"",p[1]?"ref="+encodeURIComponent(p[1]):"",t].filter(Boolean).join("&");
+  $("navReview").href="./"+(t?"?"+t:"");
+  $("navMap").href="map"+(qs?"?"+qs:"");
+}
+var REFS={};   // repo path → /api/refs reply, fetched once per path
+function refsOf(repo,cb){
+  if(REFS[repo])return cb(REFS[repo]);
+  fetch("api/refs?repo="+encodeURIComponent(repo)+(TOKEN?"&token="+encodeURIComponent(TOKEN):""))
+   .then(function(r){return r.json();}).then(function(d){REFS[repo]=d.error?{branches:[]}:d;cb(REFS[repo]);})
+   .catch(function(){cb({branches:[]});});}
+// one type-to-filter branch picker per repo line (big repos have 1000+ branches); picking rewrites that
+// line as path@branch, empty = the working tree
+function renderBranches(){
+  var lines=repoList(), el=$("branches");
+  el.innerHTML=lines.length?'<span class="klbl" data-g="branch-pick">branch</span>'+lines.map(function(l,i){var p=splitSpec(l);
+   return '<label class="chip" data-g="branch-pick">'+esc(p[0].replace(/\/+$/,"").split("/").pop())+' <input class="mono" data-i="'+i+'" list="refs-'+i
+    +'" value="'+esc(p[1])+'" placeholder="working tree"><datalist id="refs-'+i+'"></datalist></label>';}).join(""):"";
+  lines.forEach(function(l,i){refsOf(splitSpec(l)[0],function(d){
+   var inp=el.querySelector('input[data-i="'+i+'"]'); if(!inp)return;
+   if(d.current)inp.placeholder="working tree ("+d.current+")";
+   $("refs-"+i).innerHTML=(d.branches||[]).map(function(b){return '<option value="'+esc(b)+'">';}).join("");});});}
+$("branches").addEventListener("change",function(ev){
+  var i=+ev.target.getAttribute("data-i"), lines=repoList(), p=splitSpec(lines[i]), b=ev.target.value.trim();
+  lines[i]=p[0]+(b?"@"+b:""); $("repos").value=lines.join("\n"); navLinks();});
 function eps(lst){if(!lst||!lst.length)return '<span class="none">—</span>';
- var r=lst.slice(0,6).map(function(e){return '<li><code>'+esc(e.route)+'</code> <span class="h">'+esc(e.handler)+'</span> <span class="loc">'+esc(e.loc)+'</span></li>';}).join("");
+ var r=lst.slice(0,6).map(function(e){return '<li><code data-g="'+GK_ENT[entOf(e.route)]+'">'+esc(e.route)+'</code> <span class="h">'+esc(e.handler)+'</span> <span class="loc">'+esc(e.loc)+'</span></li>';}).join("");
  if(lst.length>6)r+='<li class="more">+'+(lst.length-6)+' more</li>';return '<ul>'+r+'</ul>';}
 function cardHtml(s){
  var per=DATA.repos.map(function(rp){var a=s.by_repo[rp];
-  if(!a)return '<div class="repo absent"><b>'+esc(rp)+'</b> <span class="none">not touched</span></div>';
-  return '<div class="repo"><b>'+esc(rp)+'</b><div class="rw"><span class="w">WRITES</span> '+eps(a.written_by)+'</div><div class="rw"><span class="r">READS</span> '+eps(a.read_by)+'</div></div>';}).join("");
- var b=BADGE[s.kind];
- var uk=(s.unique_keys||[]), ukh="";
+  if(!a)return '<div class="repo absent"><b>'+esc(rp)+'</b> <span class="none" data-g="x-not-touched">not touched</span></div>';
+  return '<div class="repo"><b>'+esc(rp)+'</b><div class="rw"><span class="w" data-g="x-writes">WRITES</span> '+eps(a.written_by)+'</div><div class="rw"><span class="r" data-g="x-reads">READS</span> '+eps(a.read_by)+'</div></div>';}).join("");
+ var b=BADGE[s.kind], uk=(s.unique_keys||[]), ukh="";
  if(uk.length){var keys=esc(uk.map(function(k){return k.join("+");}).join("; "));
-  ukh=(s.kind==="multi_writer")
-   ? '<div style="color:#c0392b;font-weight:600;font-size:12px;margin:.1rem 0 .4rem">⚠ coordinate on unique key <code>'+keys+'</code> — both writers must agree</div>'
-   : '<div class="meta" style="margin:.1rem 0 .4rem">unique key: <code>'+keys+'</code></div>';}
- return '<details class="card" data-kind="'+s.kind+'" data-table="'+esc(s.table.toLowerCase())+'"><summary><code>'+esc(s.table)+'</code> <span class="'+b[0]+'">'+b[1]+'</span><span class="meta">writers: '+(esc(s.writers.join(", "))||"—")+'</span></summary><div class="body">'+ukh+'<div class="repos">'+per+'</div></div></details>';}
+  ukh=(s.kind==="multi_writer")?'<div class="coord" data-g="x-coordinate">⚠ coordinate on unique key <code>'+keys+'</code> — both writers must agree</div>'
+                               :'<div class="meta" style="margin:4px 0 8px" data-g="x-unique-key">unique key: <code>'+keys+'</code></div>';}
+ return '<details class="card" data-kind="'+s.kind+'" data-table="'+esc(s.table.toLowerCase())+'"><summary><code>'+esc(s.table)+'</code> <span class="'+b[0]+'" data-g="'+b[2]+'">'+b[1]+'</span><span class="meta" data-g="x-writers">writers: '+(esc(s.writers.join(", "))||"—")+'</span></summary><div class="body">'+ukh+'<div class="repos">'+per+'</div></div></details>';}
 function renderApiLinks(){
- var links=DATA.api_links||[],el=document.getElementById("apilinks");
- if(!links.length){el.innerHTML="";return;}
- function badge(l){return l.match==="exact"
-  ? '<span class="badge" style="background:#e6f4ea;color:#1e7e34">exact</span>'
-  : '<span class="badge amber">tail · verify</span>';}
- var nExact=links.filter(function(l){return l.match==="exact";}).length;
- var rows=links.map(function(l){return '<li>'+badge(l)+' <b>'+esc(l.from_repo)+'</b> <code>'+esc(l.from.handler)
-  +'</code> <span class="loc">'+esc(l.from.loc)+'</span> → call <code>'+esc(l.call)+'</code> → <b>'
-  +esc(l.to_repo)+'</b> <code>'+esc(l.to.handler)+'</code> <span class="h">'+esc(l.to.route)
-  +'</span> <span class="loc">'+esc(l.to.loc)+'</span></li>';}).join("");
- el.innerHTML='<h2 style="font-size:1.05rem;margin:1.6rem 0 .2rem">Cross-repo API calls ('+links.length+')</h2>'
-  +'<p class="legend"><b>exact</b> ('+nExact+'): the call path is the endpoint\'s full include()-chained route — trustworthy. · '
-  +'<b>tail</b> ('+(links.length-nExact)+'): matched on a leaf route or with an extra prefix (e.g. a proxy mount) — <b>verify</b>.</p>'
-  +'<ul style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:.6rem 1.4rem">'+rows+'</ul>';
-}
+ var all=DATA.api_links||[], el=$("apilinks");
+ if(!all.length){el.innerHTML="";links=[];return;}
+ var nExact=all.filter(function(l){return l.match==="exact";}).length;
+ var rows=all.map(function(l){var k=entOf(l.from.route);return '<li>'+(l.match==="exact"?'<span class="badge green" data-g="x-exact">exact</span>':'<span class="badge amber" data-g="x-tail">tail · verify</span>')
+  +' <b>'+esc(l.from_repo)+'</b> '+(k!=="http"?'<span class="badge" data-g="'+GK_ENT[k]+'">'+k+'</span> ':'')+'<code>'+esc(l.from.handler)+'</code> <span class="loc">'+esc(l.from.loc)+'</span> → call <code>'+esc(l.call)
+  +'</code> → <b>'+esc(l.to_repo)+'</b> <code>'+esc(l.to.handler)+'</code> <span class="h">'+esc(l.to.route)+'</span> <span class="loc">'+esc(l.to.loc)+'</span></li>';}).join("");
+ el.innerHTML='<h2 data-g="x-api-calls">Cross-repo API calls (<span id="lcount">'+all.length+'</span>)</h2>'
+  +'<p class="legend"><b data-g="x-exact">exact</b> ('+nExact+'): the call path is the endpoint\'s full include()-chained route — trustworthy. · '
+  +'<b data-g="x-tail">tail</b> ('+(all.length-nExact)+'): matched on a leaf route or with an extra prefix (e.g. a proxy mount) — <b>verify</b>.</p>'
+  +'<div class="chips" style="margin-bottom:8px"><label class="chip" data-g="x-exact"><input type="checkbox" class="lf" value="exact" checked>exact ('+nExact+')</label>'
+  +'<label class="chip" data-g="x-tail"><input type="checkbox" class="lf" value="tail" checked>tail ('+(all.length-nExact)+')</label></div>'
+  +'<ul class="links">'+rows+'</ul>';
+ var lis=el.querySelectorAll("ul.links li");
+ links=all.map(function(l,i){return {el:lis[i], match:l.match, ent:entOf(l.from.route),
+  hay:[l.from_repo,l.from.route,l.from.handler,l.from.loc,l.call,l.to_repo,l.to.route,l.to.handler,l.to.loc].join(" ").toLowerCase()};});}
+function renderEntChips(){
+ var n={}; cards.forEach(function(c){Object.keys(c.ents).forEach(function(k){n[k]=(n[k]||0)+1;});});
+ // only worth a row when jobs touch shared tables (all-api data needs no entrypoint filter)
+ if(!ENTRY.some(function(e){return e[0]!=="http"&&n[e[0]];})){$("entchips").innerHTML="";return;}
+ $("entchips").innerHTML='<span class="klbl" data-g="entrypoint">entrypoint</span>'+ENTRY.filter(function(e){return n[e[0]];}).map(function(e){
+  return '<label class="chip" data-g="'+GK_ENT[e[0]]+'"><input type="checkbox" class="ef" value="'+e[0]+'" checked>'+e[1]+' ('+n[e[0]]+')</label>';}).join("");}
 function render(){
  var st=DATA.shared_tables.slice().sort(function(a,b){return (ORDER[a.kind]-ORDER[b.kind])||(a.table<b.table?-1:1);});
- document.getElementById("list").innerHTML=st.map(cardHtml).join("");
- renderApiLinks();
+ $("list").innerHTML=st.map(cardHtml).join("");
+ var els=document.querySelectorAll(".card");
+ cards=st.map(function(s,i){var all=allEps(s), ents={};all.forEach(function(e){ents[entOf(e.route)]=1;});
+  return {el:els[i], s:s, ents:ents, hay:(s.table+" "+all.map(function(e){return e.route+" "+e.handler+" "+e.loc;}).join(" ")).toLowerCase()};});
+ renderEntChips(); renderApiLinks();
+ $("wrepo").innerHTML='<option value="">written by: any repo</option>'+DATA.repos.map(function(r){return '<option value="'+esc(r)+'">written by: '+esc(r)+'</option>';}).join("");
  var su=DATA.summary;
- document.getElementById("c-mw").textContent="("+su.multi_writer+")";
- document.getElementById("c-pc").textContent="("+su.producer_consumer+")";
- document.getElementById("c-ro").textContent="("+su.read_only+")";
- document.getElementById("results").style.display="";
- wire();apply();
-}
-var cards=[];
-function wire(){cards=[].slice.call(document.querySelectorAll(".card"));}
+ $("c-mw").textContent="("+su.multi_writer+")"; $("c-pc").textContent="("+su.producer_consumer+")"; $("c-ro").textContent="("+su.read_only+")";
+ $("results").style.display=""; apply();}
 function apply(){
- var term=document.getElementById("q").value.trim().toLowerCase();
- var kinds={};[].slice.call(document.querySelectorAll(".kf")).forEach(function(k){kinds[k.value]=k.checked;});
- var n=0;cards.forEach(function(c){var ok=(!term||c.getAttribute("data-table").indexOf(term)>=0)&&kinds[c.getAttribute("data-kind")];c.style.display=ok?"":"none";if(ok)n++;});
- document.getElementById("count").textContent=n+" shown";document.getElementById("empty").style.display=n?"none":"block";
-}
-document.getElementById("q").addEventListener("input",apply);
+ var term=$("q").value.trim().toLowerCase(), kinds=checked(".kf"), ents=checked(".ef"), lm=checked(".lf"),
+     wr=$("wrepo").value, uk=$("ukonly").checked;
+ // an unrendered entrypoint row means "no filter"; a table passes if ANY of its endpoints is a picked kind
+ var entOk=function(e){return !document.querySelector(".ef")||Object.keys(e).some(function(k){return ents[k];});};
+ var n=0; cards.forEach(function(c){var s=c.s;
+  var ok=kinds[s.kind]&&(!term||c.hay.indexOf(term)>=0)&&entOk(c.ents)
+   &&(!wr||s.writers.indexOf(wr)>=0)&&(!uk||(s.unique_keys||[]).length>0);
+  c.el.style.display=ok?"":"none";if(ok)n++;});
+ $("count").textContent=n+" shown"; $("empty").style.display=n?"none":"block";
+ // say WHAT was searched: a name missing here is often just not on the branch that was analyzed
+ $("empty").innerHTML=term?'no shared table touches <code>'+esc(term)+'</code> on <b>'+esc(DATA.repos.join(" · "))
+  +'</b> — it may not exist on that branch, or it only uses tables one repo touches (try the Repo Map)':"no tables match";
+ var m=0; links.forEach(function(l){var o={};o[l.ent]=1;
+  var ok=lm[l.match]&&(!term||l.hay.indexOf(term)>=0)&&entOk(o);l.el.style.display=ok?"":"none";if(ok)m++;});
+ if($("lcount"))$("lcount").textContent=m===links.length?m:m+" of "+links.length;}
+$("q").addEventListener("input",apply);
 [].slice.call(document.querySelectorAll(".kf")).forEach(function(k){k.addEventListener("change",apply);});
-document.getElementById("expand").addEventListener("click",function(){cards.forEach(function(c){if(c.style.display!=="none")c.open=true;});});
-document.getElementById("collapse").addEventListener("click",function(){cards.forEach(function(c){c.open=false;});});
-document.getElementById("run").addEventListener("click",function(){
- var repos=document.getElementById("repos").value.split("\n").map(function(s){return s.trim();}).filter(Boolean);
- if(repos.length<2){document.getElementById("status").textContent="need at least 2 repos";return;}
- var wonly=document.getElementById("wonly").checked?"1":"0";
- var schema=document.getElementById("schema").value.trim();
- document.getElementById("status").textContent="analyzing… (runs the extractor per repo, may take a bit)";
- var url="api/crossrepo?repos="+encodeURIComponent(repos.join(","))+"&writes_only="+wonly
+["ukonly","wrepo","entchips","apilinks"].forEach(function(id){$(id).addEventListener("change",apply);});
+$("expand").addEventListener("click",function(){cards.forEach(function(c){if(c.el.style.display!=="none")c.el.open=true;});});
+$("collapse").addEventListener("click",function(){cards.forEach(function(c){c.el.open=false;});});
+$("repos").addEventListener("input",navLinks);
+$("repos").addEventListener("change",renderBranches);
+$("run").addEventListener("click",function(){
+ var repos=repoList();
+ if(repos.length<2){$("status").textContent="need at least 2 repos";return;}
+ var schema=$("schema").value.trim();
+ $("status").textContent="analyzing… (runs the extractor per repo, may take a bit)";
+ var url="api/crossrepo?repos="+encodeURIComponent(repos.join(","))+"&writes_only="+($("wonly").checked?"1":"0")
    +(schema?"&schema="+encodeURIComponent(schema):"")+(TOKEN?"&token="+encodeURIComponent(TOKEN):"");
  fetch(url).then(function(r){return r.json();}).then(function(d){
-  if(d.error){document.getElementById("status").textContent="error: "+d.error;return;}
-  DATA=d;document.getElementById("status").textContent=d.repos.join(" · ")+" — "+d.summary.shared_tables+" tables";render();
- }).catch(function(e){document.getElementById("status").textContent="failed: "+e;});
+  if(d.error){$("status").textContent="error: "+d.error;return;}
+  DATA=d; $("status").textContent=d.repos.join(" · ")+" — "+d.summary.shared_tables+" tables · "+(d.summary.api_links||0)+" API links"; render();
+ }).catch(function(e){$("status").textContent="failed: "+e;});
 });
-// prefill from ?repos=a,b
-var pre=new URLSearchParams(location.search).get("repos");
-if(pre){document.getElementById("repos").value=pre.split(",").join("\n");}
+var pre=Q.get("repos"); if(pre){$("repos").value=pre.split(",").join("\n");}
+navLinks(); renderBranches();
 </script>
-</div></body></html>
+</body></html>

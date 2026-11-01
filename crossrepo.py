@@ -31,6 +31,8 @@ def _resolve(spec):
     base = os.path.basename(os.path.abspath(repo)) or repo
     if not branch:
         return base, repo, (lambda: None)
+    if branch.startswith("-"):           # it lands in git's argv: `repo@--foo` must never become an option
+        raise RuntimeError(f"refusing an option-like git ref: {branch!r}")
     wt = tempfile.mkdtemp(prefix="lc_crossrepo_")
     r = subprocess.run(["git", "-C", repo, "worktree", "add", "--detach", "--force", wt, branch],
                        capture_output=True, text=True)
@@ -231,6 +233,12 @@ def _engine_fingerprint():
                 h.update(b"?")
         _ENGINE_FP = h.hexdigest()[:12]
     return _ENGINE_FP
+
+
+# Pin the fingerprint to the code loaded NOW. Computed lazily, a long-running `serve` that loaded the old
+# extractor would hash the files edited on disk since → cache old-code facts under the NEW key.
+# shortcut: still a ms window between the extractor import and this line; exact = hash the loaded code
+_engine_fingerprint()
 
 
 def _cache_dir():

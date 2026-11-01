@@ -28,6 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import diff_pr           # noqa: E402
 import invariants as inv_mod                          # noqa: E402
 import map_repo           # noqa: E402
+import crossrepo          # noqa: E402  — eager: pins its cache fingerprint to the code loaded at start
 from gitutil import (is_url, git_toplevel, ensure_local, sh,   # noqa: E402
                      current_branch, default_branch)
 
@@ -147,6 +148,9 @@ def make_handler(cfg):
                 if path in ("/crossrepo", "/crossrepo.html"):
                     return self._send(200, open(os.path.join(HERE, "web", "crossrepo.html"), "rb").read(),
                                       "text/html; charset=utf-8")
+                if path == "/glossary.js":      # the shared hover glossary every page loads
+                    return self._send(200, open(os.path.join(HERE, "web", "glossary.js"), "rb").read(),
+                                      "application/javascript; charset=utf-8")
                 if path == "/healthz":
                     return self._json(200, {"ok": True})
 
@@ -198,7 +202,7 @@ def make_handler(cfg):
                     schema_path = g("schema")        # a server-side path: same allowlist as repos, and JSON only
                     if schema_path and not (schema_path.endswith(".json") and self._repo_ok(schema_path)):
                         return self._json(403, {"error": "schema must be a .json file inside an allowed path"})
-                    import crossrepo, schema_dump
+                    import schema_dump
                     try:
                         schema = schema_dump.load(schema_path) if schema_path else None
                         data = crossrepo.build(repos, writes_only=(g("writes_only") == "1"), schema=schema)
@@ -233,10 +237,10 @@ def make_handler(cfg):
                     repo = g("repo") or cfg["repo"]
                     if not self._repo_ok(repo):
                         return self._json(403, {"error": "repo not in allowlist"})
-                    key = (repo, g("risky"), g("app"))
+                    key = (repo, g("risky"), g("app"), g("ref"))
                     if key not in MAP_CACHE:
                         MAP_CACHE[key] = map_repo.build_map(repo, risky=(g("risky") == "1"),
-                                                            app=g("app") or None)
+                                                            app=g("app") or None, ref=g("ref") or None)
                     return self._json(200, MAP_CACHE[key])
                 if path == "/api/source":
                     # source snippet for a flow-graph node: git show <ref>:<path> around a line

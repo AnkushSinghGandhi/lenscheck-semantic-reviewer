@@ -115,6 +115,16 @@ def test_git_clone_never_parses_the_repo_as_an_option(monkeypatch, tmp_path):
     assert argv[argv.index(evil) - 1] == "--"
 
 
+def test_crossrepo_branch_suffix_never_becomes_a_git_option(layout):
+    # the boundary check sees "/repo@--x" (no leading "-"), so the branch half needs its own guard
+    import crossrepo
+    with pytest.raises(RuntimeError, match="option-like"):
+        crossrepo._resolve(layout["repo"] + "@--orphan")
+    with _serve(repo=layout["repo"]) as addr:
+        st, body = _get(addr, f"/api/crossrepo?repos={quote(layout['repo'])}@--orphan,{quote(layout['repo'])}")
+        assert st == 500 and "option-like" in body["error"]
+
+
 def test_export_refuses_option_like_refs(tmp_path):
     # `git archive --remote=<url>` would be SSRF, `--output=<file>` a file write — refused before git runs
     for ref in ("--remote=http://169.254.169.254/", "--output=" + str(tmp_path / "x")):

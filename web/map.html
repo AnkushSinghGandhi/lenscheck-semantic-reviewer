@@ -52,7 +52,7 @@ nav.top .domain b{color:var(--acc);font-weight:700}
 input,select,button{background:var(--panel);border:1px solid var(--line);color:var(--fg);border-radius:8px;
   padding:8px 11px;font-size:13px;font-family:inherit}
 input.mono{font-family:ui-monospace,Menlo,monospace;font-size:12.5px}
-#repo{min-width:320px}#q{min-width:240px;flex:1;max-width:420px}
+#repo{min-width:320px}#ref{width:260px}#q{min-width:240px;flex:1;max-width:420px}
 button{cursor:pointer}button:hover{border-color:var(--acc)}
 button.primary{font-weight:700;color:#fff;background:linear-gradient(180deg,var(--acc),var(--acc2));border-color:transparent}
 button.primary:hover{filter:brightness(1.08)}
@@ -60,6 +60,7 @@ button.primary:hover{filter:brightness(1.08)}
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
 .chip{border:1px solid var(--line);border-radius:2em;padding:3px 11px;font-size:12.5px;cursor:pointer;color:var(--mut)}
 .chip:hover{border-color:var(--acc)}
+.klbl{color:var(--faint);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;align-self:center;margin-right:2px}
 .chip.on{background:rgba(124,116,240,.16);color:#fff;border-color:var(--acc)}
 
 /* ---- main ---- */
@@ -114,28 +115,33 @@ body.static .live-only{display:none}
   <div class="brand"><img class="lensmark" src="data:image/png;base64,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" alt=""> <span class="g">Lenscheck</span></div>
   <small>repo map</small>
   <div class="spacer"></div>
-  <a class="navbtn live-only" href="/" title="Review a PR, branch, or commit">☑ Review</a>
-  <button class="navbtn on" title="Every endpoint in the repo, grouped by app">🗺 Repo Map</button>
-  <button class="navbtn" id="themeBtn" onclick="toggleTheme()" title="Toggle light / dark">☀</button>
+  <a class="navbtn live-only" href="/" data-g="nav-review">☑ Review</a>
+  <button class="navbtn on" data-g="nav-map">🗺 Repo Map</button>
+  <a class="navbtn live-only" href="crossrepo" onclick="this.href='crossrepo'+(REPO?'?repos='+encodeURIComponent(REPO+(REF?'@'+REF:'')):'')" data-g="nav-crossrepo">🔀 Cross-repo</a>
+  <button class="navbtn" onclick="lcGlossaryOpen()" data-g="nav-glossary">📖 Glossary</button>
+  <button class="navbtn" id="themeBtn" onclick="toggleTheme()" data-g="nav-theme">☀</button>
   <a class="domain" href="https://api.lenscheck.dev" target="_blank" rel="noopener" title="Lenscheck — visit the site">🌐 <b>api.lenscheck.dev</b></a>
   <div class="sep"></div>
   <span class="who">by <a href="https://warriorwhocodes.com" target="_blank" rel="noopener">Ankush Singh Gandhi</a></span>
 </nav>
 <div class="controls">
   <div class="crow">
-    <input id="repo" class="mono live-only" placeholder="/path/to/repo or github url">
+    <input id="repo" class="mono live-only" data-g="repo-path" placeholder="/path/to/repo or github url" onchange="loadRefs(this.value.trim(),'')">
+    <input id="ref" class="mono live-only" list="refList" data-g="branch-pick" placeholder="branch: working tree" onchange="load()">
+    <datalist id="refList"></datalist>
     <button class="primary live-only" onclick="load()">Map</button>
-    <input id="q" class="mono" placeholder="🔎 search route, handler, table, host…" oninput="render()">
-    <a class="seed" href="#" onclick="downloadSeed();return false"
-       title="A starter invariant corpus from this repo's current state — confirm the real rules, then enforce on every PR">⚖ invariant seed</a>
+    <input id="q" class="mono" data-g="search" placeholder="🔎 search route, handler, table, host…" oninput="render()">
+    <a class="seed" href="#" onclick="downloadSeed();return false" data-g="inv-seed">⚖ invariant seed</a>
   </div>
   <div class="chips" id="chips"></div>
+  <div class="chips" id="kchips"></div>
 </div>
 <main>
   <div class="sub" id="summary">Enter a repo and hit <b>Map</b> — every endpoint, grouped by app, worst-first.</div>
   <div class="posture" id="posture"></div>
   <div id="apps"></div>
 </main>
+<script src="glossary.js"></script>
 <script>
 const $=s=>document.querySelector(s), esc=s=>(s||"").replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 // light / dark theme — persisted; head script sets it pre-paint, this syncs the button + toggles
@@ -146,14 +152,24 @@ function toggleTheme(){applyTheme(document.documentElement.getAttribute("data-th
 applyTheme(document.documentElement.getAttribute("data-theme")||"dark");
 const clip=(s,n)=>{s=s||"";return s.length>n?s.slice(0,n-1)+"…":s;};
 const graphZoom=1;
-let DATA=null, filter="all", REPO=null;
+let DATA=null, filter="all", REPO=null, REF="";
 const SEV=["🔴","🟠","🟡","🟢"];
-const FILTERS=[["all","all"],["🔴","🔴"],["🟠","🟠"],["open","open"],["write","write"],["pii","pii"],["external","external"],
-  ["http","HTTP"],["task","tasks"],["command","commands"],["signal","signals"]];
+const FILTERS=[["all","all","map-all"],["🔴","🔴","sev-crit"],["🟠","🟠","sev-high"],["open","open","tag-open"],
+  ["write","write","op-write"],["pii","pii","tag-pii"],["external","external","op-external"],
+  ["async","async","op-async"],["cache","cache","op-cache"],["enqueues","→ enqueues task","map-enqueues"]];
 const KINDS=["http","task","command","signal"], kindOf=e=>e.kind||"http";
 const KIND_WORD={http:"HTTP",task:"tasks",command:"commands",signal:"signals"};
+const KIND_LBL={http:"🌐 api",task:"⏱ tasks",command:"⌘ commands",signal:"⚡ signals"};
+// glossary keys (web/glossary.js) for values rendered below
+const G_SEV={"🔴":"sev-crit","🟠":"sev-high","🟡":"sev-med","🟢":"sev-low"};
+const G_KIND={http:"ent-http",task:"ent-task",command:"ent-command",signal:"ent-signal"};
+const G_TAG={open:"tag-open",read:"op-read",write:"op-write",external:"op-external",async:"op-async",cache:"op-cache",pii:"tag-pii"};
+const G_NODE={route:"node-route",handler:"node-handler",table:"node-table",table_write:"node-table-write",dbtable:"node-dbtable",
+  external:"node-external",async:"node-async",cache:"node-cache"};
+const activeKinds=new Set(KINDS);     // entrypoint kind — its own multi-select row, combinable with the chips above
+function toggleKind(k){activeKinds.has(k)?activeKinds.delete(k):activeKinds.add(k);render();}
 
-$("#chips").innerHTML=FILTERS.map(([k,l])=>`<span class="chip${k==='all'?' on':''}" data-k="${k}" onclick="setFilter('${k}')">${l}</span>`).join("");
+$("#chips").innerHTML=FILTERS.map(([k,l,g])=>`<span class="chip${k==='all'?' on':''}" data-k="${k}" data-g="${g}" onclick="setFilter('${k}')">${l}</span>`).join("");
 function setFilter(k){filter=k;document.querySelectorAll('.chip').forEach(c=>c.classList.toggle('on',c.dataset.k===k));render();}
 
 function downloadSeed(){
@@ -164,16 +180,27 @@ function downloadSeed(){
 }
 async function boot(){
   if(window.__MAP_EMBEDDED__){ DATA=window.__MAP_EMBEDDED__; document.body.classList.add("static"); render(); return; }
-  const urlRepo=new URLSearchParams(location.search).get("repo");
-  if(urlRepo){ $("#repo").value=urlRepo; load(); return; }
-  try{const c=await (await fetch("/api/config")).json(); if(c.repo){$("#repo").value=c.repo; load();}}catch(e){}
+  const P=new URLSearchParams(location.search), urlRepo=P.get("repo");
+  if(urlRepo){ $("#repo").value=urlRepo; await loadRefs(urlRepo,P.get("ref")||""); load(); return; }
+  try{const c=await (await fetch("/api/config")).json(); if(c.repo){$("#repo").value=c.repo; await loadRefs(c.repo,""); load();}}catch(e){}
+}
+// branch picker (type-to-filter — big repos have 1000+ branches); empty = the working tree on disk
+async function loadRefs(repo,pick){
+  const inp=$("#ref"), dl=$("#refList"); inp.value=pick||""; dl.innerHTML=""; inp.placeholder="branch: working tree";
+  if(!repo)return;
+  try{const d=await (await fetch("/api/refs?repo="+encodeURIComponent(repo))).json();
+    if(d.current)inp.placeholder="branch: working tree ("+d.current+")";
+    dl.innerHTML=(d.branches||[]).map(b=>`<option value="${esc(b)}">`).join("");
+  }catch(e){}
 }
 async function load(){
   const repo=$("#repo").value.trim(); if(!repo)return;
-  REPO=repo;
-  $("#summary").textContent="Analyzing "+repo+" …"; $("#apps").innerHTML="";
+  REPO=repo; REF=$("#ref").value.trim();
+  const P=new URLSearchParams(location.search); P.set("repo",repo); REF?P.set("ref",REF):P.delete("ref");
+  history.replaceState(null,"","?"+P);    // shareable: the URL names the repo + branch on screen
+  $("#summary").textContent="Analyzing "+repo+(REF?" @ "+REF:"")+" …"; $("#apps").innerHTML="";
   try{
-    const r=await fetch("/api/map?repo="+encodeURIComponent(repo));
+    const r=await fetch("/api/map?repo="+encodeURIComponent(repo)+(REF?"&ref="+encodeURIComponent(REF):""));
     DATA=await r.json();
     if(DATA.error){$("#summary").textContent="Error: "+DATA.error;return;}
     render();
@@ -186,10 +213,12 @@ function epMatches(e){
   if(filter==="🟠"&&e.sev!=="🟠")return false;
   if(filter==="unauth-write"&&!(e.tags.includes("open")&&e.tags.includes("write")))return false;
   if(filter==="pii-egress"&&!(e.tags.includes("pii")&&e.tags.includes("external")))return false;
-  if(["open","write","pii","external"].includes(filter)&&!e.tags.includes(filter))return false;
-  if(KINDS.includes(filter)&&kindOf(e)!==filter)return false;
+  if(["open","write","pii","external","async","cache"].includes(filter)&&!e.tags.includes(filter))return false;
+  if(filter==="enqueues"&&!(e.enqueues||[]).length)return false;
+  if(!activeKinds.has(kindOf(e)))return false;
   if(!q)return true;
-  const hay=(e.route+" "+e.handler+" "+e.auth+" "+e.tags.join(" ")+" "+kindOf(e)+" "+(e.methods||[]).join(" ")+" "+
+  const hay=(e.route+" "+e.handler+" "+e.auth+" "+(e.why||"")+" "+e.tags.join(" ")+" "+kindOf(e)+" "+(e.methods||[]).join(" ")+" "+
+    (e.enqueues||[]).map(q=>q.task+" "+q.writes.join(" ")).join(" ")+" "+
     e.graph.nodes.map(n=>n.label).join(" ")).toLowerCase();
   return hay.includes(q);
 }
@@ -199,35 +228,37 @@ function render(){
   const apps=DATA.apps.map(a=>({...a,eps:a.endpoints.filter(epMatches)})).filter(a=>a.eps.length);
   const shown=apps.reduce((n,a)=>n+a.eps.length,0);
   const kc=DATA.kinds||{}, kinds=KINDS.filter(k=>kc[k]).map(k=>`${kc[k]} ${KIND_WORD[k]}`).join(" · ");
-  $("#summary").innerHTML=`<b>${DATA.total}</b> entrypoints`+(kinds?` <span style="color:var(--mut)">(${kinds})</span>`:"")+
-    ` · <b>${DATA.apps.length}</b> apps`+
-    (shown!==DATA.total?` · showing <b>${shown}</b>`:"")+` · <span style="color:var(--mut)">worst-first</span>`;
+  $("#summary").innerHTML=`<span data-g="entrypoints-count"><b>${DATA.total}</b> entrypoints</span>`+(kinds?` <span style="color:var(--mut)">(${kinds})</span>`:"")+
+    ` · <span data-g="app"><b>${DATA.apps.length}</b> apps</span>`+(DATA.ref?` · <span data-g="branch-pick">on <b>${esc(DATA.ref)}</b></span>`:"")+
+    (shown!==DATA.total?` · showing <b>${shown}</b>`:"")+` · <span style="color:var(--mut)" data-g="worst-first">worst-first</span>`;
   // repo-wide posture — from ALL endpoints, one glance at security exposure. Click to filter.
   const all=DATA.apps.flatMap(a=>a.endpoints), has=(e,...t)=>t.every(x=>e.tags.includes(x));
-  const P=[["🔴","critical",all.filter(e=>e.sev==="🔴").length,1],
-           ["🟠","high",all.filter(e=>e.sev==="🟠").length,1],
-           ["unauth-write","unauth-write",all.filter(e=>has(e,"open","write")).length,1],
-           ["pii-egress","PII-egress",all.filter(e=>has(e,"pii","external")).length,1],
-           ["open","public",all.filter(e=>e.tags.includes("open")).length,0],
-           ["external","external",all.filter(e=>e.tags.includes("external")).length,0]];
-  $("#posture").innerHTML=P.map(([k,l,n,risk])=>
-    `<span class="p${risk?' risk':''}${filter===k?' on':''}" onclick="setFilter('${k}')"><b>${n}</b> ${l}</span>`).join("");
+  const P=[["🔴","critical",all.filter(e=>e.sev==="🔴").length,1,"post-crit"],
+           ["🟠","high",all.filter(e=>e.sev==="🟠").length,1,"post-high"],
+           ["unauth-write","unauth-write",all.filter(e=>has(e,"open","write")).length,1,"post-unauth-write"],
+           ["pii-egress","PII-egress",all.filter(e=>has(e,"pii","external")).length,1,"post-pii-egress"],
+           ["open","public",all.filter(e=>e.tags.includes("open")).length,0,"post-public"],
+           ["external","external",all.filter(e=>e.tags.includes("external")).length,0,"post-external"]];
+  $("#kchips").innerHTML='<span class="klbl" data-g="entrypoint">entrypoint</span>'+KINDS.filter(k=>kc[k]).map(k=>
+    `<span class="chip${activeKinds.has(k)?' on':''}" data-g="${G_KIND[k]}" onclick="toggleKind('${k}')">${KIND_LBL[k]} ${kc[k]}</span>`).join("");
+  $("#posture").innerHTML=P.map(([k,l,n,risk,g])=>
+    `<span class="p${risk?' risk':''}${filter===k?' on':''}" data-g="${g}" onclick="setFilter('${k}')"><b>${n}</b> ${l}</span>`).join("");
   $("#apps").innerHTML = apps.length? apps.map(appHtml).join("") :
     `<div class="empty">No endpoints match.</div>`;
 }
 function counts(c){return SEV.filter(s=>c[s]).map(s=>s+c[s]).join(" ");}
 function appHtml(a){
   const open = a.worst==="🔴"||a.worst==="🟠" || $("#q").value.trim() || filter!=="all";
-  return `<details class="app"${open?" open":""}><summary>${a.worst} <span>${esc(a.app)}</span>`+
+  return `<details class="app"${open?" open":""}><summary><span data-g="${G_SEV[a.worst]}">${a.worst}</span> <span data-g="app">${esc(a.app)}</span>`+
     `<span class="count">${a.eps.length} endpoints &nbsp; ${counts(a.counts)}</span></summary>`+
     `<div class="eps">${a.eps.map(epHtml).join("")}</div></details>`;
 }
 function epHtml(e){
-  const tags=e.tags.map(t=>`<span class="tag ${t}">${t}</span>`).join("");
+  const tags=e.tags.map(t=>`<span class="tag ${t}" data-g="${G_TAG[t]}">${t}</span>`).join("");
   // a task / command / signal has no HTTP auth to show — show what triggers it instead
-  const who=kindOf(e)==="http"?e.auth:"↻ "+(e.methods||[]).join(", ");
-  return `<details class="ep" ontoggle="if(this.open)drawEp(this)"><summary>${e.sev} `+
-    `<span class="route">${esc(e.route)}</span> <span class="auth">${esc(who)}</span>`+
+  const http=kindOf(e)==="http", who=http?e.auth:"↻ "+(e.methods||[]).join(", ");
+  return `<details class="ep" ontoggle="if(this.open)drawEp(this)"><summary><span data-g="${G_SEV[e.sev]}">${e.sev}</span> `+
+    `<span class="route" data-g="${G_KIND[kindOf(e)]}">${esc(e.route)}</span> <span class="auth" data-g="${http?"auth":"trigger"}">${esc(who)}</span>`+
     `<span class="tags">${tags}</span></summary>`+
     `<div class="detail" data-ep='${esc(JSON.stringify(e)).replace(/'/g,"&#39;")}'></div></details>`;
 }
@@ -236,13 +267,13 @@ function drawEp(det){
   const e=JSON.parse(box.getAttribute("data-ep").replace(/&#39;/g,"'"));
   const facts=e.graph.nodes.filter(n=>n.loc).map(n=>
     `<div class="fact clk" onclick="showSource('${esc(n.loc).replace(/'/g,'')}',this)"><span class="loc">${esc(n.loc)}</span>${esc(n.label)} <span style="color:var(--mut)">${esc(n.kind||n.type)}</span></div>`).join("");
-  const unk=(e.unknowns||[]).map(u=>`<div class="fact" style="color:#d0b429">⚠ ${esc(u)}</div>`).join("");
+  const unk=(e.unknowns||[]).map(u=>`<div class="fact" style="color:#d0b429" data-g="unknowns">⚠ ${esc(u)}</div>`).join("");
   const enq=(e.enqueues||[]).map(q=>`<div class="fact"><span class="loc">async</span>enqueues <b>${esc(q.task)}</b>`+
     (q.writes.length?` → writes ${esc(q.writes.join(", "))}`:"")+`</div>`).join("");
-  box.innerHTML=(e.sev==="🔴"||e.sev==="🟠"?`<div class="why">${e.sev} ${esc(e.why)}</div>`:"")+
-    (enq?`<div class="wtl"><h4>Enqueues (async)</h4>${enq}</div>`:"")+
+  box.innerHTML=(e.sev==="🔴"||e.sev==="🟠"?`<div class="why" data-g="why">${e.sev} ${esc(e.why)}</div>`:"")+
+    (enq?`<div class="wtl"><h4 data-g="enqueues">Enqueues (async)</h4>${enq}</div>`:"")+
     drawGraph(e.graph)+
-    `<div class="wtl"><h4>Where to look</h4>${facts||'<div class="fact" style="color:var(--mut)">—</div>'}${unk}</div>`;
+    `<div class="wtl"><h4 data-g="where">Where to look</h4>${facts||'<div class="fact" style="color:var(--mut)">—</div>'}${unk}</div>`;
 }
 
 /* ---- click a node or fact → show its source (live server only) ---- */
@@ -254,7 +285,7 @@ async function showSource(loc, el){
   if(!REPO){ box.innerHTML=`<div class="snhead">${esc(path)}:${line} — source view needs the live server</div>`; return; }
   box.innerHTML=`<div class="snhead">${esc(path)}:${line} · loading…</div>`;
   try{
-    const d=await (await fetch(`/api/source?repo=${encodeURIComponent(REPO)}&ref=WORKTREE&path=${encodeURIComponent(path)}&line=${line}`)).json();
+    const d=await (await fetch(`/api/source?repo=${encodeURIComponent(REPO)}&ref=${encodeURIComponent(REF||"WORKTREE")}&path=${encodeURIComponent(path)}&line=${line}`)).json();
     if(!d.found){ box.innerHTML=`<div class="snhead">${esc(path)}:${line} — not found at HEAD</div>`; return; }
     const rows=d.lines.map((ln,k)=>{const n=d.start+k;
       return `<div class="snline${n===d.line?' hl':''}"><span class="snn">${n}</span><span class="snc">${esc(ln)||' '}</span></div>`;}).join("");
@@ -285,10 +316,11 @@ function drawGraph(g){
     else if(n.type==="dbtable")stroke=n.explicit===false?"#8b6f3f":"#57ab5a";
     else if(n.type==="table")stroke=(n.kind||"").includes("write")?"var(--high)":"#6e7681";
     else if(n.type==="route")stroke="#8b949e";
-    const pii=n.pii?`<circle cx="${x+ww-8}" cy="${y-boxH/2+2}" r="5" fill="var(--crit)"><title>PII source</title></circle>`:"";
+    const pii=n.pii?`<circle cx="${x+ww-8}" cy="${y-boxH/2+2}" r="5" fill="var(--crit)" data-g="pii-dot"></circle>`:"";
     const tip=[n.label,n.type==="handler"&&n.auth?n.auth:"",n.loc||"",n.loc?"(click for source)":""].filter(Boolean).join("  ·  ");
     const click=n.loc?`onclick="showSource('${esc(n.loc).replace(/'/g,'')}',this)" style="cursor:pointer"`:"";
-    return `<g ${click}><title>${esc(tip)}</title><rect x="${x}" y="${y-boxH/2}" width="${ww}" height="${boxH}" rx="6" `+
+    const g=G_NODE[n.type==="table"&&(n.kind||"").includes("write")?"table_write":n.type]||"graph";
+    return `<g ${click} data-g="${g}" data-gx="${esc(tip)}"><rect x="${x}" y="${y-boxH/2}" width="${ww}" height="${boxH}" rx="6" `+
       `fill="var(--panel)" stroke="${stroke}" stroke-width="1.8"/>`+
       `<text x="${x+9}" y="${y+4}">${esc(clip(n.label,34))}</text>${pii}</g>`;
   }
@@ -299,7 +331,7 @@ function drawGraph(g){
       e.kind==="dispatches"?"var(--purple)":(e.kind&&e.kind.startsWith("table"))?"#57ab5a":"#6e7681";
     const horiz=Math.abs(y1-y2)<8,lx=horiz?(x1+x2)/2:x2-8,ly=horiz?y1-9:y2-6,anchor=horiz?"middle":"end";
     return `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" fill="none" stroke="${col}" stroke-width="1.4" opacity=".55"/>`+
-      `<text class="elabel" x="${lx}" y="${ly}" text-anchor="${anchor}" opacity=".85">${esc(e.kind||"")}</text>`;
+      `<text class="elabel" x="${lx}" y="${ly}" text-anchor="${anchor}" opacity=".85" data-g="edge-label" data-gx="${esc(e.kind||"")}">${esc(e.kind||"")}</text>`;
   }
   const width=(dbt.length?colT+maxW(dbt):colL+maxW(leaves))+24;
   return `<svg width="100%" viewBox="0 0 ${width} ${H}" style="max-width:${width}px">`+

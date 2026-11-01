@@ -72,6 +72,52 @@ def test_map_shows_kinds_and_what_an_endpoint_enqueues(repo):
     assert recs["task:process"]["kind"] == "task" and recs["task:process"]["methods"] == ["celery"]
 
 
+def test_thin_command_inherits_handle_from_a_shared_base(tmp_path):
+    # Template-method commands: the base (outside management/commands) owns handle(), each subclass only
+    # sets config. They must still be entrypoints, located at the subclass, analyzed through the base.
+    r = tmp_path / "svc"
+    _write(r, "app/models.py", "from django.db import models\n"
+           "class Lead(models.Model):\n    class Meta:\n        db_table = 'leads'\n")
+    _write(r, "app/engine.py", "from django.core.management.base import BaseCommand\nfrom app.models import Lead\n"
+           "class BasePushCommand(BaseCommand):\n    def handle(self, *a, **k):\n        self.deliver()\n"
+           "    def deliver(self):\n        Lead.objects.create(status=self.spec)\n")
+    _write(r, "app/management/commands/push_fresh.py",
+           "from app.engine import BasePushCommand\nclass Command(BasePushCommand):\n    spec = 1\n")
+    _write(r, "app/management/commands/push_retry.py",       # an override in the subclass still wins
+           "from app.engine import BasePushCommand\nfrom app.models import Lead\n"
+           "class Command(BasePushCommand):\n    spec = 2\n    def deliver(self):\n        Lead.objects.filter(pk=1).delete()\n")
+    eps = {e.route: e for e in analyze_repo(str(r))}
+    fresh, retry = eps["command:push_fresh"], eps["command:push_retry"]
+    assert fresh.kind == "command" and (fresh.file, fresh.line) == ("app/management/commands/push_fresh.py", 2)
+    assert any(i.startswith("Lead:write") for i in fresh.e3_db_tables.items), fresh.e3_db_tables.items
+    ret = " ".join(retry.e3_db_tables.items)
+    assert "push_retry.py:6" in ret and "engine.py:7" not in ret, ret
+    assert "inherited from BasePushCommand" in " ".join(fresh.e1_route_handler.items)
+
+
+def test_map_of_a_branch_reads_a_snapshot_not_the_working_tree(tmp_path):
+    import subprocess
+    r = tmp_path / "svc"
+    _write(r, "app/models.py", "from django.db import models\n"
+           "class Lead(models.Model):\n    class Meta:\n        db_table = 'leads'\n")
+
+    def git(*a):
+        return subprocess.run(["git", "-C", str(r), "-c", "user.email=a@b.c", "-c", "user.name=t", *a],
+                              check=True, capture_output=True, text=True).stdout
+    git("init", "-q", "-b", "main"); git("add", "-A"); git("commit", "-qm", "base")
+    git("checkout", "-qb", "feat")
+    _write(r, "app/management/commands/backfill.py",
+           "from django.core.management.base import BaseCommand\nfrom app.models import Lead\n"
+           "class Command(BaseCommand):\n    def handle(self, *a, **k):\n        Lead.objects.create(status=0)\n")
+    git("add", "-A"); git("commit", "-qm", "feat"); git("checkout", "-q", "main")
+
+    routes = lambda m: {e["route"] for a in m["apps"] for e in a["endpoints"]}   # noqa: E731
+    assert "command:backfill" not in routes(map_repo.build_map(str(r)))
+    m = map_repo.build_map(str(r), ref="feat")
+    assert "command:backfill" in routes(m) and (m["repo"], m["ref"]) == (str(r), "feat")
+    assert git("branch", "--show-current").strip() == "main" and not git("status", "--porcelain")
+
+
 def test_review_flags_a_new_task_and_who_triggers_it(repo):
     head = analyze_repo(repo)
     base = [e for e in head if e.route != "task:process"]          # the PR adds the task

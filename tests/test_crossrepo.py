@@ -133,6 +133,11 @@ def test_provenance_cache_hits_on_second_call_for_a_clean_repo(tmp_path, monkeyp
     assert len(calls) == 2
 
 
+def test_engine_fingerprint_is_pinned_at_import():
+    # a lazy first-call hash let a long-running serve key OLD loaded code's facts with the NEW on-disk hash
+    assert crossrepo._ENGINE_FP is not None
+
+
 def test_cache_invalidates_when_engine_fingerprint_changes(tmp_path, monkeypatch):
     # C1: a tool upgrade that changes extraction (not the JSON shape) must bust a clean-repo cache.
     repo = tmp_path / "r"
