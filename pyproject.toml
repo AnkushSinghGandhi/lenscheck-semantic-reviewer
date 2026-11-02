@@ -27,6 +27,6 @@ Repository = "https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer"
 lenscheck = "cli:main"
 
 [tool.setuptools]
-py-modules = ["cli", "diff_pr", "serve", "gitutil", "enforce", "invariants", "deps", "digest", "map_repo", "provenance", "crossrepo", "schema_dump", "runtime_merge"]
+py-modules = ["cli", "diff_pr", "serve", "gitutil", "enforce", "invariants", "deps", "digest", "map_repo", "provenance", "crossrepo", "schema_dump", "runtime_merge", "xrepo_graph"]
 packages = ["web", "extractor", "ci"]
 package-data = { "web" = ["*.html", "*.js"] }

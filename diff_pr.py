@@ -25,6 +25,7 @@ from gitutil import (sh, export, ensure_local, git_toplevel,   # noqa: E402
                      current_branch, default_branch)
 import enforce as enforce_mod                  # noqa: E402
 import deps as deps_mod                        # noqa: E402
+import xrepo_graph                             # noqa: E402
 
 CRIT, HIGH, MED, LOW = "🔴", "🟠", "🟡", "🟢"
 EDGES = [("e3_db_tables", "db"), ("e4_external", "external"),
@@ -694,6 +695,8 @@ def render(changes, meta):
         L.append(meta["inv_section"])
     if meta.get("egress_section"):
         L.append(meta["egress_section"])
+    if meta.get("crossrepo_section"):
+        L.append(meta["crossrepo_section"])
     buckets = {CRIT: [], HIGH: [], MED: [], LOW: []}
     for c in changes:
         buckets[c["sev"]].append(c)
@@ -1132,11 +1135,13 @@ def list_commits(repo, n=50):
     return out
 
 
-def run_review(repo, base=None, head=None, merge=None, pr=None, commit=None, invariants_path=None):
+def run_review(repo, base=None, head=None, merge=None, pr=None, commit=None, invariants_path=None,
+               crossrepo=None):
     """Full review pipeline as a function (used by the CLI and the web service).
 
     `repo` may be a local path or a git URL (cloned/cached automatically). `pr` reviews a real
     GitHub pull request by number; `commit` reviews a single commit (its diff vs its parent).
+    `crossrepo` = local paths of other repos to check the change's reach into (see crossrepo_impact).
     """
     url = repo
     repo = ensure_local(repo, update=not pr)
@@ -1177,15 +1182,33 @@ def run_review(repo, base=None, head=None, merge=None, pr=None, commit=None, inv
     deps_findings = dependency_findings(repo, b, h)
     egress_groups = shared_external_destinations(head_eps)
     changed_routes = {c["route"] for c in changes}
-    meta = dict(title=title, base=b, head=h, shortstat=shortstat, inv_section=inv_section,
+    xrepo = crossrepo_impact(repo, h, crossrepo, changed, changed_routes) if crossrepo else None
+    meta = dict(crossrepo_section=xrepo_graph.render_markdown(xrepo),title=title, base=b, head=h, shortstat=shortstat, inv_section=inv_section,
                 intent_section=render_intent_section(contradictions), contradictions=contradictions,
                 deps_section=deps_mod.render_deps_section(deps_findings), dependencies=deps_findings,
                 egress_section=render_egress_section(egress_groups, only_routes=changed_routes),
                 egress=egress_payload(egress_groups, only_routes=changed_routes),
                 summary=intent_summary(changes, findings))
-    return dict(review=build_review(changes, findings, meta, changed), report=render(changes, meta),
+    review = build_review(changes, findings, meta, changed)
+    if xrepo is not None:
+        review["crossrepo_impact"] = xrepo
+    return dict(review=review, report=render(changes, meta),
                 findings=findings, changes=changes, n_base=len(base_eps), n_head=len(head_eps),
                 auto_target=auto)
+
+
+def crossrepo_impact(repo, head, others, changed, changed_routes=()):
+    """How far the change reaches into OTHER repos: analyze this repo at `head` alongside `others`, then
+    walk the cross-repo graph (shared tables, HTTP calls, Celery tasks) from the endpoints declared in
+    the changed files plus the routes the semantic diff flagged. `changed` is {file: lines}."""
+    import crossrepo
+    data = crossrepo.build([f"{repo}@{head}"] + list(others))
+    name = os.path.basename(os.path.abspath(repo))
+    graph = xrepo_graph.build(data)
+    imp = xrepo_graph.impact(graph, xrepo_graph.seeds(graph, name, set(changed), changed_routes))
+    imp["repos_analyzed"] = data["repos"]
+    imp["repo_meta"] = data.get("repo_meta", {})
+    return imp
 
 
 def inline_glossary(html):
@@ -1219,6 +1242,9 @@ def main():
     ap.add_argument("--json", dest="json_out", help="write structured review JSON")
     ap.add_argument("--html", help="write a self-contained HTML viewer")
     ap.add_argument("--sarif", help="write SARIF 2.1.0 for GitHub code scanning")
+    ap.add_argument("--crossrepo", nargs="+", metavar="PATH",
+                    help="other local repos (sharing a database, or calling each other over HTTP/Celery) "
+                         "to show how far this change reaches into them")
     ap.add_argument("--fail-on", choices=["violation", "crit"], default=None,
                     help="exit non-zero on 🔴 invariant violations (violation) or any 🔴 (crit)")
     args = ap.parse_args()
@@ -1227,9 +1253,13 @@ def main():
     if not repo:
         ap.error("no repo given and the current directory is not a git repo — "
                  "pass a local path or a git URL")
+    for p in args.crossrepo or []:
+        if not os.path.isdir(p):
+            ap.error(f"--crossrepo: not a directory: {p}")
     try:
         res = run_review(repo, base=args.base, head=args.head, merge=args.merge,
-                         pr=args.pr, commit=args.commit, invariants_path=args.invariants)
+                         pr=args.pr, commit=args.commit, invariants_path=args.invariants,
+                         crossrepo=args.crossrepo)
     except RuntimeError as e:
         sys.exit(f"lenscheck: {e}")
     review, report, findings, changes = res["review"], res["report"], res["findings"], res["changes"]

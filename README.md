@@ -152,6 +152,19 @@ lenscheck review <repo> --pr 481 \
     --sarif review.sarif     # GitHub code scanning — findings on the changed line + Security tab
 ```
 
+**See how far a change reaches into your other services** (shared database, HTTP calls, Celery
+tasks):
+
+```bash
+lenscheck review ./orders --base main --head feature --crossrepo ../billing ../notifications
+```
+
+The review gains a **🔗 Cross-repo impact** section: every endpoint in the other repos that gets the
+changed data (readers of a table the change writes, and whatever they call or dispatch, up to 3 hops),
+depends on a changed route or task, or also writes the same table — each with its file:line and the
+path that connects it. A path through an unverified (`tail`) match is marked ⚠ verify. See
+[CROSSREPO.md](CROSSREPO.md#change-impact).
+
 **Enforce your rules & gate CI:**
 
 ```bash

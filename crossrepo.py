@@ -19,6 +19,7 @@ import sys
 import tempfile
 
 import provenance
+import xrepo_graph
 
 
 def _resolve(spec):
@@ -219,6 +220,22 @@ def _task_links(per):
     return sorted(links.values(), key=lambda x: (x["from_repo"], x["to_repo"], x["dispatch"]))
 
 
+def _repo_meta(path):
+    """Commit + dirty flag of an analyzed repo, so a report says exactly which code it describes."""
+    def git(*a):
+        r = subprocess.run(["git", "--no-optional-locks", "-C", path, *a], capture_output=True, text=True)
+        return r.stdout.strip() if r.returncode == 0 else None
+    return {"commit": git("rev-parse", "HEAD"), "dirty": bool(git("status", "--porcelain"))}
+
+
+def _tool_version():
+    try:
+        from importlib.metadata import version
+        return version("lenscheck-semantic-reviewer")
+    except Exception:                            # running from a source checkout
+        return None
+
+
 def _db_of(name, db_map):
     """The database a repo's tables live in: its alias from `--db NAME=ALIAS` (matched on the display name
     or the bare folder name of a NAME@BRANCH), else "" (the shared default)."""
@@ -350,13 +367,14 @@ def _provenance(path, with_calls, use_cache):
 
 
 def build(repos, writes_only=False, schema=None, use_cache=True, db_map=None):
-    per = {}
+    per, meta = {}, {}
     cleanups = []
     try:
         for spec in repos:                       # each is 'path' or 'path@branch'
             name, path, cleanup = _resolve(spec)
             cleanups.append(cleanup)
             per[name] = _provenance(path, True, use_cache)
+            meta[name] = _repo_meta(path)
     finally:
         for c in cleanups:
             try:
@@ -406,6 +424,7 @@ def build(repos, writes_only=False, schema=None, use_cache=True, db_map=None):
                     "producer_consumer": n("producer_consumer"), "read_only": n("read_only"),
                     "api_links": len(api_links), "task_links": len(task_links)},
         "per_repo": {n2: d.get("summary", {}) for n2, d in per.items()},
+        "repo_meta": {n2: meta[n2] for n2 in sorted(meta)}, "tool_version": _tool_version(),
         "shared_tables": shared,
         "api_links": api_links,
         "task_links": task_links,
@@ -487,7 +506,7 @@ def write_html(data, path):
         '<span id="count"></span></div></div>')
     body = '<div id="list">' + "".join(cards) + '</div><div id="empty">no tables match</div>'
     with open(path, "w", encoding="utf-8") as f:
-        f.write(head + hdr + _blast_html(data) + toolbar + body
+        f.write(head + hdr + _blast_html(data) + _impact_html(data) + toolbar + body
                 + _api_links_html(data) + _task_links_html(data) + "</div>" + _JS + "</body></html>")
 
 
@@ -505,6 +524,21 @@ def _blast_html(data):
             f'<details style="margin-top:.4rem"><summary style="cursor:pointer;font-size:12px;color:#8a6d0b">'
             f'{len(b["changed_files"])} changed files</summary>'
             f'<ul style="margin:.3rem 0">{files}{more}</ul></details></div>')
+
+
+def _impact_html(data):
+    imp = data.get("impact") or {}
+    if not imp.get("affected"):
+        return ""
+    rows = "".join(
+        f'<li><b>{_h.escape(a["repo"])}</b> <code>{_h.escape(a["handler"] or a["route"])}</code> '
+        f'<span class="loc">{_h.escape(a["loc"])}</span> — {_h.escape(a["kind"])}, depth {a["depth"]}'
+        + ('' if a["confidence"] == "exact" else ' <span class="badge amber">verify</span>')
+        + f'<div class="loc">{" → ".join(_h.escape(h) for h in a["path"])}</div></li>'
+        for a in imp["affected"])
+    return (f'<h2 style="font-size:1.05rem;margin:1rem 0 .2rem">🔗 Impact in other repos '
+            f'({len(imp["affected"])})</h2>'
+            f'<ul style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:.6rem 1.4rem">{rows}</ul>')
 
 
 def _api_links_html(data):
@@ -615,6 +649,8 @@ def main(argv=None):
                   file=sys.stderr)
             return 3
         cfiles = _changed_files(base, a.since)
+        graph = xrepo_graph.build(data)
+        data["impact"] = xrepo_graph.impact(graph, xrepo_graph.seeds(graph, cname, cfiles))
         btables, blinks = _blast(data, cname, cfiles)
         btasks = _blast_tasks(data, cname, cfiles)
         data["shared_tables"], data["api_links"], data["task_links"] = btables, blinks, btasks

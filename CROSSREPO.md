@@ -49,6 +49,28 @@ an error, so a typo can't silently fall back.
 Or in the UI: `lenscheck serve` → the **Cross-repo** tab → paste repo paths (+ optional
 schema path) → Analyze. Live search, kind filters, collapsible rows.
 
+## Change impact
+`--changed` (blast radius) and `lenscheck review --crossrepo` both walk a **cross-repo dependency graph**
+built from the shared tables, API links and task links, starting at the endpoints declared in the
+changed files:
+
+| Hit | Means | Walked further? |
+|---|---|---|
+| **data** | gets the changed data: reads a table the change writes, or is called / dispatched by something that does | yes, up to 3 hops |
+| **contract** | depends on a changed route or task (its callers / dispatchers) | no |
+| **co-writer** | also writes a table the change writes | no |
+
+```bash
+lenscheck crossrepo ./orders ./billing ./notify --changed ./orders --since main --out out.json
+# out.json → "impact": {"affected": [{repo, handler, loc, depth, kind, confidence, path}], "repos": {...}}
+lenscheck review ./orders --base main --head feature --crossrepo ../billing ../notify
+# the review gets a "🔗 Cross-repo impact" section and review JSON gets "crossrepo_impact"
+```
+
+Every hit carries the **path** that explains it (`orders sync_orders → writes orders → billing report →
+calls /api/notify/ → notify send`). A path through any `tail` link is `verify`, never `exact`. The report
+also records each repo's **commit** and **dirty** flag (`repo_meta`), so you know which code it describes.
+
 ## Reading it
 Start at the 🔴 multi-writer tables with a unique key — that's where a write in one service
 can violate the other's constraint (the duplicate-entry class). The per-repo endpoint list
@@ -70,5 +92,9 @@ tells you exactly which route/handler in each service to coordinate.
 - **db_table residue:** background-job writes are now attributed, but a `managed=False` model with
   *no* explicit `db_table` still falls back to the `applabel_model` convention — if two repos name
   that model differently and the real table isn't the convention, the join can miss it.
+- **Impact depth:** the graph only knows cross-repo facts. A chain through a table that just one repo
+  touches, isn't seen. Seeds are endpoints whose declaring file changed; `review --crossrepo` also seeds
+  every endpoint the semantic diff flagged, so a change inside a helper counts when it changes a fact
+  (a new write, call or table). `--changed` has no semantic diff and uses the changed files only.
 - **Caching:** per-repo provenance is cached by git HEAD + an engine fingerprint (a tool upgrade
   busts it), clean trees only — a dirty working tree always re-extracts. `--no-cache` forces it.
