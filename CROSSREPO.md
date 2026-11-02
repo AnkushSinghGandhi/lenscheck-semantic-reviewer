@@ -47,10 +47,11 @@ Repos not listed share one default database (the old behaviour). A name that isn
 an error, so a typo can't silently fall back.
 
 Or in the UI: `lenscheck serve` → the **Cross-repo** tab → paste repo paths (+ optional
-schema path) → Analyze. Live search, kind filters, collapsible rows, and a **graph**: one column of
-endpoints per repo, shared tables in the middle, edges for writes / reads / calls / dispatches (dashed =
-`tail`, verify). Pick a **changed repo** (and optionally a **since** ref) → **Trace impact** highlights the
-paths the change takes and lists the endpoints it reaches, the same walk as `--changed` below.
+schema path) → Analyze. Live search, kind filters, collapsible rows. Pick a **changed repo** (and
+optionally a **since** ref) → **Trace impact** lists the endpoints the change reaches in the other repos
+(the same walk as `--changed` below) and draws a **graph** of just those paths: one column of endpoints
+per repo, shared tables in the middle, edges for writes / reads / calls / dispatches (dashed = `tail`,
+verify). The whole graph isn't drawn: on real repos it is thousands of edges.
 
 ## Change impact
 `--changed` (blast radius) and `lenscheck review --crossrepo` both walk a **cross-repo dependency graph**

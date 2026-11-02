@@ -134,7 +134,7 @@ h2{font-size:15px;margin:26px 0 4px}
   <h2 data-g="x-graph" style="margin-top:6px">🕸 Graph</h2>
   <p class="legend"><b style="color:var(--crit)" data-g="x-writes">━ writes</b> · <b style="color:var(--low)" data-g="x-reads">━ reads</b> ·
     <b style="color:var(--link)" data-g="x-api-calls">━ calls</b> · <b style="color:var(--purple)" data-g="x-dispatches">━ dispatches</b> ·
-    <span data-g="x-tail">┅ dashed = tail match, verify</span> · at most 40 boxes per column, busiest first · hover for details</p>
+    <span data-g="x-tail">┅ dashed = tail match, verify</span> · drawn after <b>Trace impact</b>: only the change's paths, at most 40 boxes per column · hover for details</p>
   <div class="crow2" style="margin:0 0 10px">
     <label class="chk" data-g="x-changed">changed repo <select id="chg"></select></label>
     <input id="since" class="mono" data-g="x-since" placeholder="since ref (empty = uncommitted vs HEAD)">
@@ -254,38 +254,42 @@ function renderTaskLinks(){
   +'</code> → <b>'+esc(l.to_repo)+'</b> task <code>'+esc(l.to.task)+'</code> <span class="loc">'+esc(l.to.loc)+'</span></li>';}).join("")+'</ul>';}
 // graph: one column of endpoint boxes per repo (half left, half right), shared tables in the middle
 var GCOL={writes:"var(--crit)",reads:"var(--low)",calls:"var(--link)",dispatches:"var(--purple)"};
-var HCOL={seed:"var(--acc)",data:"var(--high)",contract:"var(--purple)","co-writer":"var(--crit)",via:"var(--mut)"};
+var HCOL={seed:"var(--acc)",data:"var(--high)",contract:"var(--purple)","co-writer":"var(--crit)"};
 var IK={data:["badge amber","x-kind-data","gets changed data"],contract:["badge","x-kind-contract","depends on the changed interface"],
         "co-writer":["badge red","x-kind-cowriter","also writes the same table"]};
 var GCAP=40;   // boxes per column; the rest are counted, not drawn
 function trunc(s,n){s=s||"";return s.length>n?s.slice(0,n-1)+"…":s;}
 function renderGraph(){
- var g=DATA.graph, el=$("gwrap");
- if(!g||!g.edges.length){el.innerHTML="";return;}
- var imp=DATA.impact, hot={}, hotE={};
- if(imp){(imp.seeds||[]).forEach(function(s){hot["ep:"+s.repo+":"+s.loc]="seed";});
-  (imp.affected||[]).forEach(function(a){hot["ep:"+a.repo+":"+a.loc]=a.kind;
-   (a.trail||[]).forEach(function(t){hotE[t.join("|")]=1;hot[t[0]]=hot[t[0]]||"via";hot[t[2]]=hot[t[2]]||"via";});});}
- var half=Math.ceil(DATA.repos.length/2), cols=[], colOf={};
+ var g=DATA.graph, imp=DATA.impact, el=$("gwrap");
+ if(!g){el.innerHTML="";return;}
+ // the whole graph is a hairball on real repos (thousands of edges), so draw only a traced change's paths
+ if(!imp){el.innerHTML='<p class="legend">Pick a <b>changed repo</b> and press <b>Trace impact</b>: the graph then draws the paths that change takes into the other repos.</p>';return;}
+ var hot={}, onE={};
+ (imp.seeds||[]).forEach(function(s){hot["ep:"+s.repo+":"+s.loc]="seed";});
+ (imp.affected||[]).forEach(function(a){hot["ep:"+a.repo+":"+a.loc]=a.kind;(a.trail||[]).forEach(function(t){onE[t.join("|")]=1;});});
+ var edges=g.edges.filter(function(e){return onE[[e.src,e.kind,e.dst].join("|")];});
+ if(!edges.length){el.innerHTML='<p class="legend">The change reaches nothing in the other repos, so there is no path to draw.</p>';return;}
+ var half=Math.ceil(DATA.repos.length/2), cols=[], colOf={}, deg={};
  DATA.repos.slice(0,half).concat([""],DATA.repos.slice(half)).forEach(function(r,i){cols.push({key:r,items:[]});colOf[r]=i;});
- var deg={}; g.edges.forEach(function(e){deg[e.src]=(deg[e.src]||0)+1;deg[e.dst]=(deg[e.dst]||0)+1;});
- Object.keys(g.nodes).forEach(function(id){var c=colOf[g.nodes[id].type==="table"?"":g.nodes[id].repo];if(c!=null)cols[c].items.push(id);});
+ edges.forEach(function(e){[e.src,e.dst].forEach(function(id){if(!deg[id]){var n=g.nodes[id],c=colOf[n.type==="table"?"":n.repo];if(c!=null)cols[c].items.push(id);}
+  deg[id]=(deg[id]||0)+1;});});
+ cols=cols.filter(function(c){return c.items.length;});   // a repo the change never reaches gets no column
  var BW=210,BH=22,GAP=6,CG=150,PAD=60,TOP=30,pos={},H=0;
  cols.forEach(function(c,ci){
-  c.items.sort(function(a,b){return (!!hot[b]-!!hot[a])||((deg[b]||0)-(deg[a]||0))||(a<b?-1:1);});
+  c.items.sort(function(a,b){return (deg[b]-deg[a])||(a<b?-1:1);});
   c.items.slice(0,GCAP).forEach(function(id,i){pos[id]={x:PAD+ci*(BW+CG),y:TOP+i*(BH+GAP),ci:ci};});
   H=Math.max(H,TOP+Math.min(c.items.length,GCAP)*(BH+GAP)+24);});
- var W=2*PAD+cols.length*(BW+CG)-CG, dim=!!imp;
- var lines=g.edges.map(function(e){var a=pos[e.src],b=pos[e.dst];if(!a||!b)return "";
+ var W=2*PAD+cols.length*(BW+CG)-CG;
+ var lines=edges.map(function(e){var a=pos[e.src],b=pos[e.dst];if(!a||!b)return "";
   var same=a.ci===b.ci, right=a.x<b.x, x1=a.x+(right?BW:0), x2=b.x+(right||same?0:BW),
-      y1=a.y+BH/2, y2=b.y+BH/2, mx=same?a.x-50:(x1+x2)/2, on=hotE[[e.src,e.kind,e.dst].join("|")];
-  return '<path d="M'+x1+','+y1+' C'+mx+','+y1+' '+mx+','+y2+' '+x2+','+y2+'" fill="none" stroke="'+GCOL[e.kind]+'" stroke-width="'+(on?2.6:1.2)
-   +'" opacity="'+(dim&&!on?0.1:0.75)+'"'+(e.match!=="exact"?' stroke-dasharray="5 4"':'')+'><title>'+esc(e.label+(e.match!=="exact"?" (tail · verify)":""))+'</title></path>';}).join("");
+      y1=a.y+BH/2, y2=b.y+BH/2, mx=same?a.x-50:(x1+x2)/2;
+  return '<path d="M'+x1+','+y1+' C'+mx+','+y1+' '+mx+','+y2+' '+x2+','+y2+'" fill="none" stroke="'+GCOL[e.kind]+'" stroke-width="1.8" opacity="0.85"'
+   +(e.match!=="exact"?' stroke-dasharray="5 4"':'')+'><title>'+esc(e.label+(e.match!=="exact"?" (tail · verify)":""))+'</title></path>';}).join("");
  var boxes=Object.keys(pos).map(function(id){var n=g.nodes[id],p=pos[id],h=hot[id],t=n.type==="table";
   var tip=t?"table "+n.name:n.repo+" · "+n.route+"\n"+n.handler+" · "+n.loc;
-  if(h&&h!=="via")tip+="\n"+(h==="seed"?"changed endpoint":IK[h][2]);
-  return '<g opacity="'+(dim&&!h?0.3:1)+'"><title>'+esc(tip)+'</title><rect x="'+p.x+'" y="'+p.y+'" width="'+BW+'" height="'+BH+'" rx="5" fill="var(--panel)" stroke="'
-   +(h?HCOL[h]:t?"#57ab5a":"var(--line)")+'" stroke-width="'+(h&&h!=="via"?2.5:1)+'"/><text x="'+(p.x+8)+'" y="'+(p.y+15)
+  if(h)tip+="\n"+(h==="seed"?"changed endpoint":IK[h][2]);
+  return '<g><title>'+esc(tip)+'</title><rect x="'+p.x+'" y="'+p.y+'" width="'+BW+'" height="'+BH+'" rx="5" fill="var(--panel)" stroke="'
+   +(h?HCOL[h]:t?"#57ab5a":"var(--mut)")+'" stroke-width="'+(h?2.5:1)+'"/><text x="'+(p.x+8)+'" y="'+(p.y+15)
    +'" font-size="11.5" fill="var(--fg)" font-family="ui-monospace,Menlo,monospace">'+esc(trunc(t?n.name:(n.route||n.handler),30))+'</text></g>';}).join("");
  var heads=cols.map(function(c,ci){var x=PAD+ci*(BW+CG);
   return '<text x="'+x+'" y="16" font-size="12" font-weight="700" fill="var(--fg)">'+esc(c.key||"shared tables")+' ('+c.items.length+')</text>'

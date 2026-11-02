@@ -158,7 +158,7 @@ const G = window.LC_GLOSSARY = {
   "x-kind-contract": {t: "depends on the changed interface", d: "This endpoint calls the changed route or dispatches the changed task, so a change to its request, response or arguments can break it."},
   "x-kind-cowriter": {t: "also writes the same table", d: "Another repo writes a table the changed endpoint writes. Their writes can collide (multi-writer)."},
   "x-verify": {t: "⚠ verify", d: "The path goes through a link matched on only part of a route or task name. Usually right, but check it."},
-  "x-graph": {t: "🕸 Graph", d: "Each repo is a column of its endpoints; shared tables sit in the middle. Red = writes, green = reads, blue = HTTP call, purple = Celery dispatch; dashed = a tail match (verify). Hover a box for details."},
+  "x-graph": {t: "🕸 Graph", d: "Drawn after Trace impact, with only the paths the change takes (the whole graph is unreadable on real repos). Each repo is a column of its endpoints; shared tables sit in the middle. Red = writes, green = reads, blue = HTTP call, purple = Celery dispatch; dashed = a tail match (verify). Hover a box for details."},
   "x-changed": {t: "Changed repo", d: "The repo whose change to trace. Its endpoints declared in changed files are the starting points."},
   "x-since": {t: "Since", d: "Compare the changed repo's working tree against this git ref (branch, tag or commit). Empty = uncommitted changes vs HEAD."},
   "x-dispatches": {t: "dispatches", d: "A Celery task sent from one repo and defined in another (send_task or .delay())."},
