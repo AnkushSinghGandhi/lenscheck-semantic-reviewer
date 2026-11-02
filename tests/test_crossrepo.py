@@ -294,3 +294,66 @@ def test_unfoldable_include_prefix_falls_back_to_the_leaf_not_a_poisoned_route(t
 def test_regex_fragment_segment_is_a_wildcard():
     # `url(r'^api/v?\d+/…')` versioned mounts: the regex fragment is a variable part, not a literal
     assert crossrepo._route_segs(r"api/v?\d+/leads/") == ["api", "*", "leads"]
+
+
+def _task_writer(root, table):
+    _write(root, "app/models.py",
+           "from django.db import models\n"
+           f"class Row(models.Model):\n    class Meta:\n        db_table = '{table}'\n")
+    _write(root, "app/tasks.py",
+           "from celery import shared_task\nfrom .models import Row\n"
+           "@shared_task\ndef sync_rows():\n    Row.objects.create()\n")
+
+
+def test_db_alias_keeps_same_named_tables_in_different_databases_apart(tmp_path):
+    a, b = tmp_path / "svcA", tmp_path / "svcB"
+    _task_writer(a, "customers")
+    _task_writer(b, "customers")
+    assert [s["table"] for s in crossrepo.build([str(a), str(b)])["shared_tables"]] == ["customers"]
+    apart = crossrepo.build([str(a), str(b)], db_map={"svcA": "main", "svcB": "audit"})
+    assert apart["shared_tables"] == [] and apart["databases"] == {"svcA": "main", "svcB": "audit"}
+    same = crossrepo.build([str(a), str(b)], db_map={"svcA": "main", "svcB": "main"})["shared_tables"]
+    assert [(s["database"], s["table"], s["kind"]) for s in same] == [("main", "customers", "multi_writer")]
+
+
+def test_db_flag_rejects_unknown_repo_names(tmp_path, capsys):
+    a, b = tmp_path / "svcA", tmp_path / "svcB"
+    _task_writer(a, "t")
+    _task_writer(b, "t")
+    assert crossrepo.main([str(a), str(b), "--db", "svcZ=main", "--no-cache"]) == 3
+    assert "svcZ" in capsys.readouterr().err
+    assert crossrepo.main([str(a), str(b), "--db", "oops", "--no-cache"]) == 3
+
+
+def test_celery_dispatch_links_to_the_task_another_repo_defines(tmp_path):
+    a, b = tmp_path / "svcA", tmp_path / "svcB"
+    _write(a, "app/urls.py",
+           "from django.urls import path\nfrom . import views\n"
+           "urlpatterns = [path('pay/', views.pay), path('mail/', views.mail)]\n")
+    _write(a, "app/views.py",
+           "from celery import current_app\nfrom billing_client import send_receipt\n"
+           "def pay(request):\n    current_app.send_task('billing.charge', args=[1])\n"
+           "def mail(request):\n    send_receipt.delay(1)\n")
+    _write(a, "app/tasks.py",
+           "from celery import shared_task\n@shared_task\ndef audit_log():\n    return 1\n")
+    _write(b, "app/tasks.py",
+           "from celery import shared_task\n"
+           "@shared_task(name='billing.charge')\ndef charge(order_id):\n    return order_id\n"
+           "@shared_task\ndef send_receipt(order_id):\n    return order_id\n"
+           "@shared_task\ndef audit_log():\n    return 2\n")
+    _write(b, "app/urls.py",
+           "from django.urls import path\nfrom . import views\nurlpatterns = [path('own/', views.own)]\n")
+    _write(b, "app/views.py",       # svcB dispatches its OWN audit_log: must not link to svcA's same-named task
+           "from .tasks import audit_log\ndef own(request):\n    audit_log.delay()\n")
+
+    data = crossrepo.build([str(a), str(b)], use_cache=False)
+    got = {(l["from_repo"], l["from"]["handler"], l["dispatch"], l["to_repo"], l["to"]["task"], l["match"])
+           for l in data["task_links"]}
+    assert got == {
+        ("svcA", "pay", "celery.send_task -> billing.charge", "svcB", "charge", "exact"),
+        ("svcA", "mail", "celery.delay -> send_receipt", "svcB", "send_receipt", "tail"),
+    }, "svcB's own audit_log.delay() must not link out to svcA's same-named task"
+    assert data["summary"]["task_links"] == 2
+
+    only_a = crossrepo._blast_tasks(data, "svcA", {"app/views.py"})
+    assert len(only_a) == 2 and crossrepo._blast_tasks(data, "svcA", {"app/other.py"}) == []

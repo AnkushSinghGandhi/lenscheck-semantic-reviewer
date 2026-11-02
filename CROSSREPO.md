@@ -5,7 +5,8 @@ more repos that share a database and finds every table they share — down to
 `route → handler → file:line`, across routed views **and background jobs (celery tasks,
 management commands, signal receivers)** — and flags where **two services write the same
 table** (the cross-service race / constraint conflict). It also surfaces **HTTP coupling**:
-where one service's endpoint calls a route another service serves. Deterministic, no LLM, free, and it all runs on your machine.
+where one service's endpoint calls a route another service serves, and **Celery coupling**: where one
+service dispatches a task another service defines. Deterministic, no LLM, free, and it all runs on your machine.
 
 ## What it reports
 Per shared table: which repos **write** vs **read** it, down to `route → handler → file:line`,
@@ -18,7 +19,8 @@ With `--schema` it adds the precise column-level rule:
 *"coordinate on unique key (form_id, unit_id, email) — both writers must agree."*
 
 Below the tables it lists **cross-repo API calls** — `repo A → call /path → repo B route` —
-so you see both ways two services couple: through the database and over HTTP.
+and **cross-repo Celery tasks** — `repo A → send_task('billing.charge') / fn.delay() → repo B task` —
+so you see every way two services couple: the database, HTTP, and task queues.
 
 ## Full flow
 
@@ -36,6 +38,14 @@ schema_dump.dump(["signup_leads", "campaign_lead_staging"], cursor, "schema.json
 lenscheck crossrepo ./cms ./billing --schema schema.json --writes-only --html out.html
 # N repos; PATH@BRANCH analyses a branch in a throwaway worktree (your checkout untouched)
 ```
+Services on **different databases**? Say which database each repo uses, so same-named tables in
+different databases are never joined:
+```bash
+lenscheck crossrepo ./orders ./billing ./audit --db orders=main --db billing=main --db audit=logs
+```
+Repos not listed share one default database (the old behaviour). A name that isn't one of the repos is
+an error, so a typo can't silently fall back.
+
 Or in the UI: `lenscheck serve` → the **Cross-repo** tab → paste repo paths (+ optional
 schema path) → Analyze. Live search, kind filters, collapsible rows.
 
@@ -50,6 +60,13 @@ tells you exactly which route/handler in each service to coordinate.
   (verify) when the callee only has a leaf route or the call carries an extra prefix (e.g. a proxy
   mount). A prefix that can't be folded statically — e.g. legacy's `'{}'.format(settings.URL_PREFIX)`
   mount — yields no full route, so that repo's links stay `tail` rather than claiming false precision.
+- **Celery links: `exact` vs `tail`.** A `send_task('billing.charge')` is **exact** when the string is the
+  task's explicit `@task(name=...)` or its full default name (`module.path.func`). `fn.delay()` only
+  names a function, so it's **tail** (verify). A dynamically built task name is skipped, not guessed.
+  A repo that defines a same-named task itself is assumed to dispatch its own.
+- **Database identity:** without `--db`, tables join on name alone. Two services that each have a
+  `users` table in *separate* databases will look shared until you pass `--db`. Access is table-level:
+  which columns each service reads or writes is not tracked yet.
 - **db_table residue:** background-job writes are now attributed, but a `managed=False` model with
   *no* explicit `db_table` still falls back to the `applabel_model` convention — if two repos name
   that model differently and the real table isn't the convention, the join can miss it.

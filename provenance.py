@@ -237,9 +237,38 @@ def build(repo, with_calls=False):
             {"route": e.route, "handler": e.handler, "loc": f"{e.file}:{e.line}", "methods": e.methods,
              "full_routes": fr.get((e.route, e.handler), []),
              "calls": sorted({p for it in (getattr(e.e4_external, "items", None) or [])
-                              for p in (_call_path(it),) if p})}
+                              for p in (_call_path(it),) if p}),
+             "kind": e.kind, "dispatches": _celery_dispatches(e),
+             **({"task_names": _task_names(index, repo, e)} if e.kind == "task" else {})}
             for e in eps]
     return out
+
+
+def _celery_dispatches(e):
+    """Celery sends from an endpoint's async edge (`celery.send_task -> name @ f:1`) as
+    {mech, target, loc}. An unresolved target (`?`) is dropped: there is nothing to link it to."""
+    out = []
+    for it in (getattr(e.e5_async, "items", None) or []):
+        fact, _, loc = it.partition(" @ ")
+        mech, _, tgt = fact.partition(" -> ")
+        if mech.startswith("celery.") and tgt and tgt != "?":
+            out.append({"mech": mech, "target": tgt.strip(), "loc": loc.strip()})
+    return out
+
+
+def _task_names(index, repo, e):
+    """Every name a Celery task answers to: the function name, an explicit `@task(name=...)`, and
+    Celery's default `<module path>.<function>`."""
+    names = [e.handler]
+    node, _ = index.find_func(e.handler, near=os.path.join(os.path.abspath(repo), e.file),
+                              toplevel_only=True)
+    for d in getattr(node, "decorator_list", None) or []:
+        for kw in (d.keywords if isinstance(d, ast.Call) else []):
+            if kw.arg == "name" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                names.append(kw.value.value)
+    if e.file.endswith(".py"):
+        names.append(e.file[:-3].replace(os.sep, ".").replace("/", ".") + "." + e.handler)
+    return list(dict.fromkeys(names))
 
 
 def _to_yaml(rules):

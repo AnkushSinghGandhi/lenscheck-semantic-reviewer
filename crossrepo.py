@@ -175,6 +175,59 @@ def _api_links(per):
     return sorted(links.values(), key=lambda x: (x["from_repo"], x["to_repo"], x["call"]))
 
 
+def _task_links(per):
+    """Cross-repo Celery coupling: repo A dispatches a task (`send_task('name')`, `fn.delay()`) that repo B
+    defines. `match` is "exact" when a `send_task` name is the task's explicit or full default name, else
+    "tail" (only the function name matches: verify). A repo that defines a same-named task itself is taken
+    to be calling its own, so it never links out."""
+    tasks = {name: [e for e in data.get("endpoints", []) if e.get("kind") == "task"]
+             for name, data in per.items()}
+
+    def match(mech, target, t):
+        names = set(t.get("task_names") or []) - {t["handler"]}
+        if mech == "celery.send_task" and "." in target and \
+                (target in names or any(n.endswith("." + target) for n in names)):
+            return "exact"                       # explicit name, or the default one under another import root
+        return "tail" if target.rsplit(".", 1)[-1] == t["handler"] else None
+
+    links = {}
+    for name, data in per.items():
+        own = {n for t in tasks[name] for n in (t.get("task_names") or [])}
+        own_fns = {t["handler"] for t in tasks[name]}
+        for e in data.get("endpoints", []):
+            for d in e.get("dispatches", []):
+                tgt, mech = d["target"], d["mech"]
+                if tgt in own or tgt.rsplit(".", 1)[-1] in own_fns:
+                    continue
+                for other, tlist in tasks.items():
+                    if other == name:
+                        continue
+                    for t in tlist:
+                        m = match(mech, tgt, t)
+                        if not m:
+                            continue
+                        key = (name, d["loc"], other, t["loc"])
+                        if key in links and (links[key]["match"] == "exact" or m != "exact"):
+                            continue
+                        links[key] = {
+                            "from_repo": name, "dispatch": f"{mech} -> {tgt}", "match": m,
+                            "from": {"route": e.get("route", ""), "handler": e.get("handler", ""),
+                                     "loc": e.get("loc", ""), "dispatch_loc": d["loc"]},
+                            "to_repo": other,
+                            "to": {"task": t["handler"], "names": t.get("task_names") or [],
+                                   "loc": t.get("loc", "")}}
+    return sorted(links.values(), key=lambda x: (x["from_repo"], x["to_repo"], x["dispatch"]))
+
+
+def _db_of(name, db_map):
+    """The database a repo's tables live in: its alias from `--db NAME=ALIAS` (matched on the display name
+    or the bare folder name of a NAME@BRANCH), else "" (the shared default)."""
+    for k, v in (db_map or {}).items():
+        if name == k or name.startswith(k + "@"):
+            return v
+    return ""
+
+
 def _changed_files(repo_path, since):
     """Repo-relative paths changed in `repo_path`: diff vs REF (`since`), else uncommitted changes
     vs HEAD (staged + unstaged + untracked, so a brand-new module counts)."""
@@ -211,6 +264,14 @@ def _blast(data, changed_name, changed_files):
              if (l["from_repo"] == changed_name and _touches(l["from"]["loc"], changed_files))
              or (l["to_repo"] == changed_name and _touches(l["to"]["loc"], changed_files))]
     return tables, links
+
+
+def _blast_tasks(data, changed_name, changed_files):
+    """Keep only the cross-repo task links the changed files touch, on either side."""
+    return [l for l in data.get("task_links", [])
+            if (l["from_repo"] == changed_name and (_touches(l["from"]["loc"], changed_files)
+                                                    or _touches(l["from"]["dispatch_loc"], changed_files)))
+            or (l["to_repo"] == changed_name and _touches(l["to"]["loc"], changed_files))]
 
 
 _ENGINE_FP = None
@@ -288,7 +349,7 @@ def _provenance(path, with_calls, use_cache):
     return data
 
 
-def build(repos, writes_only=False, schema=None, use_cache=True):
+def build(repos, writes_only=False, schema=None, use_cache=True, db_map=None):
     per = {}
     cleanups = []
     try:
@@ -303,19 +364,21 @@ def build(repos, writes_only=False, schema=None, use_cache=True):
             except Exception:
                 pass
 
+    # keyed by (database alias, table): same-named tables in different databases are different tables
     merged = {}
     for name, data in per.items():
+        db = _db_of(name, db_map)
         for tbl, rec in data.get("tables", {}).items():
             if tbl == "<unresolved>":          # a per-repo "couldn't name this write" bucket — not a real
                 continue                       # shared table; two repos' unresolved writes aren't the same one
-            merged.setdefault(tbl, {})[name] = {
+            merged.setdefault((db, tbl), {})[name] = {
                 "written_by": rec.get("written_by", []),
                 "read_by": rec.get("read_by", []),
             }
 
     shared = []
-    for tbl in sorted(merged):
-        slot = merged[tbl]
+    for db, tbl in sorted(merged):
+        slot = merged[(db, tbl)]
         if len(slot) < 2:
             continue                     # touched by only one repo — not cross-repo
         writers = sorted(r for r, a in slot.items() if a["written_by"])
@@ -324,27 +387,32 @@ def build(repos, writes_only=False, schema=None, use_cache=True):
         if writes_only and kind == "read_only":
             continue
         shared.append({
-            "table": tbl, "repos": sorted(slot), "writers": writers,
+            "table": tbl, "database": db, "repos": sorted(slot), "writers": writers,
             "readers": sorted(r for r, a in slot.items() if a["read_by"]),
             "multi_writer": len(writers) >= 2, "kind": kind,
             "unique_keys": [list(k) for k in (schema or {}).get(tbl, [])], "by_repo": slot,
         })
 
     api_links = _api_links(per)
+    task_links = _task_links(per)
 
     def n(k):
         return sum(1 for s in shared if s["kind"] == k)
-    return {
+    out = {
         "schema": 1, "generated_by": "lenscheck crossrepo", "repos": sorted(per),
         "writes_only": writes_only,
         "summary": {"repos": len(per), "shared_tables": len(shared),
                     "multi_writer": n("multi_writer"),
                     "producer_consumer": n("producer_consumer"), "read_only": n("read_only"),
-                    "api_links": len(api_links)},
+                    "api_links": len(api_links), "task_links": len(task_links)},
         "per_repo": {n2: d.get("summary", {}) for n2, d in per.items()},
         "shared_tables": shared,
         "api_links": api_links,
+        "task_links": task_links,
     }
+    if db_map:
+        out["databases"] = {name: _db_of(name, db_map) for name in sorted(per)}
+    return out
 
 
 def _eps(lst, limit=6):
@@ -384,7 +452,8 @@ def write_html(data, path):
                        f'<div class="meta" style="margin:.1rem 0 .4rem">unique key: <code>{keys}</code></div>')
         cards.append(
             f'<details class="card" data-kind="{s["kind"]}" data-table="{_h.escape(s["table"].lower())}">'
-            f'<summary><code>{_h.escape(s["table"])}</code> <span class="{cls}">{label}</span>'
+            f'<summary><code>{_h.escape((s["database"] + ".") if s.get("database") else "")}'
+            f'{_h.escape(s["table"])}</code> <span class="{cls}">{label}</span>'
             f'<span class="meta">writers: {", ".join(s["writers"]) or "—"}</span></summary>'
             f'<div class="body">{uk_html}<div class="repos">{"".join(per)}</div></div></details>')
 
@@ -419,7 +488,7 @@ def write_html(data, path):
     body = '<div id="list">' + "".join(cards) + '</div><div id="empty">no tables match</div>'
     with open(path, "w", encoding="utf-8") as f:
         f.write(head + hdr + _blast_html(data) + toolbar + body
-                + _api_links_html(data) + "</div>" + _JS + "</body></html>")
+                + _api_links_html(data) + _task_links_html(data) + "</div>" + _JS + "</body></html>")
 
 
 def _blast_html(data):
@@ -459,6 +528,26 @@ def _api_links_html(data):
             f'<ul style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:.6rem 1.4rem">{rows}</ul>')
 
 
+def _task_links_html(data):
+    links = data.get("task_links") or []
+    if not links:
+        return ""
+    def badge(l):
+        return ('<span class="badge" style="background:#e6f4ea;color:#1e7e34">exact</span>'
+                if l.get("match") == "exact" else '<span class="badge amber">tail · verify</span>')
+    rows = "".join(
+        f'<li>{badge(l)} <b>{_h.escape(l["from_repo"])}</b> <code>{_h.escape(l["from"]["handler"])}</code> '
+        f'<span class="loc">{_h.escape(l["from"]["dispatch_loc"])}</span> &rarr; <code>{_h.escape(l["dispatch"])}</code> '
+        f'&rarr; <b>{_h.escape(l["to_repo"])}</b> task <code>{_h.escape(l["to"]["task"])}</code> '
+        f'<span class="loc">{_h.escape(l["to"]["loc"])}</span></li>' for l in links)
+    n_exact = sum(1 for l in links if l.get("match") == "exact")
+    return (f'<h2 style="font-size:1.05rem;margin:1.6rem 0 .2rem">Cross-repo Celery tasks ({len(links)})</h2>'
+            f'<p class="legend"><b>exact</b> ({n_exact}): <code>send_task</code> uses the task\'s explicit or '
+            f'full default name. · <b>tail</b> ({len(links) - n_exact}): only the function name matches '
+            '(e.g. <code>fn.delay()</code>) — <b>verify</b>.</p>'
+            f'<ul style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:.6rem 1.4rem">{rows}</ul>')
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         prog="lenscheck crossrepo",
@@ -480,8 +569,20 @@ def main(argv=None):
                          "show only the cross-repo tables/API-links those changes touch")
     ap.add_argument("--since", metavar="REF",
                     help="with --changed: diff against REF (default: uncommitted changes vs HEAD)")
+    ap.add_argument("--db", metavar="NAME=ALIAS", action="append", default=[],
+                    help="which database a repo's tables live in (NAME = repo folder name). Tables only "
+                         "join across repos with the same alias; repos not listed share one default "
+                         "database. Repeat per repo, e.g. --db orders=main --db billing=main --db audit=logs")
     ap.add_argument("--compact", action="store_true", help="single-line JSON")
     a = ap.parse_args(argv)
+
+    db_map = {}
+    for item in a.db:
+        k, sep, v = item.partition("=")
+        if not sep or not k.strip() or not v.strip():
+            print(f"lenscheck crossrepo: --db expects NAME=ALIAS, got {item!r}", file=sys.stderr)
+            return 3
+        db_map[k.strip()] = v.strip()
 
     for r in a.repos:
         head, sep, _ = r.rpartition("@")
@@ -495,9 +596,14 @@ def main(argv=None):
     try:
         import schema_dump
         data = build(a.repos, writes_only=a.writes_only, schema=schema_dump.load(a.schema),
-                     use_cache=not a.no_cache)
+                     use_cache=not a.no_cache, db_map=db_map)
     except Exception as e:                       # never leak a traceback onto parsed stdout
         print(f"lenscheck crossrepo: failed: {e}", file=sys.stderr)
+        return 3
+    unknown = [k for k in db_map if not any(n == k or n.startswith(k + "@") for n in data["repos"])]
+    if unknown:                                  # a typo would silently fall back to the default database
+        print(f"lenscheck crossrepo: --db names not among analyzed repos {data['repos']}: {unknown}",
+              file=sys.stderr)
         return 3
 
     if a.changed:
@@ -510,7 +616,9 @@ def main(argv=None):
             return 3
         cfiles = _changed_files(base, a.since)
         btables, blinks = _blast(data, cname, cfiles)
-        data["shared_tables"], data["api_links"] = btables, blinks
+        btasks = _blast_tasks(data, cname, cfiles)
+        data["shared_tables"], data["api_links"], data["task_links"] = btables, blinks, btasks
+        data["summary"]["task_links"] = len(btasks)
         for k in ("multi_writer", "producer_consumer", "read_only"):
             data["summary"][k] = sum(1 for t in btables if t["kind"] == k)
         data["summary"]["shared_tables"] = len(btables)
@@ -529,7 +637,8 @@ def main(argv=None):
     scope = f" · blast radius of {data['blast']['changed_repo']}" if data.get("blast") else ""
     print(f"lenscheck crossrepo: {s['repos']} repos · {s['shared_tables']} tables · "
           f"{s['multi_writer']} multi-writer · {s['producer_consumer']} producer/consumer · "
-          f"{s['read_only']} read-only · {s.get('api_links', 0)} API links{scope}", file=sys.stderr)
+          f"{s['read_only']} read-only · {s.get('api_links', 0)} API links · "
+          f"{s.get('task_links', 0)} task links{scope}", file=sys.stderr)
     if not a.out and not a.html:
         print(blob)
     return 0
