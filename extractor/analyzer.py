@@ -370,13 +370,13 @@ def parse_endpoints(index: RepoIndex) -> list:
                 route = _resolve_route(node.args[0], str_consts)
                 handler = _handler_name(node.args[1])
                 if handler:
-                    endpoints.append((route, handler))
-    # dedupe, preserve order
+                    endpoints.append((route, handler, path))
+    # dedupe, preserve order; the urls file rides along to disambiguate same-named views
     seen, out = set(), []
-    for r, h in endpoints:
+    for r, h, u in endpoints:
         if (r, h) not in seen:
             seen.add((r, h))
-            out.append((r, h))
+            out.append((r, h, u))
     return out
 
 
@@ -527,6 +527,23 @@ class FactCollector(ast.NodeVisitor):
     def _loc(self, node):
         return (self.file, getattr(node, "lineno", 0))
 
+    def _reverse_manager(self, f):
+        """`check.flip_set.order_by(...)` — Django's default reverse-FK manager is `<model name lowercased>_set`.
+        Resolve the stem against the repo's class names; no unique match records nothing (never invent a
+        table). Queryset-building methods count as a read, like `Model.objects.filter(...)`."""
+        if not isinstance(f, ast.Attribute) or f.attr not in (ORM_READ | ORM_WRITE | _SAME_MODEL_METHODS):
+            return None, None
+        cur = f.value
+        while isinstance(cur, ast.Call):
+            cur = cur.func.value if isinstance(cur.func, ast.Attribute) else None
+        if not (isinstance(cur, ast.Attribute) and cur.attr.endswith("_set") and len(cur.attr) > 4):
+            return None, None
+        stem = cur.attr[:-4].replace("_", "").lower()
+        hits = [m for m in self.known_models if m.lower() == stem]
+        if len(hits) != 1:
+            return None, None
+        return hits[0], (f.attr if f.attr in (ORM_READ | ORM_WRITE) else "all")
+
     def visit_Call(self, node: ast.Call):
         f = node.func
         fl, ln = self._loc(node)
@@ -538,6 +555,8 @@ class FactCollector(ast.NodeVisitor):
             self.db.append((self.manager_model, "write" if f.attr in ORM_WRITE else "read", fl, ln))
         # ORM:  <Model>.objects.<method>(...)  and chained querysets
         model, method = _orm_model_method(f, dotted=True)
+        if not model:
+            model, method = self._reverse_manager(f)
         if model and method:
             if model in ("self", "cls"):                 # `self.objects.x()` in a model method →
                 model = self.self_type or "<instance>"   # the enclosing class, not a table named "self"
@@ -1601,11 +1620,15 @@ def _auth_of(cls: ast.ClassDef, index=None, _seen=None):
     return None
 
 
-def analyze_handler(name: str, index: RepoIndex) -> Endpoint:
+def analyze_handler(name: str, index: RepoIndex, near: str = "") -> Endpoint:
     ep = Endpoint(route="", handler=name)
     cls, cfile = index.find_class(name)
     if cls is None:
-        fn, ffile = index.find_func(name)
+        # a URL routes to a module-level view (`views.ping`), never to a same-named model/class method
+        # (`Check.ping`); `near` (the urls file) picks the right app when two apps share a view name
+        fn, ffile = index.find_func(name, near=near, toplevel_only=True)
+        if fn is None:
+            fn, ffile = index.find_func(name, near=near)
         if fn is None:
             ep.e1_route_handler = Edge(UNKNOWN, note="handler not found in repo")
             for a in ("e2_auth", "e3_db_tables", "e4_external", "e5_async", "e6_pii", "e7_cache"):
@@ -2211,8 +2234,8 @@ def analyze_repo(root: str):
     index = RepoIndex(root)
     results = []
     # Django / DRF — routes come from urls.py, handlers resolved by name
-    for route, handler in parse_endpoints(index):
-        ep = analyze_handler(handler, index)
+    for route, handler, urls_file in parse_endpoints(index):
+        ep = analyze_handler(handler, index, near=urls_file)
         ep.route = route
         results.append(ep)
     # Flask / FastAPI — routes come from decorators on the handler function itself

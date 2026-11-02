@@ -433,3 +433,43 @@ def test_fk_traversal_read_uses_kwarg_line_not_call_line():
     assert lines["Child"] == 3                                # the parent query owns the call line
     assert lines["Parent"] == 5                               # the FK read points at its own kwarg
     assert lines["Child"] != lines["Parent"]
+
+
+def test_reverse_fk_manager_resolves_to_the_related_model(tmp_path):
+    # `check.flip_set...` is Django's default reverse-FK manager → a read of Flip; an unknown stem
+    # (`check.thing_set`) must record nothing rather than invent a table
+    import os
+    from extractor import analyze_repo
+    os.makedirs(tmp_path / "app")
+    (tmp_path / "app/models.py").write_text(
+        "from django.db import models\n"
+        "class Check(models.Model):\n    pass\n"
+        "class Flip(models.Model):\n    owner = models.ForeignKey(Check, on_delete=models.CASCADE)\n")
+    (tmp_path / "app/urls.py").write_text(
+        "from django.urls import path\nfrom . import views\nurlpatterns = [path('c/', views.details)]\n")
+    (tmp_path / "app/views.py").write_text(
+        "from .models import Check\n"
+        "def details(request):\n"
+        "    check = Check.objects.get(id=1)\n"
+        "    flips = list(check.flip_set.order_by('-id'))\n"
+        "    other = check.thing_set.all()\n"
+        "    check.flip_set.create()\n"
+        "    return flips\n")
+    ep = [e for e in analyze_repo(str(tmp_path)) if e.handler == "details"][0]
+    facts = {it.split(" @ ")[0] for it in ep.e3_db_tables.items}
+    assert {"Check:read", "Flip:read", "Flip:write"} <= facts
+    assert not any(f.lower().startswith("thing") for f in facts)
+
+
+def test_url_resolves_to_the_module_view_not_a_same_named_method(tmp_path):
+    import os
+    from extractor import analyze_repo
+    os.makedirs(tmp_path / "app")
+    (tmp_path / "app/models.py").write_text(
+        "from django.db import models\nclass Check(models.Model):\n    def ping(self):\n        self.save()\n")
+    (tmp_path / "app/urls.py").write_text(
+        "from django.urls import path\nfrom . import views\nurlpatterns = [path('p/', views.ping)]\n")
+    (tmp_path / "app/views.py").write_text(
+        "from .models import Check\ndef ping(request):\n    return Check.objects.count()\n")
+    ep = [e for e in analyze_repo(str(tmp_path)) if e.route == "p/"][0]
+    assert ep.file.endswith("views.py"), f"resolved to {ep.file}"
