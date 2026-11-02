@@ -49,7 +49,8 @@ def build(data):
     for l in data.get("api_links", []):
         edges.append({"src": ep(l["from_repo"], l["from"]), "kind": "calls",
                       "dst": ep(l["to_repo"], l["to"], route=l["to"].get("route")),
-                      "match": l.get("match", "tail"), "label": f"calls {l.get('call', '')}"})
+                      "match": l.get("match", "tail"),
+                      "label": " ".join(x for x in ("calls", l.get("method", ""), l.get("call", "")) if x)})
     for l in data.get("task_links", []):
         to = {"route": f"task:{l['to']['task']}", "handler": l["to"]["task"], "loc": l["to"].get("loc", "")}
         edges.append({"src": ep(l["from_repo"], l["from"]), "kind": "dispatches",

@@ -357,3 +357,28 @@ def test_celery_dispatch_links_to_the_task_another_repo_defines(tmp_path):
 
     only_a = crossrepo._blast_tasks(data, "svcA", {"app/views.py"})
     assert len(only_a) == 2 and crossrepo._blast_tasks(data, "svcA", {"app/other.py"}) == []
+
+
+def test_api_links_respect_the_http_method_when_both_sides_know_it(tmp_path):
+    a, b, c = tmp_path / "svcA", tmp_path / "svcB", tmp_path / "svcC"
+    _write(a, "app/urls.py",
+           "from django.urls import path\nfrom . import views\n"
+           "urlpatterns = [path('read/', views.read_leads), path('make/', views.make_lead)]\n")
+    _write(a, "app/views.py",
+           "import requests\nfrom django.conf import settings\n"
+           "def read_leads(request):\n    requests.get(f'{settings.B}/api/leads/')\n"
+           "def make_lead(request):\n    requests.post(f'{settings.B}/api/leads/', json={})\n")
+    _write(b, "app/urls.py",                       # class view that only serves POST
+           "from django.urls import path\nfrom . import views\n"
+           "urlpatterns = [path('leads/', views.LeadView.as_view())]\n")
+    _write(b, "app/views.py",
+           "from django.views import View\nclass LeadView(View):\n    def post(self, request):\n        return None\n")
+    _write(c, "app/urls.py",                       # function view: serves any verb → method unknown
+           "from django.urls import path\nfrom . import views\nurlpatterns = [path('leads/', views.leads)]\n")
+    _write(c, "app/views.py", "def leads(request):\n    return None\n")
+
+    links = crossrepo.build([str(a), str(b), str(c)], use_cache=False)["api_links"]
+    got = {(l["from"]["handler"], l["method"], l["to_repo"]) for l in links}
+    assert ("read_leads", "GET", "svcB") not in got, "a GET call must not link to a POST-only route"
+    assert ("make_lead", "POST", "svcB") in got
+    assert {("read_leads", "GET", "svcC"), ("make_lead", "POST", "svcC")} <= got   # unknown verbs: kept

@@ -218,7 +218,7 @@ function renderApiLinks(){
  if(!all.length){el.innerHTML="";links=[];return;}
  var nExact=all.filter(function(l){return l.match==="exact";}).length;
  var rows=all.map(function(l){var k=entOf(l.from.route);return '<li>'+(l.match==="exact"?'<span class="badge green" data-g="x-exact">exact</span>':'<span class="badge amber" data-g="x-tail">tail · verify</span>')
-  +' <b>'+esc(l.from_repo)+'</b> '+(k!=="http"?'<span class="badge" data-g="'+GK_ENT[k]+'">'+k+'</span> ':'')+'<code>'+esc(l.from.handler)+'</code> <span class="loc">'+esc(l.from.loc)+'</span> → call <code>'+esc(l.call)
+  +' <b>'+esc(l.from_repo)+'</b> '+(k!=="http"?'<span class="badge" data-g="'+GK_ENT[k]+'">'+k+'</span> ':'')+'<code>'+esc(l.from.handler)+'</code> <span class="loc">'+esc(l.from.loc)+'</span> → call <code>'+(l.method?esc(l.method)+' ':'')+esc(l.call)
   +'</code> → <b>'+esc(l.to_repo)+'</b> <code>'+esc(l.to.handler)+'</code> <span class="h">'+esc(l.to.route)+'</span> <span class="loc">'+esc(l.to.loc)+'</span></li>';}).join("");
  el.innerHTML='<h2 data-g="x-api-calls">Cross-repo API calls (<span id="lcount">'+all.length+'</span>)</h2>'
   +'<p class="legend"><b data-g="x-exact">exact</b> ('+nExact+'): the call path is the endpoint\'s full include()-chained route — trustworthy. · '

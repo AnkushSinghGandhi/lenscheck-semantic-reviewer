@@ -144,6 +144,20 @@ def _link_targets(e):
     return [(r, True) for r in full] or [(e.get("route", ""), False)]
 
 
+_VERBS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
+
+
+def _route_verbs(e):
+    """HTTP verbs an endpoint serves, when known. A Django function view (`<func>`) serves any verb → empty
+    = unknown. Django class views answer HEAD for a GET and OPTIONS on their own."""
+    v = set(e.get("methods") or []) & _VERBS
+    if v:
+        v.add("OPTIONS")
+        if "GET" in v:
+            v.add("HEAD")
+    return v
+
+
 def _api_links(per):
     """Cross-repo HTTP coupling: repo A's endpoint makes an outbound call whose path matches a route
     served by repo B — the complement to shared-table coupling. `match` is "exact" when the call path IS
@@ -158,18 +172,23 @@ def _api_links(per):
                 cs = _path_segs(call)
                 if not cs:
                     continue
+                cm = set((e.get("call_methods") or {}).get(call, []))
                 for other, rlist in routes.items():
                     if other == name:
                         continue
                     for tgt, r, rsegs, full in rlist:
                         if not _route_match(cs, rsegs):
                             continue
+                        rv = _route_verbs(tgt)
+                        if cm and rv and not (cm & rv):
+                            continue                   # e.g. a GET call vs a POST-only route at the same path
                         key = (name, e["loc"], other, tgt["loc"], call)
                         exact = full and len(cs) == len(rsegs)
                         if key in links and (links[key]["match"] == "exact" or not exact):
                             continue                   # keep the first hit, but let an exact one replace a tail
                         links[key] = {
-                            "from_repo": name, "call": call, "match": "exact" if exact else "tail",
+                            "from_repo": name, "call": call, "method": "/".join(sorted(cm)),
+                            "match": "exact" if exact else "tail",
                             "from": {k: e.get(k, "") for k in ("route", "handler", "loc")},
                             "to_repo": other,
                             "to": {"route": r, "handler": tgt.get("handler", ""), "loc": tgt.get("loc", "")}}
@@ -550,7 +569,7 @@ def _api_links_html(data):
                 if l.get("match") == "exact" else '<span class="badge amber">tail · verify</span>')
     rows = "".join(
         f'<li>{badge(l)} <b>{_h.escape(l["from_repo"])}</b> <code>{_h.escape(l["from"]["handler"])}</code> '
-        f'<span class="loc">{_h.escape(l["from"]["loc"])}</span> &rarr; call <code>{_h.escape(l["call"])}</code> '
+        f'<span class="loc">{_h.escape(l["from"]["loc"])}</span> &rarr; call <code>{_h.escape((l.get("method") + " ") if l.get("method") else "")}{_h.escape(l["call"])}</code> '
         f'&rarr; <b>{_h.escape(l["to_repo"])}</b> <code>{_h.escape(l["to"]["handler"])}</code> '
         f'<span class="h">{_h.escape(l["to"]["route"])}</span> '
         f'<span class="loc">{_h.escape(l["to"]["loc"])}</span></li>' for l in links)

@@ -105,6 +105,15 @@ def _url_path(dest):
     return p if p and p != "/" else None
 
 
+_HTTP_VERBS = {"get", "post", "put", "patch", "delete", "head", "options"}
+
+
+def _call_method(item):
+    """`'requests.post -> … @ f:1'` → "POST"; None when the call names no verb (`requests.request(...)`)."""
+    verb = item.split(" -> ", 1)[0].rsplit(".", 1)[-1].strip().lower()
+    return verb.upper() if verb in _HTTP_VERBS else None
+
+
 def _call_path(item):
     """From an e4_external item `'requests.post -> {HOST}/api/x @ f:1'` pull the destination path."""
     if " -> " not in item:
@@ -238,10 +247,21 @@ def build(repo, with_calls=False):
              "full_routes": fr.get((e.route, e.handler), []),
              "calls": sorted({p for it in (getattr(e.e4_external, "items", None) or [])
                               for p in (_call_path(it),) if p}),
+             "call_methods": _call_methods(e),
              "kind": e.kind, "dispatches": _celery_dispatches(e),
              **({"task_names": _task_names(index, repo, e)} if e.kind == "task" else {})}
             for e in eps]
     return out
+
+
+def _call_methods(e):
+    """{call path: [HTTP verbs]} for the outbound calls whose verb is known (see _call_method)."""
+    out = {}
+    for it in (getattr(e.e4_external, "items", None) or []):
+        p, m = _call_path(it), _call_method(it)
+        if p and m:
+            out.setdefault(p, set()).add(m)
+    return {p: sorted(ms) for p, ms in sorted(out.items())}
 
 
 def _celery_dispatches(e):
