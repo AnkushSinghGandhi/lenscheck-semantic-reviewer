@@ -42,6 +42,9 @@ def test_a_write_reaches_the_reader_and_what_the_reader_calls():
     assert got == [("svcB", "report", 1, "data", "exact"), ("svcC", "notify", 2, "data", "exact")]
     assert imp["repos"] == {"svcB": 1, "svcC": 1}
     assert "writes orders" in imp["affected"][1]["path"] and "calls /api/notify/" in imp["affected"][1]["path"]
+    assert imp["affected"][1]["trail"] == [["ep:svcA:a/tasks.py:3", "writes", "table:orders"],
+                                           ["ep:svcB:b/views.py:7", "reads", "table:orders"],
+                                           ["ep:svcB:b/views.py:7", "calls", "ep:svcC:c/views.py:2"]]
 
 
 def test_a_tail_link_makes_the_whole_path_verify():
@@ -131,6 +134,32 @@ def test_crossrepo_changed_adds_an_impact_block(tmp_path):
     data = json.loads(out.read_text())
     assert [x["repo"] for x in data["impact"]["affected"]] == ["svcB"]
     assert data["repo_meta"]["svcA"]["commit"] and data["repo_meta"]["svcA"]["dirty"] is True
+
+
+def test_serve_crossrepo_returns_the_graph_and_the_impact(tmp_path):
+    import threading
+    from http.client import HTTPConnection
+    from http.server import ThreadingHTTPServer
+    from urllib.parse import quote
+    import serve
+    a, b = _two_services(tmp_path)
+    _write(a, "app/tasks.py", "from celery import shared_task\nfrom .models import Order\n"
+                              "@shared_task\ndef sync_orders():\n    Order.objects.create(status='x')\n")
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), serve.make_handler(
+        {"repo": "", "invariants": "", "token": "", "allowed": [], "base_path": "", "preload": {},
+         "demos": {}, "demo_dir": ""}))
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        c = HTTPConnection(*httpd.server_address, timeout=60)
+        c.request("GET", f"/api/crossrepo?repos={quote(f'{a},{b}')}&changed={quote(str(a))}")
+        d = json.loads(c.getresponse().read())
+    finally:
+        httpd.shutdown()
+    assert sorted(e["kind"] for e in d["graph"]["edges"]) == ["reads", "writes"]
+    imp = d["impact"]
+    assert [x["repo"] for x in imp["affected"]] == ["svcB"] and imp["changed_files"] == ["app/tasks.py"]
+    edges = {(e["src"], e["kind"], e["dst"]) for e in d["graph"]["edges"]}
+    assert imp["affected"][0]["trail"] and all(tuple(t) in edges for t in imp["affected"][0]["trail"])
 
 
 def test_contract_hits_are_not_walked_further():

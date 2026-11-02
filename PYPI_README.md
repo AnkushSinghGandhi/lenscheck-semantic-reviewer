@@ -43,7 +43,7 @@ management commands, signal receivers), grouped worst-first:
 
 It also lists **cross-repo API calls** (service A calls a route service B serves). `--schema` adds a
 column-level rule ("coordinate on unique key (order_id, user_id)"). Results are cached per repo by git
-HEAD. Also in the UI: `lenscheck serve` → **Cross-repo** tab. Details: [CROSSREPO.md](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer/blob/main/CROSSREPO.md).
+HEAD. Also in the UI: `lenscheck serve` → **Cross-repo** tab (with a graph and a change-impact trace). Details: [CROSSREPO.md](https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer/blob/main/CROSSREPO.md).
 
 ### `lenscheck map` — every endpoint, worst-first
 

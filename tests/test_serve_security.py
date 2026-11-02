@@ -125,6 +125,22 @@ def test_crossrepo_branch_suffix_never_becomes_a_git_option(layout):
         assert st == 500 and "option-like" in body["error"]
 
 
+def test_crossrepo_impact_inputs_never_reach_git_as_options(layout):
+    import crossrepo
+    target = layout["tmp"] / "pwned.txt"
+    with pytest.raises(ValueError, match="option-like"):              # the CLI path has no boundary check
+        crossrepo._changed_files(layout["repo"], f"--output={target}")
+    a, b = os.path.join(layout["allowed"], "a"), os.path.join(layout["allowed"], "b")
+    os.makedirs(a)
+    os.makedirs(b)
+    repos = quote(f"{a},{b}")
+    with _serve() as addr:
+        assert _get(addr, f"/api/crossrepo?repos={repos}&changed={quote(a)}&since=--output={quote(str(target))}")[0] == 400
+        st, body = _get(addr, f"/api/crossrepo?repos={repos}&changed={quote(layout['other'])}")
+        assert st == 400 and "one of the repos" in body["error"]       # not analyzed = not allowlist-checked
+    assert not list(layout["tmp"].glob("pwned*"))
+
+
 def test_export_refuses_option_like_refs(tmp_path):
     # `git archive --remote=<url>` would be SSRF, `--output=<file>` a file write — refused before git runs
     for ref in ("--remote=http://169.254.169.254/", "--output=" + str(tmp_path / "x")):

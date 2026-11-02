@@ -119,14 +119,16 @@ def impact(graph, seed_ids, max_depth=3):
             cur = parent
         path.reverse()
         hops = [_label(graph["nodes"][cur])]                    # cur is the seed now
-        match = "exact"
+        match, trail = "exact", []
         for n, kind, walked in path:
             hops += [_hop(kind, walked), _label(graph["nodes"][n])]
+            trail += [[w["src"], w["kind"], w["dst"]] for w in walked]
             if any(w["match"] != "exact" for w in walked):
                 match = "verify"
         n = graph["nodes"][nid]
         affected.append({"repo": n["repo"], "route": n["route"], "handler": n["handler"], "loc": n["loc"],
-                         "depth": info[3], "kind": info[1], "confidence": match, "path": hops})
+                         "depth": info[3], "kind": info[1], "confidence": match, "path": hops,
+                         "trail": trail})                       # the edges walked, for a UI to highlight
     affected.sort(key=lambda a: (a["depth"], a["repo"], a["loc"]))
     repos = {}
     for a in affected:

@@ -106,6 +106,7 @@ const G = window.LC_GLOSSARY = {
   "egress": {t: "🌐 Shared egress", d: "One outside destination reached by several endpoints — verify it once instead of per route."},
   "egress-partial": {t: "⚠ Partial destination", d: "The host has a runtime placeholder (e.g. from settings or env), so only part of the URL is known."},
   "egress-unresolved": {t: "? Destination unresolved", d: "We saw a network call but couldn't work out where it goes."},
+  "runtime-evidence": {t: "🔬 Runtime evidence", d: "What observed traffic (lenscheck-contract record mode, or route-keyed logs) says about the changed endpoints: a ⚠/? edge it confirmed, or an effect only runtime saw. Runtime never removes an edge: a path that didn't run isn't observed."},
 
   // ---- invariants ----
   "invariants": {t: "⚖ Invariants", d: "Rules this codebase already follows (e.g. 'authenticated access before any DB write'), discovered from git history. Confirm the intentional ones and every review enforces them."},
@@ -152,6 +153,15 @@ const G = window.LC_GLOSSARY = {
   "x-has-uk": {t: "⚠ Has unique key", d: "Only tables with a unique key from schema.json — the ones where concurrent writers can collide."},
   "x-repos": {t: "Repos", d: "One repo per line. Add @branch to analyze a branch (checked out in a throwaway worktree; your checkout is untouched)."},
   "x-expand": {t: "Expand / collapse", d: "Open or close every shown table card."},
+  "x-impact": {t: "🔗 Cross-repo impact", d: "Endpoints in OTHER repos a change reaches: they read a table it writes, it calls their route or dispatches their task, or they call the changed route. Only links the cross-repo analysis found are followed."},
+  "x-kind-data": {t: "gets changed data", d: "This endpoint receives what the change produces: it reads a table a changed endpoint writes, or a changed endpoint calls or dispatches it. Followed further, up to 3 hops."},
+  "x-kind-contract": {t: "depends on the changed interface", d: "This endpoint calls the changed route or dispatches the changed task, so a change to its request, response or arguments can break it."},
+  "x-kind-cowriter": {t: "also writes the same table", d: "Another repo writes a table the changed endpoint writes. Their writes can collide (multi-writer)."},
+  "x-verify": {t: "⚠ verify", d: "The path goes through a link matched on only part of a route or task name. Usually right, but check it."},
+  "x-graph": {t: "🕸 Graph", d: "Each repo is a column of its endpoints; shared tables sit in the middle. Red = writes, green = reads, blue = HTTP call, purple = Celery dispatch; dashed = a tail match (verify). Hover a box for details."},
+  "x-changed": {t: "Changed repo", d: "The repo whose change to trace. Its endpoints declared in changed files are the starting points."},
+  "x-since": {t: "Since", d: "Compare the changed repo's working tree against this git ref (branch, tag or commit). Empty = uncommitted changes vs HEAD."},
+  "x-dispatches": {t: "dispatches", d: "A Celery task sent from one repo and defined in another (send_task or .delay())."},
 
   // ---- navigation ----
   "nav-review": {t: "☑ Review", d: "Review a PR, branch or commit: every semantic change, ranked."},

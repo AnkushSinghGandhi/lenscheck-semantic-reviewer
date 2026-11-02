@@ -174,7 +174,8 @@ def make_handler(cfg):
                 # these values end up in a git argv, where a leading "-" is parsed as an OPTION
                 # (`base=--output=/x` → `git diff --output=/x` writes a file). No real ref, sha, path or
                 # URL starts with "-", so refuse them here, at the trust boundary.
-                for k in ("repo", "repos", "base", "head", "merge", "commit", "ref", "pr", "schema"):
+                for k in ("repo", "repos", "base", "head", "merge", "commit", "ref", "pr", "schema",
+                          "changed", "since"):
                     if any(v.strip().startswith("-") for v in (g(k) or "").split(",")):
                         return self._json(400, {"error": f"invalid {k}"})
 
@@ -202,10 +203,23 @@ def make_handler(cfg):
                     schema_path = g("schema")        # a server-side path: same allowlist as repos, and JSON only
                     if schema_path and not (schema_path.endswith(".json") and self._repo_ok(schema_path)):
                         return self._json(403, {"error": "schema must be a .json file inside an allowed path"})
+                    changed = g("changed")           # must be one of `repos`, so it passed the allowlist above
+                    if changed and changed not in repos:
+                        return self._json(400, {"error": "changed must be one of the repos"})
                     import schema_dump
+                    import xrepo_graph
                     try:
                         schema = schema_dump.load(schema_path) if schema_path else None
                         data = crossrepo.build(repos, writes_only=(g("writes_only") == "1"), schema=schema)
+                        graph = xrepo_graph.build(data)
+                        data["graph"] = {"nodes": graph["nodes"], "edges": graph["edges"]}
+                        if changed:
+                            imp, cname, cfiles = crossrepo.change_impact(data, changed, g("since") or None)
+                            imp.update(changed_repo=cname, since=g("since") or "uncommitted vs HEAD",
+                                       changed_files=sorted(cfiles))
+                            data["impact"] = imp
+                    except ValueError as e:
+                        return self._json(400, {"error": str(e)})
                     except Exception as e:
                         return self._json(500, {"error": str(e)})
                     return self._json(200, data)

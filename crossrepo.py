@@ -267,6 +267,8 @@ def _db_of(name, db_map):
 def _changed_files(repo_path, since):
     """Repo-relative paths changed in `repo_path`: diff vs REF (`since`), else uncommitted changes
     vs HEAD (staged + unstaged + untracked, so a brand-new module counts)."""
+    if since and since.startswith("-"):  # it lands in git's argv: `--output=/x` must never become an option
+        raise ValueError(f"refusing an option-like git ref: {since!r}")
     try:
         if since:
             r = subprocess.run(["git", "-C", repo_path, "diff", "--name-only", since],
@@ -276,6 +278,19 @@ def _changed_files(repo_path, since):
         return {ln[3:] for ln in r.stdout.splitlines() if ln.strip()}
     except Exception:
         return set()
+
+
+def change_impact(data, changed, since=None):
+    """(impact, changed repo's display name, changed files) for a change in `changed`, a PATH or
+    PATH@BRANCH that is one of `data`'s repos. ValueError when it isn't."""
+    base = changed.rpartition("@")[0] or changed
+    cbase = os.path.basename(os.path.abspath(base))
+    cname = next((r for r in data["repos"] if r == cbase or r.startswith(cbase + "@")), None)
+    if not cname:
+        raise ValueError(f"--changed '{cbase}' not among analyzed repos {data['repos']}")
+    cfiles = _changed_files(base, since)
+    graph = xrepo_graph.build(data)
+    return xrepo_graph.impact(graph, xrepo_graph.seeds(graph, cname, cfiles)), cname, cfiles
 
 
 def _touches(loc, changed_files):
@@ -660,16 +675,11 @@ def main(argv=None):
         return 3
 
     if a.changed:
-        base = a.changed.rpartition("@")[0] or a.changed
-        cbase = os.path.basename(os.path.abspath(base))
-        cname = next((r for r in data["repos"] if r == cbase or r.startswith(cbase + "@")), None)
-        if not cname:
-            print(f"lenscheck crossrepo: --changed '{cbase}' not among analyzed repos {data['repos']}",
-                  file=sys.stderr)
+        try:
+            data["impact"], cname, cfiles = change_impact(data, a.changed, a.since)
+        except ValueError as e:
+            print(f"lenscheck crossrepo: {e}", file=sys.stderr)
             return 3
-        cfiles = _changed_files(base, a.since)
-        graph = xrepo_graph.build(data)
-        data["impact"] = xrepo_graph.impact(graph, xrepo_graph.seeds(graph, cname, cfiles))
         btables, blinks = _blast(data, cname, cfiles)
         btasks = _blast_tasks(data, cname, cfiles)
         data["shared_tables"], data["api_links"], data["task_links"] = btables, blinks, btasks

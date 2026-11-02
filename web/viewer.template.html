@@ -205,6 +205,47 @@ if(bg && bg.endpoints>=2){
     `<div class="inv info"><h2 data-g="blast">${title}</h2>${drawBlast(bg)}</div>`;
 }
 
+// cross-repo impact panel (--crossrepo) — endpoints in OTHER repos this change reaches, with the path
+const xi = DATA.crossrepo_impact;
+if(xi){
+  const aff = xi.affected||[], nrep = Object.keys(xi.repos||{}).length;
+  const G_XK={data:"x-kind-data",contract:"x-kind-contract","co-writer":"x-kind-cowriter"};
+  const KW={data:"gets changed data",contract:"depends on the changed interface","co-writer":"also writes the same table"};
+  const meta = Object.entries(xi.repo_meta||{}).map(([r,m])=>
+    `${esc(r)} @ ${esc((m.commit||"?").slice(0,8))}${m.dirty?" (uncommitted changes)":""}`).join(" · ");
+  const rows = aff.map(a=>`<details class="blast-row"><summary>`+
+      `<span class="badge" data-g="${G_XK[a.kind]}">${esc(KW[a.kind]||a.kind)}</span>`+
+      `<b>${esc(a.repo)}</b><span class="blast-name" title="${esc(a.route)}">${esc(a.handler||a.route)}</span>`+
+      `<span class="det mono">${esc(a.loc)}</span><span style="flex:1"></span>`+
+      (a.confidence==="exact"?"":`<span class="det" data-g="x-verify">⚠ verify</span>`)+
+      `<span class="blast-count">depth ${a.depth}</span></summary>`+
+      `<div class="blast-eps flow">${(a.path||[]).map((h,i)=>i%2?`<span class="arr">${esc(h)} →</span>`
+        :`<span class="node mono">${esc(h)}</span>`).join("")}</div></details>`).join("");
+  document.getElementById("invwrap").innerHTML +=
+    `<div class="inv info"><h2 data-g="x-impact">🔗 Cross-repo impact — `+
+    (aff.length?`${aff.length} endpoint${aff.length>1?"s":""} in ${nrep} other repo${nrep>1?"s":""}`:"nothing outside this repo is reached")+`</h2>`+
+    `<div class="blast-note">From <b>${(xi.seeds||[]).length}</b> changed endpoint(s), through shared tables, HTTP calls `+
+    `and Celery tasks. Click a row for the path.${meta?`<br>Analyzed: ${meta}`:""}</div>`+
+    (rows?`<div class="blast-list">${rows}</div>`:"")+`</div>`;
+}
+
+// runtime evidence panel (--runtime) — what observed traffic confirmed or added on the changed endpoints
+const rt = DATA.runtime;
+if(rt){
+  const ev = rt.evidence||[];
+  const EDGE={e3_db_tables:"DB",e4_external:"external call",e5_async:"async dispatch",e6_pii:"PII egress"};
+  const rows = ev.map((x,i)=>`<div class="row"><div class="stmt"><span class="blast-ep" onclick="jumpRoute(DATA.runtime.evidence[${i}].route)">`+
+      `${esc(x.route)}</span> ${esc(EDGE[x.edge]||x.edge)}: `+
+      (x.runtime_only&&x.runtime_only.length
+        ? `seen only at runtime — ${x.runtime_only.map(i=>`<code>${esc(i.split(" @ ")[0])}</code>`).join(", ")}`
+        : `${esc(x.before)} → ${esc(x.after)} confirmed by runtime`)+
+      `</div><div class="det">${esc(x.handler)}</div></div>`).join("");
+  document.getElementById("invwrap").innerHTML +=
+    `<div class="inv info"><h2 data-g="runtime-evidence">🔬 Runtime evidence — ${rt.observations||0} observation(s)</h2>`+
+    (rows||`<div class="blast-note">Runtime added nothing to the changed endpoints. That is not proof of `+
+      `absence: a path that didn't run isn't observed.</div>`)+`</div>`;
+}
+
 // filters
 const fbar = document.getElementById("filters");
 ["🔴","🟠","🟡","🟢"].forEach(s=>{
@@ -281,7 +322,7 @@ function drawBlast(g){
     : "";
   return head+`<div class="blast-list">${res.slice(0,CAP).map(row).join("")}${more}</div>`;
 }
-function esc(s){return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
 renderList();
 </script>
 </body>
