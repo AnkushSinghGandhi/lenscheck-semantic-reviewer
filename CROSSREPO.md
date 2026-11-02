@@ -82,6 +82,9 @@ tells you exactly which route/handler in each service to coordinate.
   (verify) when the callee only has a leaf route or the call carries an extra prefix (e.g. a proxy
   mount). A prefix that can't be folded statically — e.g. legacy's `'{}'.format(settings.URL_PREFIX)`
   mount — yields no full route, so that repo's links stay `tail` rather than claiming false precision.
+- **HTTP verbs.** When both sides know the verb and they differ, there's no link: a `requests.get` never
+  links to a POST-only class view at the same path. A Django function view serves any verb, so its links
+  stay. The link records the call's `method`.
 - **Celery links: `exact` vs `tail`.** A `send_task('billing.charge')` is **exact** when the string is the
   task's explicit `@task(name=...)` or its full default name (`module.path.func`). `fn.delay()` only
   names a function, so it's **tail** (verify). A dynamically built task name is skipped, not guessed.

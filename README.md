@@ -13,6 +13,8 @@ couldn't figure out.
 **Free.** No account, no API key, no paid tier, and nothing is uploaded: everything runs on your machine or in your CI.
 **New in 3.1:** reviews show how far a change reaches into your other services (`--crossrepo`), Celery tasks link across repos, and `--db` keeps separate databases apart. [Cross-repo guide](CROSSREPO.md).
 
+**How accurate is it?** When it names a table it's right (0 invented in a real-world spot check); it doesn't see everything yet. Measured numbers, and exactly what it can and can't see: [COVERAGE.md](COVERAGE.md).
+
 **📖 New here? Read [The Complete Guide](blog/lenscheck-complete-guide.md)** — every feature, command,
 flag, and concept explained in plain English, with screenshots.
 
