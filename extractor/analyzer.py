@@ -248,6 +248,56 @@ class RepoIndex:
                 return f"{app}_{model.lower()}", False
         return None, False
 
+    def reverse_relation(self, model, accessor):
+        """(source model, kind) for a reverse accessor on `model`: `Credential.user = FK(User,
+        related_name="credentials")` makes `user.credentials` a manager of Credential; without a `related_name`
+        a ForeignKey/ManyToMany gives `<source lower>_set` and a OneToOne gives `<source lower>`.
+        kind is "fk", "m2m" or "o2o"."""
+        rev = self.__dict__.get("_reverse_rels")
+        if rev is None:
+            rev = self.__dict__["_reverse_rels"] = {}
+            kinds = {"ForeignKey": "fk", "OneToOneField": "o2o", "ManyToManyField": "m2m"}
+            for src, defs in self.classes.items():
+                for node, _path in defs[:1]:
+                    for st in getattr(node, "body", []):
+                        if not (isinstance(st, ast.Assign) and isinstance(st.value, ast.Call) and st.value.args):
+                            continue
+                        kind = kinds.get(_dotted(st.value.func).split(".")[-1])
+                        target = _class_ref(st.value.args[0]) if kind else None
+                        if not target:
+                            continue
+                        target = src if target == "self" else target
+                        name = next((k.value.value for k in st.value.keywords if k.arg == "related_name"
+                                     and isinstance(k.value, ast.Constant) and isinstance(k.value.value, str)), None)
+                        if name is None:
+                            name = src.lower() if kind == "o2o" else f"{src.lower()}_set"
+                        rev.setdefault((target, name), (src, kind))   # related_name="+" registers a name nothing can match
+        return rev.get((model, accessor))
+
+    def property_def(self, cls_name, attr):
+        """The `@property` / `@cached_property` def `attr` on repo class `cls_name` (own or inherited), else None."""
+        cache = self.__dict__.setdefault("_prop_defs", {})
+        key = (cls_name, attr)
+        if key not in cache:
+            fn = _inherited_methods(self, cls_name).get(attr)
+            cache[key] = fn if fn is not None and _deco_names(fn) & {"property", "cached_property"} else None
+        return cache[key]
+
+    def class_attr_models(self, cls_name):
+        """{attr: model} for class-body annotations of a repo class (`profile: Profile`): a request or
+        context class that declares which models hang off it."""
+        cache = self.__dict__.setdefault("_attr_models", {})
+        if cls_name not in cache:
+            out = {}
+            node, _ = self.find_class(cls_name)
+            for st in getattr(node, "body", []):
+                if isinstance(st, ast.AnnAssign) and isinstance(st.target, ast.Name):
+                    am = _anno_model(st.annotation)
+                    if am and _is_model(self, am):
+                        out[st.target.id] = am
+            cache[cls_name] = out
+        return cache[cls_name]
+
     def model_field(self, model, field):
         """(kind, target, through) for a relation field declared on a repo model: kind "fk"
         (ForeignKey / OneToOneField) or "m2m" (ManyToManyField), target = the related class name
@@ -555,6 +605,30 @@ class FactCollector(ast.NodeVisitor):
     def _loc(self, node):
         return (self.file, getattr(node, "lineno", 0))
 
+    def _receiver_model(self, expr):
+        """The repo model `expr` evaluates to, at any depth: a typed name, a dotted key typed from an annotation
+        (`request.profile`), an FK field (`channel.project`) or a `@property` annotated `-> Model`
+        (`self.owner_profile`). None when it can't be pinned down."""
+        if isinstance(expr, ast.Name):
+            return self._typed_model(expr)
+        if not isinstance(expr, ast.Attribute) or self.index is None:
+            return None
+        typed = self.var_types.get(_receiver_key(expr))
+        if typed and _is_model(self.index, typed):
+            return typed
+        owner = self._receiver_model(expr.value)
+        if not owner:
+            return None
+        rel = self.index.model_field(owner, expr.attr)
+        if rel and rel[0] == "fk":
+            return rel[1]
+        rev = self.index.reverse_relation(owner, expr.attr)
+        if rev and rev[1] == "o2o":
+            return rev[0]
+        prop = self.index.property_def(owner, expr.attr)
+        m = _anno_model(prop.returns) if prop is not None else None
+        return m if m and _is_model(self.index, m) else None
+
     def _typed_model(self, expr):
         """The repo model a receiver holds: `self` in a model method, or a local typed by an ORM fetch."""
         if isinstance(expr, ast.Name):
@@ -588,6 +662,24 @@ class FactCollector(ast.NodeVisitor):
                 return hits[0], field, through
         return None
 
+    def _property_manager(self, f):
+        """`check.visible_pings.order_by(...)` where Check has `@property def visible_pings(self) ->
+        QuerySet[Ping]`: the declared return type names the model the property's queryset reads."""
+        if not isinstance(f, ast.Attribute) or self.index is None \
+                or f.attr not in (ORM_READ | ORM_WRITE | _SAME_MODEL_METHODS):
+            return None, None
+        cur = f.value
+        while isinstance(cur, ast.Call):
+            cur = cur.func.value if isinstance(cur.func, ast.Attribute) else None
+        if not isinstance(cur, ast.Attribute):
+            return None, None
+        owner = self._receiver_model(cur.value)
+        prop = self.index.property_def(owner, cur.attr) if owner else None
+        m = _anno_model(prop.returns) if prop is not None else None
+        if m and _is_model(self.index, m):
+            return m, (f.attr if f.attr in (ORM_READ | ORM_WRITE) else "all")
+        return None, None
+
     def _reverse_manager(self, f):
         """`check.flip_set.order_by(...)` — Django's default reverse-FK manager is `<model name lowercased>_set`.
         Resolve the stem against the repo's class names; no unique match records nothing (never invent a
@@ -599,6 +691,11 @@ class FactCollector(ast.NodeVisitor):
         cur = f.value
         while isinstance(cur, ast.Call):
             cur = cur.func.value if isinstance(cur.func, ast.Attribute) else None
+        if isinstance(cur, ast.Attribute) and self.index is not None:       # `user.credentials.filter(...)`
+            owner = self._receiver_model(cur.value)
+            rev = self.index.reverse_relation(owner, cur.attr) if owner else None
+            if rev and rev[1] in {"fk", "m2m"}:
+                return rev[0], (f.attr if f.attr in (ORM_READ | ORM_WRITE) else "all")
         if not (isinstance(cur, ast.Attribute) and cur.attr.endswith("_set") and len(cur.attr) > 4):
             return None, None
         stem = cur.attr[:-4].replace("_", "").lower()
@@ -638,6 +735,8 @@ class FactCollector(ast.NodeVisitor):
         model, method = _orm_model_method(f, dotted=True)
         if not model:
             model, method = self._reverse_manager(f)
+        if not model:
+            model, method = self._property_manager(f)
         if model and method:
             if model in ("self", "cls"):                 # `self.objects.x()` in a model method →
                 model = self.self_type or "<instance>"   # the enclosing class, not a table named "self"
@@ -650,6 +749,14 @@ class FactCollector(ast.NodeVisitor):
                 # `link_model = SynonymLink`), else record an honest `<instance>` rather than
                 # inventing a table literally named `model`/`link_model`/`target_model`.
                 model = self.var_types.get(model) or "<instance>"
+            if method in {"annotate", "aggregate"} and self.index is not None and model[:1].isupper():
+                for arg in list(node.args) + [k.value for k in node.keywords]:    # `Count("checks")` joins checks
+                    if isinstance(arg, ast.Call) and _dotted(arg.func).split(".")[-1] in _AGG_FUNCS \
+                            and arg.args and isinstance(arg.args[0], ast.Constant) \
+                            and isinstance(arg.args[0].value, str):
+                        rel = self.index.model_field(model, arg.args[0].value.split("__")[0])
+                        if rel:
+                            self.db.append((rel[1], "read", fl, ln))
             if method == "raw":
                 pass   # `<Model>.objects.raw(sql)` — the raw SQL text (parsed below into FROM/JOIN
                        # tables) names the real table; a model-level read here would double-count it.
@@ -797,9 +904,11 @@ class FactCollector(ast.NodeVisitor):
             # Same: don't exclude ORM verbs; resolution (mod_imports / instance_types) gates the follow.
             self.typed_calls.append((f.value.id, f.attr))
             self._note_args(f"{f.value.id}.{f.attr}", node)
-        elif self._relation(f) and self._relation(f)[2][0] == "fk":
-            # `check.project.update_next_nag_dates()` — a method on the model an FK field points to
-            target = self._relation(f)[2][1]
+        elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Attribute) and self._receiver_model(f.value):
+            # `check.project.update_next_nag_dates()` / `request.project.num_checks_available()` /
+            # `self.owner_profile.num_checks_available()`: a method on the model an FK, a typed request attribute
+            # or a `-> Model` property points to
+            target = self._receiver_model(f.value)
             self.typed_calls.append((target, f.attr))
             self._note_args(f"{target}.{f.attr}", node)
         elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Call) \
@@ -819,6 +928,13 @@ class FactCollector(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Attribute(self, node: ast.Attribute):
+        if isinstance(node.ctx, ast.Load) and self.index is not None:     # reading a @property runs its body
+            owner = self._receiver_model(node.value)
+            if owner and self.index.property_def(owner, node.attr) is not None:
+                self.typed_calls.append((owner, node.attr))
+            rev = self.index.reverse_relation(owner, node.attr) if owner else None
+            if rev and rev[1] == "o2o":                      # `user.profile` is a query on the profile table
+                self.db.append((rev[0], "read", self.file, getattr(node, "lineno", 0)))
         if node.attr in SENSITIVE:
             self.pii.append((node.attr, self.file, getattr(node, "lineno", 0)))
         # SQLAlchemy declarative query: `Model.query.filter(...)` → a read of Model
@@ -858,6 +974,12 @@ class FactCollector(ast.NodeVisitor):
                 m, meth = _orm_model_method(node.value.func)           # obj, created = M.objects.get_or_create()
                 if m and meth in {"get_or_create", "update_or_create"}:
                     self.var_types[tgt.elts[0].id] = m
+                elif self.index is not None and self._ret_depth < RET_DEPTH:
+                    fn, ffile, owner = self._resolve_callee(node.value.func)       # a, b = helper(...)
+                    cols = _return_tuple(self.index, fn, ffile, owner, self._ret_depth) if fn is not None else None
+                    for elt, em in zip(tgt.elts, cols or []):
+                        if isinstance(elt, ast.Name) and em:
+                            self.var_types[elt.id] = em
         if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
             name = node.targets[0].id
             val = _fold_str(node.value, self.str_vars)       # `url = 'x' + settings.Y` → resolve dest later
@@ -878,6 +1000,9 @@ class FactCollector(ast.NodeVisitor):
             m = _anno_model(a.annotation)
             if m:
                 self.var_types[a.arg] = m
+                if self.index is not None:           # `request: AuthenticatedHttpRequest` declares `profile: Profile`
+                    for attr, am in self.index.class_attr_models(m).items():
+                        self.var_types[f"{a.arg}.{attr}"] = am
         self.generic_visit(node)
         self._fn_depth -= 1
     visit_AsyncFunctionDef = visit_FunctionDef
@@ -1021,6 +1146,13 @@ class FactCollector(ast.NodeVisitor):
         m = _expr_model(expr, self.var_types)
         if m:
             return m
+        if isinstance(expr, ast.Attribute):                    # `user.profile` / `channel.project` / `self.owner_profile`
+            m = self._receiver_model(expr)
+            if m:
+                return m
+        if isinstance(expr, ast.Name) and expr.id in ("self", "cls") and self.self_type \
+                and self.index is not None and _is_model(self.index, self.self_type):
+            return self.self_type                              # `self.save()` in a MODEL method (not a service class)
         root = _chain_root(expr)
         return self._call_return_model(root) if isinstance(root, ast.Call) else None
 
@@ -1101,6 +1233,10 @@ def _orm_model_method(f, dotted=False):
 _SAME_MODEL_METHODS = {"filter", "exclude", "all", "order_by", "distinct", "select_related",
                        "prefetch_related", "using", "select_for_update", "only", "defer", "annotate",
                        "reverse", "none", "first", "last", "get", "latest", "earliest", "create"}
+_VALIDATION_ENTRY = {"is_valid", "full_clean", "validate"}      # entry points of Django forms / DRF serializers
+_VALIDATORS = {"clean", "validate"}
+_VALIDATOR_PREFIXES = ("clean_", "validate_")
+_AGG_FUNCS = {"Count", "Sum", "Avg", "Min", "Max"}
 RET_DEPTH = 3                     # helper → helper hops followed to resolve a returned value
 _NON_MODEL_RETURN_SUFFIXES = NON_MODEL_SUFFIXES + ("Response", "Exception", "Error")
 _MODEL_BASES = {"AbstractUser", "AbstractBaseUser"}
@@ -1121,6 +1257,9 @@ def _expr_model(expr, var_types):
     m = FactCollector._model_of(expr)
     if m:
         return m
+    if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name) \
+            and expr.func.id in {"get_object_or_404", "get_list_or_404"} and expr.args:
+        return _expr_model(expr.args[0], var_types)        # `get_object_or_404(q, ...)` with a typed queryset
     cur = _chain_root(expr)
     if isinstance(cur, ast.Subscript):
         cur = cur.value
@@ -1288,6 +1427,10 @@ def _return_model(index, fn, ffile, owner, depth):
     if id(fn) in memo:
         return memo[id(fn)]
     memo[id(fn)] = None                                         # recursion guard
+    declared = _anno_model(getattr(fn, "returns", None))        # `-> Check` / `-> Check | None` is exact
+    if declared and _is_model(index, declared):
+        memo[id(fn)] = declared
+        return declared
     known = index.__dict__.get("_known_models")
     if known is None:
         known = index.__dict__["_known_models"] = set(index.classes)
@@ -1309,6 +1452,43 @@ def _return_model(index, fn, ffile, owner, depth):
         if m:
             models.add(m)
     memo[id(fn)] = models.pop() if len(models) == 1 else None
+    return memo[id(fn)]
+
+
+def _return_tuple(index, fn, ffile, owner, depth):
+    """Per-position models of a function that returns a tuple (`-> tuple[Check, bool]`, or `return check, rw`
+    in every return): a list like [Check, None], else None. Positions that disagree between returns stay None."""
+    memo = index.__dict__.setdefault("_ret_tuple_memo", {})
+    if id(fn) in memo:
+        return memo[id(fn)]
+    memo[id(fn)] = None
+    ann = getattr(fn, "returns", None)
+    if isinstance(ann, ast.Subscript) and _dotted(ann.value).split(".")[-1] in {"tuple", "Tuple"}:
+        cols = [m if m and _is_model(index, m) else None for m in map(_anno_model, _anno_args(ann))]
+        memo[id(fn)] = cols if any(cols) else None
+        return memo[id(fn)]
+    known = index.__dict__.get("_known_models")
+    if known is None:
+        known = index.__dict__["_known_models"] = set(index.classes)
+    c = FactCollector(_rel(index, ffile), consts=index.consts_for(ffile), class_models=index.class_models,
+                      self_type=owner, known_models=known, index=index, ret_depth=depth + 1)
+    c.visit(fn)
+    cols = None
+    for r in _own_returns(fn):
+        if not isinstance(r.value, ast.Tuple):
+            continue
+        row = []
+        for e in r.value.elts:
+            m = c._value_model(e)
+            row.append(m if m and not m.endswith(_NON_MODEL_RETURN_SUFFIXES) and _is_model(index, m) else None)
+        if cols is None:
+            cols = row
+        elif len(cols) == len(row):
+            cols = [a if a == b else None for a, b in zip(cols, row)]
+        else:
+            cols = None
+            break
+    memo[id(fn)] = cols if cols and any(cols) else None
     return memo[id(fn)]
 
 
@@ -1427,15 +1607,40 @@ def _receiver_key(node):
     return None
 
 
+def _is_none(node):
+    return isinstance(node, ast.Constant) and node.value is None
+
+
+def _anno_args(ann):
+    """The type arguments of a subscripted annotation (`tuple[A, B]` → [A, B]), tolerating ast.Index."""
+    sl = ann.slice
+    if sl.__class__.__name__ == "Index":                    # Python <3.9
+        sl = sl.value
+    return list(sl.elts) if isinstance(sl, ast.Tuple) else [sl]
+
+
 def _anno_model(ann):
     """A model name from a type annotation (`obj: EntityLock`, `models.Foo`, or a `"Foo"` forward
-    ref), or None. Uppercase-first heuristic — a builtin like `str`/`int` is ignored."""
+    ref), or None. Uppercase-first heuristic — a builtin like `str`/`int` is ignored. Looks through
+    `Optional[X]`, `X | None`, `Union[X, None]` and `QuerySet[X]` (a queryset of X is typed as X)."""
+    if isinstance(ann, ast.BinOp) and isinstance(ann.op, ast.BitOr):
+        sides = [x for x in (ann.left, ann.right) if not _is_none(x)]
+        return _anno_model(sides[0]) if len(sides) == 1 else None
+    if isinstance(ann, ast.Subscript):
+        if _dotted(ann.value).split(".")[-1] in {"Optional", "QuerySet", "Union"}:
+            args = [x for x in _anno_args(ann) if not _is_none(x)]
+            return _anno_model(args[0]) if len(args) == 1 else None
+        return None
     if isinstance(ann, ast.Name) and ann.id[:1].isupper():
         return ann.id
     if isinstance(ann, ast.Attribute) and ann.attr[:1].isupper():
         return ann.attr
-    if isinstance(ann, ast.Constant) and isinstance(ann.value, str) and ann.value[:1].isupper():
-        return ann.value.split("[", 1)[0].strip()     # "Foo" / "List[Foo]" forward refs
+    if isinstance(ann, ast.Constant) and isinstance(ann.value, str):
+        try:                                          # a forward ref is an expression in a string:
+            inner = ast.parse(ann.value.strip(), mode="eval").body       # "Foo" / "Optional[Foo]" / "QuerySet[Foo]"
+        except SyntaxError:
+            return None
+        return _anno_model(inner)
     return None
 
 
@@ -2019,6 +2224,19 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
         if cls is not None:
             method = next((m for m in cls.body if isinstance(m, ast.FunctionDef) and m.name == mname), None)
             if method is None:
+                if mname in _VALIDATION_ENTRY:           # `form.is_valid()` runs clean() / clean_<field>()
+                    inh = _inherited_methods(index, target_cls)
+                    for vname, vm in sorted(inh.items()):
+                        if vname not in _VALIDATORS and not vname.startswith(_VALIDATOR_PREFIXES):
+                            continue
+                        vkey = f"{target_cls}.{vname}"
+                        if vkey in followed:
+                            continue
+                        if _capped():
+                            return
+                        followed.add(vkey)
+                        _walk_follow(vm, agg, index, getattr(vm, "lc_file", cfile), inh, followed, child_depth,
+                                     self_type=target_cls, seen=child_seen, dry_streak=child_streak, stop=stop)
                 continue
             # the receiver's bindings: its class attrs, under the fields of the config object it holds
             inst = local.inst_fields.get(cname)

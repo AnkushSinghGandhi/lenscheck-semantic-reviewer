@@ -544,3 +544,174 @@ def test_default_table_uses_the_django_app_folder(tmp_path):
                        "class Note(models.Model):\n    tags = models.ManyToManyField(Tag)\n",
                        "from .models import Note\ndef v(request):\n    n = Note.objects.get(id=1)\n    n.tags.add(1)\n")
     assert "app_note_tags:write" in facts
+
+
+HELPER_MODELS = ("from django.db import models\n"
+                 "class Check(models.Model):\n"
+                 "    project = models.ForeignKey('Project', on_delete=models.CASCADE)\n"
+                 "    def create_flip(self):\n        Flip.objects.create(owner=self)\n"
+                 "    @property\n    def visible_pings(self) -> 'QuerySet[Ping]':\n        return self.ping_set.all()\n"
+                 "class Flip(models.Model):\n    owner = models.ForeignKey(Check, on_delete=models.CASCADE)\n"
+                 "class Ping(models.Model):\n    owner = models.ForeignKey(Check, on_delete=models.CASCADE)\n"
+                 "class Channel(models.Model):\n    checks = models.ManyToManyField(Check)\n"
+                 "class Project(models.Model):\n    pass\n"
+                 "class Profile(models.Model):\n    pass\n")
+
+
+def test_helper_with_a_return_annotation_types_the_caller_variable(tmp_path):
+    # the body is opaque (a registry lookup): only the `-> Check` annotation can say what comes back
+    view = ("from .models import Check\nimport registry\n"
+            "def _get_check(request, code) -> Check:\n    return registry.fetch(code)\n"
+            "def v(request):\n    check = _get_check(request, 1)\n    check.create_flip()\n")
+    assert "Flip:write" in _mini_repo(tmp_path, HELPER_MODELS, view)
+
+
+def test_tuple_returning_helper_types_the_unpacked_names(tmp_path):
+    # annotation form, and the un-annotated `return check, True` form with a typed queryset variable
+    annotated = ("from .models import Check\n"
+                 "def _get(request) -> tuple[Check, bool]:\n    raise NotImplementedError\n"
+                 "def v(request):\n    check, rw = _get(request)\n    check.create_flip()\n")
+    assert "Flip:write" in _mini_repo(tmp_path, HELPER_MODELS, annotated)
+    plain = ("from django.shortcuts import get_object_or_404\nfrom .models import Check\n"
+             "def _get(request, code):\n    q = Check.objects.select_related('project')\n"
+             "    check = get_object_or_404(q, id=code)\n    if request.user.is_superuser:\n        return check, True\n"
+             "    return check, False\n"
+             "def v(request):\n    check, rw = _get(request, 1)\n    check.create_flip()\n")
+    import shutil
+    shutil.rmtree(tmp_path / "app")
+    assert "Flip:write" in _mini_repo(tmp_path, HELPER_MODELS, plain)
+
+
+def test_optional_and_queryset_annotations_are_looked_through():
+    import ast
+    from extractor.analyzer import _anno_model
+    for src, want in [("Check", "Check"), ("Check | None", "Check"), ("Optional[Check]", "Check"),
+                      ("QuerySet[Check]", "Check"), ("Union[Check, None]", "Check"),
+                      ("Union[Check, Flip]", None), ("list[Check]", None), ("int", None)]:
+        assert _anno_model(ast.parse(src, mode="eval").body) == want, src
+
+
+def test_request_attribute_declared_on_the_request_class_types_the_write(tmp_path):
+    import os
+    os.makedirs(tmp_path / "app", exist_ok=True)
+    (tmp_path / "app/http.py").write_text(
+        "from .models import Profile\nclass AuthedRequest:\n    profile: Profile\n")
+    view = ("from .http import AuthedRequest\ndef v(request: AuthedRequest):\n    request.profile.save()\n")
+    facts = _mini_repo(tmp_path, HELPER_MODELS, view)
+    assert "Profile:write" in facts and not any(f.startswith("<instance>") for f in facts)
+
+
+def test_property_returning_a_queryset_reads_the_declared_model(tmp_path):
+    view = ("from .models import Check\ndef v(request):\n    check = Check.objects.get(id=1)\n"
+            "    return list(check.visible_pings.order_by('-id'))\n")
+    assert "Ping:read" in _mini_repo(tmp_path, HELPER_MODELS, view)
+
+
+def test_form_is_valid_follows_the_clean_methods(tmp_path):
+    view = ("from django import forms\nfrom .models import Check, Flip\n"
+            "class F(forms.Form):\n    def clean_code(self):\n        return Check.objects.get(id=1)\n"
+            "    def clean(self):\n        Flip.objects.filter(id=1).exists()\n"
+            "    def save_all(self):\n        Ping.objects.create()\n"
+            "def v(request):\n    form = F(request.POST)\n    if form.is_valid():\n        return 1\n")
+    facts = _mini_repo(tmp_path, HELPER_MODELS, view)
+    assert {"Check:read", "Flip:read"} <= facts
+    assert "Ping:write" not in facts                 # only clean / clean_* run on validation
+
+
+def test_annotate_count_reads_the_related_table(tmp_path):
+    view = ("from django.db.models import Count\nfrom .models import Channel\ndef v(request):\n"
+            "    return list(Channel.objects.annotate(n=Count('checks')))\n")
+    assert "Check:read" in _mini_repo(tmp_path, HELPER_MODELS, view)
+    import shutil
+    shutil.rmtree(tmp_path / "app")
+    plain = ("from django.db.models import Count\nfrom .models import Channel\ndef v(request):\n"
+             "    return list(Channel.objects.annotate(n=Count('name')))\n")
+    assert "Check:read" not in _mini_repo(tmp_path, HELPER_MODELS, plain)      # not a relation: nothing invented
+
+
+PROP_MODELS = ("from django.db import models\n"
+               "class Profile(models.Model):\n"
+               "    def num_checks_used(self):\n        return Check.objects.filter(owner=self).count()\n"
+               "    def num_available(self):\n        return 10 - self.num_checks_used()\n"
+               "class Project(models.Model):\n"
+               "    owner = models.ForeignKey('Profile', on_delete=models.CASCADE)\n"
+               "    @property\n    def owner_profile(self) -> Profile:\n        return Profile.objects.get(id=self.owner_id)\n"
+               "    def available(self):\n        return self.owner_profile.num_available()\n"
+               "class Channel(models.Model):\n    project = models.ForeignKey(Project, on_delete=models.CASCADE)\n"
+               "class Check(models.Model):\n    owner = models.ForeignKey(Profile, on_delete=models.CASCADE)\n")
+
+
+def test_reading_a_property_runs_its_body(tmp_path):
+    # `channel.project.owner_profile` is an attribute read that queries the profile table
+    view = ("from .models import Channel\ndef v(request):\n    channel = Channel.objects.get(id=1)\n"
+            "    return channel.project.owner_profile\n")
+    assert "Profile:read" in _mini_repo(tmp_path, PROP_MODELS, view)
+
+
+def test_method_on_a_property_result_is_followed_through_the_chain(tmp_path):
+    # self.owner_profile → Profile (declared `-> Profile`) → .num_available() → num_checks_used() → Check
+    view = ("from .models import Project\ndef v(request):\n    project = Project.objects.get(id=1)\n"
+            "    return project.available()\n")
+    facts = _mini_repo(tmp_path, PROP_MODELS, view)
+    assert {"Project:read", "Profile:read", "Check:read"} <= facts
+
+
+def test_plain_attribute_reads_and_unannotated_properties_invent_nothing(tmp_path):
+    models = ("from django.db import models\n"
+              "class Thing(models.Model):\n"
+              "    name = models.CharField(max_length=5)\n"
+              "    @property\n    def label(self):\n        return self.name.upper()\n"
+              "class Other(models.Model):\n    pass\n")
+    view = ("from .models import Thing\ndef v(request):\n    t = Thing.objects.get(id=1)\n"
+            "    return t.name + t.label\n")
+    assert _mini_repo(tmp_path, models, view) == {"Thing:read"}
+
+
+REL_MODELS = ("from django.db import models\n"
+              "from django.contrib.auth.models import User\n"
+              "class Credential(models.Model):\n"
+              "    user = models.ForeignKey(User, models.CASCADE, related_name='credentials')\n"
+              "class Profile(models.Model):\n"
+              "    user = models.OneToOneField(User, models.CASCADE)\n"
+              "    token = models.CharField(max_length=9)\n"
+              "class Hidden(models.Model):\n"
+              "    user = models.ForeignKey(User, models.CASCADE, related_name='+')\n"
+              "class Note(models.Model):\n"
+              "    user = models.ForeignKey(User, models.CASCADE)\n")
+
+
+def test_reverse_manager_with_a_related_name_reads_the_source_model(tmp_path):
+    view = ("from django.contrib.auth.models import User\ndef v(request):\n"
+            "    user = User.objects.get(id=1)\n    return list(user.credentials.values_list('id'))\n")
+    assert "Credential:read" in _mini_repo(tmp_path, REL_MODELS, view)
+
+
+def test_default_reverse_manager_name_still_resolves_for_a_typed_owner(tmp_path):
+    view = ("from django.contrib.auth.models import User\ndef v(request):\n"
+            "    user = User.objects.get(id=1)\n    return user.note_set.count()\n")
+    assert "Note:read" in _mini_repo(tmp_path, REL_MODELS, view)
+
+
+def test_reverse_one_to_one_accessor_reads_and_types_the_source_model(tmp_path):
+    view = ("from django.contrib.auth.models import User\ndef v(request):\n"
+            "    user = User.objects.get(id=1)\n    user.profile.token = ''\n    user.profile.save()\n")
+    facts = _mini_repo(tmp_path, REL_MODELS, view)
+    assert {"Profile:read", "Profile:write"} <= facts
+    assert not any(f.startswith("<instance>") for f in facts)
+
+
+def test_a_hidden_or_unknown_reverse_accessor_invents_nothing(tmp_path):
+    view = ("from django.contrib.auth.models import User\ndef v(request):\n"
+            "    user = User.objects.get(id=1)\n    a = user.hidden_set\n    b = user.hidden\n    c = user.nothing.filter(x=1)\n")
+    assert _mini_repo(tmp_path, REL_MODELS, view) == {"User:read"}
+
+
+def test_self_save_in_a_model_method_names_the_model_but_not_a_service_class(tmp_path):
+    models = ("from django.db import models\n"
+              "class Profile(models.Model):\n    token = models.CharField(max_length=9)\n"
+              "    def prepare(self):\n        self.token = 'x'\n        self.save()\n"
+              "class Service:\n    def save(self):\n        return 1\n    def run(self):\n        self.save()\n")
+    facts = _mini_repo(tmp_path, models, "from .models import Profile, Service\ndef v(request):\n"
+                       "    p = Profile.objects.get(id=1)\n    p.prepare()\n    Service().run()\n")
+    assert "Profile:write" in facts
+    assert "Service:write" not in facts                      # a service's own save() is a method call, not a table
