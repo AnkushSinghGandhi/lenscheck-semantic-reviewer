@@ -143,3 +143,52 @@ def _append_note(note: str, add: str) -> str:
     if not note:
         return add
     return note if add in note else f"{note}; {add}"
+
+
+_EDGE_LABEL = {"e3_db_tables": "DB", "e4_external": "external call", "e5_async": "async dispatch",
+               "e6_pii": "PII egress"}
+
+
+def load_observations(data) -> list:
+    """A runtime file's content: lenscheck-contract's record output ({handler: [effect, ...]}) or a list of
+    route-keyed observations. Returns the list `merge` takes."""
+    if isinstance(data, dict):
+        return from_contract(data)
+    if isinstance(data, list):
+        return [o for o in data if isinstance(o, dict) and o.get("kind") in _KIND_EDGE]
+    raise ValueError("runtime file must be a JSON object (lenscheck-contract record output) or a list")
+
+
+def evidence(facts: list, runtime: list, routes=None) -> list:
+    """What runtime adds, per endpoint edge: a static ⚠/? it confirmed, or items only runtime saw.
+    `routes` limits it to those endpoints (e.g. the ones a PR changed)."""
+    out = []
+    for before, after in zip(facts, merge(facts, runtime)):
+        if routes is not None and before.get("route") not in routes:
+            continue
+        for key in _KIND_EDGE.values():
+            b, a = before.get(key) or {}, after.get(key) or {}
+            if a == b:
+                continue
+            out.append({"route": before.get("route"), "handler": before.get("handler"), "edge": key,
+                        "before": b.get("status", NA), "after": a.get("status", NA),
+                        "runtime_only": [i for i in a.get("items", []) if i not in (b.get("items") or [])]})
+    return out
+
+
+def render_section(ev: list, n_obs: int) -> str:
+    """The review section. Empty when runtime adds nothing to the changed endpoints."""
+    if not ev:
+        return ""
+    L = ["## 🔬 Runtime evidence", "",
+         f"{n_obs} runtime observation(s) checked against the changed endpoints. Runtime only ever adds or "
+         "confirms: an edge it didn't see is kept, because the path may just not have run.", ""]
+    for x in ev:
+        what = _EDGE_LABEL.get(x["edge"], x["edge"])
+        if x["runtime_only"]:
+            seen = ", ".join(f"`{i.split(' @ ')[0]}`" for i in x["runtime_only"])
+            L.append(f"- `{x['route']}` ({x['handler']}): {what} seen only at runtime: {seen}")
+        else:
+            L.append(f"- `{x['route']}` ({x['handler']}): {what} {x['before']} → {x['after']} confirmed by runtime")
+    L.append("")
+    return "\n".join(L)

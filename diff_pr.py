@@ -20,12 +20,13 @@ import shutil
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from extractor import analyze_repo             # noqa: E402
+from extractor import analyze_repo, to_dict    # noqa: E402
 from gitutil import (sh, export, ensure_local, git_toplevel,   # noqa: E402
                      current_branch, default_branch)
 import enforce as enforce_mod                  # noqa: E402
 import deps as deps_mod                        # noqa: E402
 import xrepo_graph                             # noqa: E402
+import runtime_merge                           # noqa: E402
 
 CRIT, HIGH, MED, LOW = "🔴", "🟠", "🟡", "🟢"
 EDGES = [("e3_db_tables", "db"), ("e4_external", "external"),
@@ -697,6 +698,8 @@ def render(changes, meta):
         L.append(meta["egress_section"])
     if meta.get("crossrepo_section"):
         L.append(meta["crossrepo_section"])
+    if meta.get("runtime_section"):
+        L.append(meta["runtime_section"])
     buckets = {CRIT: [], HIGH: [], MED: [], LOW: []}
     for c in changes:
         buckets[c["sev"]].append(c)
@@ -1136,12 +1139,13 @@ def list_commits(repo, n=50):
 
 
 def run_review(repo, base=None, head=None, merge=None, pr=None, commit=None, invariants_path=None,
-               crossrepo=None):
+               crossrepo=None, runtime=None):
     """Full review pipeline as a function (used by the CLI and the web service).
 
     `repo` may be a local path or a git URL (cloned/cached automatically). `pr` reviews a real
     GitHub pull request by number; `commit` reviews a single commit (its diff vs its parent).
     `crossrepo` = local paths of other repos to check the change's reach into (see crossrepo_impact).
+    `runtime` = a JSON file of runtime observations (lenscheck-contract record output, or route-keyed).
     """
     url = repo
     repo = ensure_local(repo, update=not pr)
@@ -1183,7 +1187,14 @@ def run_review(repo, base=None, head=None, merge=None, pr=None, commit=None, inv
     egress_groups = shared_external_destinations(head_eps)
     changed_routes = {c["route"] for c in changes}
     xrepo = crossrepo_impact(repo, h, crossrepo, changed, changed_routes) if crossrepo else None
-    meta = dict(crossrepo_section=xrepo_graph.render_markdown(xrepo),title=title, base=b, head=h, shortstat=shortstat, inv_section=inv_section,
+    rt = None
+    if runtime:
+        with open(runtime, encoding="utf-8") as f:
+            obs = runtime_merge.load_observations(json.load(f))
+        rt = {"observations": len(obs),
+              "evidence": runtime_merge.evidence([to_dict(e) for e in head_eps], obs, routes=changed_routes)}
+    meta = dict(crossrepo_section=xrepo_graph.render_markdown(xrepo),
+                runtime_section=runtime_merge.render_section(rt["evidence"], rt["observations"]) if rt else "",title=title, base=b, head=h, shortstat=shortstat, inv_section=inv_section,
                 intent_section=render_intent_section(contradictions), contradictions=contradictions,
                 deps_section=deps_mod.render_deps_section(deps_findings), dependencies=deps_findings,
                 egress_section=render_egress_section(egress_groups, only_routes=changed_routes),
@@ -1192,6 +1203,8 @@ def run_review(repo, base=None, head=None, merge=None, pr=None, commit=None, inv
     review = build_review(changes, findings, meta, changed)
     if xrepo is not None:
         review["crossrepo_impact"] = xrepo
+    if rt is not None:
+        review["runtime"] = rt
     return dict(review=review, report=render(changes, meta),
                 findings=findings, changes=changes, n_base=len(base_eps), n_head=len(head_eps),
                 auto_target=auto)
@@ -1245,6 +1258,9 @@ def main():
     ap.add_argument("--crossrepo", nargs="+", metavar="PATH",
                     help="other local repos (sharing a database, or calling each other over HTTP/Celery) "
                          "to show how far this change reaches into them")
+    ap.add_argument("--runtime", metavar="FILE",
+                    help="runtime observations JSON: lenscheck-contract's record output "
+                         "(guard.suggestions()) or route-keyed observations; confirms or adds edges")
     ap.add_argument("--fail-on", choices=["violation", "crit"], default=None,
                     help="exit non-zero on 🔴 invariant violations (violation) or any 🔴 (crit)")
     args = ap.parse_args()
@@ -1253,13 +1269,15 @@ def main():
     if not repo:
         ap.error("no repo given and the current directory is not a git repo — "
                  "pass a local path or a git URL")
+    if args.runtime and not os.path.isfile(args.runtime):
+        ap.error(f"--runtime: no such file: {args.runtime}")
     for p in args.crossrepo or []:
         if not os.path.isdir(p):
             ap.error(f"--crossrepo: not a directory: {p}")
     try:
         res = run_review(repo, base=args.base, head=args.head, merge=args.merge,
                          pr=args.pr, commit=args.commit, invariants_path=args.invariants,
-                         crossrepo=args.crossrepo)
+                         crossrepo=args.crossrepo, runtime=args.runtime)
     except RuntimeError as e:
         sys.exit(f"lenscheck: {e}")
     review, report, findings, changes = res["review"], res["report"], res["findings"], res["changes"]

@@ -167,6 +167,14 @@ depends on a changed route or task, or also writes the same table — each with 
 path that connects it. A path through an unverified (`tail`) match is marked ⚠ verify. See
 [CROSSREPO.md](CROSSREPO.md#change-impact).
 
+**Add runtime evidence** from [lenscheck-contract](https://github.com/AnkushSinghGandhi/lenscheck-contract)'s record mode (run your tests with the guard in `record`, save `guard.suggestions()` as JSON):
+
+```bash
+lenscheck review ./orders --base main --head feature --runtime observed.json
+```
+
+On the endpoints the PR changed, runtime confirms a static ⚠ (→ ✓) or adds what only runtime saw (e.g. the host of a call whose URL is built at runtime), in a **🔬 Runtime evidence** section and `runtime` in the JSON. It never removes a static fact: a path your tests didn't run is still kept.
+
 **Enforce your rules & gate CI:**
 
 ```bash
