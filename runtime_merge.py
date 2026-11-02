@@ -49,17 +49,58 @@ def _confirms(item: str, obs: dict, tables: dict = None) -> bool:
     return tgt in fact
 
 
+def from_contract(observed: dict) -> list:
+    """lenscheck-contract's record-mode output (`guard.suggestions()`: {handler: [effect, ...]}) as runtime
+    observations for `merge`. Contract handlers are `<module>.<qualname>`, so these carry `handler`
+    instead of `route` and match endpoints by name + module. `net:<host>` and `email` become external
+    edges; `cache:*` has no runtime edge here. The guard records effects, not counts, so n = 1."""
+    out = []
+    for handler, effects in (observed or {}).items():
+        if handler.startswith("<") or not isinstance(effects, list):    # "<no handler>" = unattributed
+            continue
+        for eff in effects:
+            if isinstance(eff, str) and eff.startswith("net:"):
+                out.append({"handler": handler, "kind": "external", "target": eff[4:], "n": 1})
+            elif eff == "email":
+                out.append({"handler": handler, "kind": "external", "target": "email", "n": 1})
+    return out
+
+
+def _same_handler(ep: dict, handler: str) -> bool:
+    """Contract `orders.views.CreateOrder` (or `...CreateOrder.post`) ↔ static endpoint `CreateOrder` (or
+    `CreateOrder.post`) declared in `orders/views.py`. The module must agree as a dotted suffix either way
+    (import roots differ, e.g. a `src/` layout), so two same-named views in different apps never swap
+    effects. No static file → name only."""
+    static = str(ep.get("handler", "")).split(".", 1)[0]
+    f = str(ep.get("file", "")).replace("\\", "/")
+    smod = f[:-3].replace("/", ".") if f.endswith(".py") else ""
+    parts = handler.split(".")
+    for i in range(len(parts) - 1, 0, -1):
+        if parts[i] != static:
+            continue
+        mod = ".".join(parts[:i])
+        if not smod or smod == mod or smod.endswith("." + mod) or mod.endswith("." + smod):
+            return True
+    return False
+
+
 def merge(facts: list, runtime: list, min_confirm: int = 1) -> list:
     """Return a sharpened copy of `facts` with runtime observations folded in. `min_confirm` is the
-    trace-count floor below which an observation is treated as noise (default 1 = any sighting)."""
+    trace-count floor below which an observation is treated as noise (default 1 = any sighting).
+    Observations are keyed by `route`, or by `handler` (see `from_contract`)."""
     out = copy.deepcopy(facts)
     by_route: dict = {}
+    by_handler: list = []
     for o in runtime:
         if o.get("n", 1) >= min_confirm and o.get("kind") in _KIND_EDGE:
-            by_route.setdefault(o["route"], []).append(o)
+            if o.get("route") is not None:
+                by_route.setdefault(o["route"], []).append(o)
+            elif o.get("handler"):
+                by_handler.append(o)
 
     for ep in out:
-        obs_list = by_route.get(ep.get("route"), [])
+        obs_list = by_route.get(ep.get("route"), []) + \
+            [o for o in by_handler if _same_handler(ep, o["handler"])]
         if not obs_list:
             # no runtime coverage for this endpoint — annotate honestly, change nothing else
             continue

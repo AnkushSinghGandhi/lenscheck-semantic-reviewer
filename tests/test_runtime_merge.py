@@ -52,3 +52,27 @@ def test_min_confirm_floor_filters_noise():
            "target": "order_items", "op": "write", "n": 1}]
     out = merge(_facts(), rt, min_confirm=10)          # 1 trace < floor → ignored
     assert out[0]["e3_db_tables"]["status"] == POTENTIAL   # stayed ⚠, not upgraded on noise
+
+
+def test_from_contract_turns_guard_output_into_observations():
+    from runtime_merge import from_contract
+    observed = {"orders.views.CreateOrder": ["cache:redis", "email", "net:api.stripe.com"],
+                "<no handler>": ["net:metrics.example.com"]}
+    assert from_contract(observed) == [
+        {"handler": "orders.views.CreateOrder", "kind": "external", "target": "email", "n": 1},
+        {"handler": "orders.views.CreateOrder", "kind": "external", "target": "api.stripe.com", "n": 1},
+    ]
+
+
+def test_contract_observations_match_by_handler_and_module_only():
+    from runtime_merge import from_contract
+    facts = _facts()
+    facts[0]["file"] = "orders/views.py"
+    other = dict(_facts()[0], file="billing/views.py")         # same class name, different app
+    out = merge(facts + [other], from_contract({"orders.views.CreateOrder.post": ["net:api.stripe.com"]}))
+    mine, theirs = out[0]["e4_external"], out[1]["e4_external"]
+    assert any("api.stripe.com" in it for it in mine["items"])
+    assert not any("api.stripe.com" in it for it in theirs["items"])   # never attached to billing's view
+    # a src/ layout on the contract side still lines up
+    out = merge(facts, from_contract({"src.orders.views.CreateOrder": ["net:api.stripe.com"]}))
+    assert any("api.stripe.com" in it for it in out[0]["e4_external"]["items"])
