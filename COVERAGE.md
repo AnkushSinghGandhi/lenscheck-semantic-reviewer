@@ -10,32 +10,34 @@ never shown as safe.
 |---|---|
 | **Routes** | Django `urls.py` (`path`, `re_path`, `url`) with `include()` chains and regex fragments; function views and class views (`View`, DRF `APIView` / ViewSets, per-method handlers); Flask `@app.route` / blueprints; FastAPI `@app.get` / routers with prefixes |
 | **Background jobs** | Celery `@shared_task` / `@task` / `@periodic_task`, management command `handle()`, signal receivers (`@receiver`, `post_save.connect`) — each analyzed like an endpoint |
-| **DB reads / writes** | Django ORM managers and querysets (`get`, `filter`, `values`, `create`, `update`, `save`, `delete`, `bulk_*`, `get_or_create`, …); `filter().update()` counted as one write; FK traversal through `field__related` (not through lookups like `__in`); reverse-FK managers (`check.flip_set`); many-to-many writes to the join table (Django's default `<table>_<field>` or the `through=` model), from either side; methods called on a fetched model instance (`check = Check.objects.get(...); check.create_flip()`) and through an FK field (`check.project.update_next_nag_dates()`); `serializer.save()` / `form.save()` → their `Meta.model`; `get_object_or_404`; custom manager methods; raw SQL (`cursor.execute`, `.raw()`) table names; SQLAlchemy models via `__tablename__`, including `session.execute(select(...))` |
+| **DB reads / writes** | Django ORM managers and querysets (`get`, `filter`, `values`, `create`, `update`, `save`, `delete`, `bulk_*`, `get_or_create`, …); `filter().update()` counted as one write; FK traversal through `field__related` (not through lookups like `__in`); reverse-FK managers (`check.flip_set`); many-to-many writes to the join table (Django's default `<table>_<field>` or the `through=` model), from either side; methods called on a fetched model instance (`check = Check.objects.get(...); check.create_flip()`), through an FK field (`check.project.update_next_nag_dates()`), through a typed request attribute (`request.project.…`, declared as `project: Project` on the request class) and through a `@property` annotated `-> Model` (`self.owner_profile.…`); reading a `@property` runs its body; reverse accessors by `related_name` (`user.credentials`) and the reverse OneToOne accessor (`user.profile`); `annotate(Count("rel"))` reading the related table; `serializer.save()` / `form.save()` → their `Meta.model`; `get_object_or_404`; custom manager methods; raw SQL (`cursor.execute`, `.raw()`) table names; SQLAlchemy models via `__tablename__`, including `session.execute(select(...))` |
 | **External calls** | any call on `requests`, `httpx`, `aiohttp`, `urllib`, `stripe`, `razorpay`, `boto3`, `sendgrid`, `smtplib`; the destination host / path when it's a literal, f-string or resolvable settings constant; the HTTP verb |
 | **Async** | Celery `.delay()` / `.apply_async()` / `send_task('name')`, `threading.Thread(target=…)` |
 | **Cache** | Django cache reads vs writes / invalidations |
 | **Auth** | DRF `permission_classes` / `authentication_classes` (including module constants and `DEFAULT_PERMISSION_CLASSES`), Flask auth decorators (`login_required`, `jwt_required`, …), FastAPI `Depends` / `Security` |
 | **PII** | sensitive fields (email, phone, password, address, date of birth, card, national IDs, …) traced to where they go: an external API, a log or a task queue (✓ leaves the system) or back to the client (⚠) |
-| **Call following** | helpers in your repo: `self.`/`cls.` methods, `Class.method()`, module functions, sibling-module imports, return types of helpers. Depth adapts: a branch stops after 3 hops that add nothing new (hard cap 8, 250 functions per endpoint) |
+| **Call following** | helpers in your repo: `self.`/`cls.` methods, `Class.method()`, module functions, sibling-module imports. What a helper returns comes from its `-> Model` / `-> Model | None` / `-> QuerySet[Model]` / `-> tuple[Model, bool]` annotation, else from its `return` statements (including tuple-unpacking `check, rw = helper(...)`). `form.is_valid()` runs the form's `clean()` / `clean_<field>()` (and a serializer's `validate*`). Depth adapts: a branch stops after 3 hops that add nothing new (hard cap 8, 250 functions per endpoint) |
 
 ## What it doesn't see (yet)
 
 Measured on real code (see below), these are the biggest gaps, most common first:
 
-1. **Instances handed back by your helpers, or hanging off the request**: `check = _get_rw_check_for_user(...)`
-   then `check.create_flip()`, or `request.profile.save()`. The object's model isn't inferred, so its
-   methods aren't followed and a `save()` is recorded as an unresolved `<instance>` write (flagged, but
-   without the table name). Queryset-returning properties (`check.visible_pings`) are missed the same way.
-2. **Work your code triggers implicitly**: queries inside form validation (`form.is_valid()` → `clean_*`),
-   signal handlers fired by an ORM write, middleware.
-3. **Joins inside aggregations**: `annotate(n=Count("checks"))` reads the join table; that isn't recorded.
+1. **Helpers it can't type**: a helper with no return annotation whose `return` is opaque (a registry lookup, a
+   dict, a dynamically built object). Its result's methods aren't followed, and a `save()` on it is recorded as
+   an unresolved `<instance>` write (flagged, but without the table name).
+2. **Work your code triggers implicitly**: signal handlers fired by an ORM write, middleware, `save()` / `delete()`
+   overrides reached through a model manager, and `ForeignKey(settings.AUTH_USER_MODEL)` relations (the target
+   isn't resolved, so reverse accessors on the user model aren't linked to them).
+3. **Foreign-key dereferences**: `check.project` fetches the project (a lazy query, or a join if you
+   `select_related`), but a plain dereference isn't recorded as a read. Calling a method on it is followed.
 4. **Dynamic dispatch**: `getattr(obj, name)()`, handlers chosen at runtime, plugin registries,
    dependency-injection containers.
 5. **Runtime-built queries**: raw SQL whose table name comes from a variable; a model passed in from a
    call site it can't resolve.
 6. **Outside the known lists**: HTTP or SDK clients other than the ones above (e.g. a Twilio or Kafka
    client), network calls made through `subprocess`.
-7. **Column level**: access is tracked per table, not per column.
+7. **Column level**: access is tracked per table, not per column. Read vs write labels aren't scored below:
+   a `channel_q = Channel.objects.filter(...)` later `.update()`-d is labelled a read and a write.
 8. **Installed packages**: only your repo's code is analyzed. Dependency bumps are scanned separately
    (`scan_deps`).
 
@@ -65,31 +67,36 @@ your code. That's what the next check is for.
 
 [healthchecks](https://github.com/healthchecks/healthchecks) at `ab4b5c4` (2026-11-01), a public Django
 app. 15 HTTP endpoints with DB facts, picked at random, checked by hand against the code (following
-helpers, model methods and form code). Table level, like the fixtures.
+helpers, model methods, properties and form code). Table level, like the fixtures.
 
 | | Count |
 |---|---|
-| Tables the endpoints really touch | 60 |
-| Named correctly | 55 (92%) |
+| Tables the endpoints really touch | 57 |
+| Named correctly | 55 (96%) |
 | Named wrongly (invented) | **0** |
-| Missed | 5 — 3 inside methods of an object a helper returned, 1 join inside an `annotate(Count(...))`, 1 query inside form validation (gaps 1–3 above) |
+| Missed | 2, both in one endpoint: reverse accessors (`user.credentials` by `related_name`, `user.profile` OneToOne) |
 | Endpoint resolved to the wrong handler | 0 |
 
-Seven of the 15 are near-identical "add an integration" views. Without them: 20 of 25 tables named
-correctly (80%), still 0 invented.
+Four of the 15 are near-identical "add an integration" views. Without them: 37 tables, 35 named correctly
+(95%), still 0 invented.
 
-**How the sample was kept honest:** three earlier random samples (45 endpoints) were used to find and fix
-bugs: a URL resolving to a same-named model method; reverse-FK managers; methods on fetched instances and
-FK fields; many-to-many join tables (including one wrong table name the reverse side produced before the
-fix); and default table names for apps without an `apps/` folder. Fixing one of those also corrected a
-fixture whose ground truth wrongly said an M2M `.add()` writes nothing. The sample above was drawn
-afterwards, excluding every endpoint seen before.
+**These numbers are from before the two misses were fixed:** the sample was drawn, scored by hand, and only
+then were the misses fixed (reverse accessors now resolve, and re-running the endpoint finds all four of its
+tables). The fix isn't counted in the score.
+
+**How the sample was kept honest, and where it stops:** this is the sixth random sample from this one repo.
+The first five (75 endpoints) were used to find and fix bugs: a URL resolving to a same-named model method;
+reverse-FK managers; methods on fetched instances, FK fields, request attributes and properties; many-to-many
+join tables; default table names; helper return annotations and tuple returns; form validation; aggregate
+joins. Each fix has a regression test that fails without it. This sample excludes every endpoint seen before
+and was drawn from the 38 that were left, so it is smaller and more homogeneous than the first. After 75
+endpoints of tuning on one codebase, expect the numbers to be **optimistic for yours**: a second, unrelated
+repo is the check that would show by how much.
 
 **What this means for you:** when Lenscheck names a table, it's right. Treat ⚠ and `<instance>` as "look
-here", and expect misses where objects come from your own helpers or effects hide in forms and signals.
+here", and expect misses where a helper's result can't be typed or effects hide in signals and middleware.
 
-One repo and 15 endpoints is a spot check, not a benchmark. Issues with a small example of a miss are
-the fastest way to close the gaps above.
+Issues with a small example of a miss are the fastest way to close the gaps above.
 
 ## Reading the markers
 
