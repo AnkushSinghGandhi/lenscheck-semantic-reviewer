@@ -11,7 +11,7 @@ couldn't figure out.
 > One line: it makes it impossible for an important change to hide inside a large PR.
 
 **Free.** No account, no API key, no paid tier, and nothing is uploaded: everything runs on your machine or in your CI.
-**New in 3.0:** [cross-repo review](CROSSREPO.md) for services that share a database, background jobs as writers, and fewer blind spots in the extractor.
+**New in 3.1:** reviews show how far a change reaches into your other services (`--crossrepo`), Celery tasks link across repos, and `--db` keeps separate databases apart. [Cross-repo guide](CROSSREPO.md).
 
 **📖 New here? Read [The Complete Guide](blog/lenscheck-complete-guide.md)** — every feature, command,
 flag, and concept explained in plain English, with screenshots.
