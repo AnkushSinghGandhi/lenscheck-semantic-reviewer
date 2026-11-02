@@ -473,3 +473,74 @@ def test_url_resolves_to_the_module_view_not_a_same_named_method(tmp_path):
         "from .models import Check\ndef ping(request):\n    return Check.objects.count()\n")
     ep = [e for e in analyze_repo(str(tmp_path)) if e.route == "p/"][0]
     assert ep.file.endswith("views.py"), f"resolved to {ep.file}"
+
+
+def _mini_repo(tmp_path, models, view):
+    import os
+    os.makedirs(tmp_path / "app", exist_ok=True)
+    (tmp_path / "app/models.py").write_text(models)
+    (tmp_path / "app/urls.py").write_text(
+        "from django.urls import path\nfrom . import views\nurlpatterns = [path('v/', views.v)]\n")
+    (tmp_path / "app/views.py").write_text(view)
+    from extractor import analyze_repo
+    ep = [e for e in analyze_repo(str(tmp_path)) if e.route == "v/"][0]
+    return {it.split(" @ ")[0].replace(" (via call)", "") for it in ep.e3_db_tables.items}
+
+
+MODELS = ("from django.db import models\n"
+          "class Project(models.Model):\n"
+          "    def bump(self):\n        Project.objects.filter(id=self.id).update(n=1)\n"
+          "class Tag(models.Model):\n    pass\n"
+          "class Link(models.Model):\n    pass\n"
+          "class Check(models.Model):\n"
+          "    project = models.ForeignKey(Project, on_delete=models.CASCADE)\n"
+          "    tags = models.ManyToManyField(Tag)\n"
+          "    links = models.ManyToManyField(Tag, through='Link', related_name='+')\n"
+          "    class Meta:\n        db_table = 'checks'\n"
+          "    def create_flip(self):\n        Flip.objects.create(owner=self)\n"
+          "class Flip(models.Model):\n    owner = models.ForeignKey(Check, on_delete=models.CASCADE)\n")
+
+
+def test_method_on_a_fetched_model_instance_is_followed(tmp_path):
+    facts = _mini_repo(tmp_path, MODELS, "from .models import Check\ndef v(request):\n"
+                       "    check = Check.objects.get(id=1)\n    check.create_flip()\n")
+    assert "Flip:write" in facts
+
+
+def test_method_through_an_fk_field_is_followed(tmp_path):
+    facts = _mini_repo(tmp_path, MODELS, "from django.shortcuts import get_object_or_404\nfrom .models import Check\n"
+                       "def v(request):\n    check = get_object_or_404(Check, id=1)\n    check.project.bump()\n")
+    assert "Project:write" in facts
+
+
+def test_m2m_add_writes_the_join_table_and_all_reads_the_target(tmp_path):
+    facts = _mini_repo(tmp_path, MODELS, "from .models import Check\ndef v(request):\n"
+                       "    check = Check.objects.get(id=1)\n    check.tags.add(1)\n"
+                       "    check.links.remove(2)\n    return list(check.tags.all())\n")
+    assert "checks_tags:write" in facts            # Django's default <owner table>_<field>
+    assert "Link:write" in facts                   # explicit through= model
+    assert "Tag:read" in facts
+    assert not any(f.startswith("<instance>") for f in facts)
+
+
+def test_reverse_m2m_set_writes_the_join_table_not_the_other_model(tmp_path):
+    models = ("from django.db import models\n"
+              "class Check(models.Model):\n"
+              "    class Meta:\n        db_table = 'checks'\n"
+              "    def assign_all_channels(self):\n"
+              "        self.channel_set.set(Channel.objects.all())\n"
+              "class Channel(models.Model):\n    checks = models.ManyToManyField(Check)\n"
+              "    class Meta:\n        db_table = 'channels'\n")
+    facts = _mini_repo(tmp_path, models, "from .models import Check\ndef v(request):\n"
+                       "    check = Check.objects.get(id=1)\n    check.assign_all_channels()\n")
+    assert "channels_checks:write" in facts and "Channel:read" in facts
+    assert "Channel:write" not in facts
+
+
+def test_default_table_uses_the_django_app_folder(tmp_path):
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app/apps.py").write_text("")
+    facts = _mini_repo(tmp_path, "from django.db import models\nclass Tag(models.Model):\n    pass\n"
+                       "class Note(models.Model):\n    tags = models.ManyToManyField(Tag)\n",
+                       "from .models import Note\ndef v(request):\n    n = Note.objects.get(id=1)\n    n.tags.add(1)\n")
+    assert "app_note_tags:write" in facts

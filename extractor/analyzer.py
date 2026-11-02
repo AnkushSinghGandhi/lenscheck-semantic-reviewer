@@ -248,6 +248,34 @@ class RepoIndex:
                 return f"{app}_{model.lower()}", False
         return None, False
 
+    def model_field(self, model, field):
+        """(kind, target, through) for a relation field declared on a repo model: kind "fk"
+        (ForeignKey / OneToOneField) or "m2m" (ManyToManyField), target = the related class name
+        ("self" resolved to `model`), through = an explicit M2M `through=` model or None. None when
+        `field` isn't a relation field this can read."""
+        return self.relation_fields(model).get(field)
+
+    def relation_fields(self, model):
+        """{field: (kind, target, through)} for the relation fields declared on `model` (see model_field)."""
+        cache = self.__dict__.setdefault("_rel_fields", {})
+        if model not in cache:
+            out = {}
+            for node, _path in (self.classes.get(model) or [])[:1]:
+                for st in getattr(node, "body", []):
+                    if not (isinstance(st, ast.Assign) and len(st.targets) == 1
+                            and isinstance(st.targets[0], ast.Name) and isinstance(st.value, ast.Call)):
+                        continue
+                    kind = {"ForeignKey": "fk", "OneToOneField": "fk", "ManyToManyField": "m2m"}.get(
+                        _dotted(st.value.func).split(".")[-1])
+                    if not kind or not st.value.args:
+                        continue
+                    tgt = _class_ref(st.value.args[0])
+                    thr = next((_class_ref(k.value) for k in st.value.keywords if k.arg == "through"), None)
+                    if tgt:
+                        out[st.targets[0].id] = (kind, model if tgt == "self" else tgt, thr)
+            cache[model] = out
+        return cache[model]
+
     def _scan_drf(self, tree):
         for n in ast.walk(tree):
             if isinstance(n, ast.Assign) and any(
@@ -527,12 +555,47 @@ class FactCollector(ast.NodeVisitor):
     def _loc(self, node):
         return (self.file, getattr(node, "lineno", 0))
 
+    def _typed_model(self, expr):
+        """The repo model a receiver holds: `self` in a model method, or a local typed by an ORM fetch."""
+        if isinstance(expr, ast.Name):
+            if expr.id in ("self", "cls"):
+                return self.self_type
+            t = self.var_types.get(expr.id)
+            return t if t and t[:1].isupper() else None
+        return None
+
+    def _relation(self, f):
+        """For `<recv>.<field>.<method>(...)`: (owner model, field, (kind, target, through)) or None."""
+        if not (isinstance(f, ast.Attribute) and isinstance(f.value, ast.Attribute) and self.index is not None):
+            return None
+        owner = self._typed_model(f.value.value)
+        rel = self.index.model_field(owner, f.value.attr) if owner else None
+        return (owner, f.value.attr, rel) if rel else None
+
+    def _reverse_m2m(self, f):
+        """`check.channel_set.set(...)` where `Channel.checks = ManyToManyField(Check)`: the reverse side of an
+        M2M on a typed receiver. Returns (model holding the field, field, through) or None."""
+        if not (isinstance(f, ast.Attribute) and isinstance(f.value, ast.Attribute)
+                and f.value.attr.endswith("_set") and self.index is not None):
+            return None
+        owner = self._typed_model(f.value.value)
+        stem = f.value.attr[:-4].replace("_", "").lower()
+        hits = [m for m in self.known_models if m.lower() == stem]
+        if not owner or len(hits) != 1:
+            return None
+        for field, (kind, target, through) in self.index.relation_fields(hits[0]).items():
+            if kind == "m2m" and target == owner:
+                return hits[0], field, through
+        return None
+
     def _reverse_manager(self, f):
         """`check.flip_set.order_by(...)` — Django's default reverse-FK manager is `<model name lowercased>_set`.
         Resolve the stem against the repo's class names; no unique match records nothing (never invent a
         table). Queryset-building methods count as a read, like `Model.objects.filter(...)`."""
         if not isinstance(f, ast.Attribute) or f.attr not in (ORM_READ | ORM_WRITE | _SAME_MODEL_METHODS):
             return None, None
+        if f.attr in {"add", "remove", "set", "clear"} and self._reverse_m2m(f):
+            return None, None                    # an M2M join-table write, recorded by the m2m block
         cur = f.value
         while isinstance(cur, ast.Call):
             cur = cur.func.value if isinstance(cur.func, ast.Attribute) else None
@@ -553,6 +616,24 @@ class FactCollector(ast.NodeVisitor):
         if self.manager_model and isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) \
                 and f.value.id == "self" and f.attr in (ORM_WRITE | ORM_READ):
             self.db.append((self.manager_model, "write" if f.attr in ORM_WRITE else "read", fl, ln))
+        # many-to-many: `channel.checks.add(*xs)` writes the join table (an explicit `through=` model, or
+        # Django's default `<owner table>_<field>`); `channel.checks.all()/filter()` reads the target model
+        rel = self._relation(f)
+        m2m = None
+        if rel and rel[2][0] == "m2m":
+            owner, field, (_k, target, through) = rel
+            m2m = (owner, field, target, through)
+        elif isinstance(f, ast.Attribute) and f.attr in {"add", "remove", "set", "clear"} and self._reverse_m2m(f):
+            holder, field, through = self._reverse_m2m(f)
+            m2m = (holder, field, holder, through)     # the join table belongs to the model holding the field
+        if m2m:
+            owner, field, target, through = m2m
+            if f.attr in {"add", "remove", "set", "clear"}:
+                tbl = through or (self.index.table_for(owner)[0] and f"{self.index.table_for(owner)[0]}_{field}")
+                if tbl:
+                    self.db.append((tbl, "write", fl, ln))
+            elif f.attr in (ORM_READ | _SAME_MODEL_METHODS):
+                self.db.append((target, "read", fl, ln))
         # ORM:  <Model>.objects.<method>(...)  and chained querysets
         model, method = _orm_model_method(f, dotted=True)
         if not model:
@@ -716,6 +797,11 @@ class FactCollector(ast.NodeVisitor):
             # Same: don't exclude ORM verbs; resolution (mod_imports / instance_types) gates the follow.
             self.typed_calls.append((f.value.id, f.attr))
             self._note_args(f"{f.value.id}.{f.attr}", node)
+        elif self._relation(f) and self._relation(f)[2][0] == "fk":
+            # `check.project.update_next_nag_dates()` — a method on the model an FK field points to
+            target = self._relation(f)[2][1]
+            self.typed_calls.append((target, f.attr))
+            self._note_args(f"{target}.{f.attr}", node)
         elif isinstance(f, ast.Attribute) and isinstance(f.value, ast.Call) \
                 and isinstance(f.value.func, ast.Name) and f.value.func.id[:1].isupper():
             # Service().method(...)  e.g. ProductService().get_product_details(...)
@@ -1508,14 +1594,29 @@ def _class_manager(classdef):
     return None
 
 
+def _class_ref(node):
+    """`Check` / `models.Check` / "Check" / "api.Check" → "Check"; anything else → None."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value.split(".")[-1]
+    return None
+
+
 def _app_label(path):
-    """Django app label from a file path: the segment right under an `apps/` directory, else None."""
+    """Django app label from a file path: the segment right under an `apps/` directory, else the folder
+    holding the models file (or its `models/` package) when that folder is a Django app (has apps.py)."""
     parts = path.replace("\\", "/").split("/")
     if "apps" in parts:
         i = parts.index("apps")
         if i + 1 < len(parts):
             return parts[i + 1]
-    return None
+    d = os.path.dirname(path)
+    if os.path.basename(d) == "models":
+        d = os.path.dirname(d)
+    return os.path.basename(d) if os.path.isfile(os.path.join(d, "apps.py")) else None
 
 
 def _module_str_consts(tree, base=None):
@@ -1912,7 +2013,7 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
     for cname, mname in sorted(set(local.typed_calls)):
         # resolve an instance variable to the class it holds: `profile_helper.validate()` where
         # `profile_helper = cus_api_helper.UpdateProfileFlow(req)` → follow UpdateProfileFlow.validate.
-        target_cls = local.instance_types.get(cname, cname)
+        target_cls = local.instance_types.get(cname) or local.var_types.get(cname) or cname
         key = f"{target_cls}.{mname}"
         cls, cfile = index.find_class(target_cls, near=owner_file)
         if cls is not None:
