@@ -11,7 +11,7 @@ couldn't figure out.
 > One line: it makes it impossible for an important change to hide inside a large PR.
 
 **Free.** No account, no API key, no paid tier, and nothing is uploaded: everything runs on your machine or in your CI.
-**New in 3.1:** reviews show how far a change reaches into your other services (`--crossrepo`), Celery tasks link across repos, and `--db` keeps separate databases apart. [Cross-repo guide](CROSSREPO.md).
+**New in 3.2:** the `serve` Cross-repo tab draws the graph and traces a change's impact, reviews add runtime evidence (`--runtime`), and the extractor follows model methods, properties, forms and reverse relations. [Cross-repo guide](CROSSREPO.md).
 
 **How accurate is it?** When it names a table it's right (0 invented in a real-world spot check); it doesn't see everything yet. Measured numbers, and exactly what it can and can't see: [COVERAGE.md](COVERAGE.md).
 
@@ -99,7 +99,7 @@ management commands, signal receivers), grouped worst-first:
 
 It also lists **cross-repo API calls** (service A calls a route service B serves). `--schema` adds a
 column-level rule ("coordinate on unique key (order_id, user_id)"). Results are cached per repo by git
-HEAD. Also in the UI: `lenscheck serve` → **Cross-repo** tab. Details: [CROSSREPO.md](CROSSREPO.md).
+HEAD. Also in the UI: `lenscheck serve` → **Cross-repo** tab (with a graph and a change-impact trace). Details: [CROSSREPO.md](CROSSREPO.md).
 
 ### `lenscheck map` — every endpoint, worst-first
 
