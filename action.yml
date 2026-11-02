@@ -52,7 +52,9 @@ runs:
 
     - name: Install Lenscheck
       shell: bash
-      run: pip install "lenscheck-semantic-reviewer>=1.0.0"
+      # from this Action's own checkout, so the package always matches the tag/SHA you pinned
+      # (and ci/post_review.py below) instead of whatever is newest on PyPI
+      run: pip install "${GITHUB_ACTION_PATH}"
 
     - name: Run Lenscheck review
       shell: bash

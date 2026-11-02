@@ -104,7 +104,7 @@
     <tr><td><b>lenscheck-semantic-reviewer</b></td><td><code>pip install lenscheck-semantic-reviewer</code></td><td>Your CI (a GitHub Action / CLI). Never imported by your app.</td></tr>
     <tr><td><b>lenscheck-contract</b></td><td><code>pip install lenscheck-contract</code></td><td>Inside your Django app (a real dependency).</td></tr>
   </table>
-  <p>The reviewer needs Python 3.8+, plus <code>git</code> and <code>tar</code>. The contract needs Python 3.10+ and, for the Django features, <code>django&gt;=4.2</code>.</p>
+  <p>The reviewer needs Python 3.9+, plus <code>git</code> and <code>tar</code>. The contract needs Python 3.10+ and, for the Django features, <code>django&gt;=4.2</code>.</p>
 
   <h2 id="concepts">Two vantage points</h2>
   <table>
@@ -220,7 +220,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer@main
+      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           fail_on: crit          # violation | crit | none
@@ -336,7 +336,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer@main
+      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer@v3
         with: { github_token: "${{ secrets.GITHUB_TOKEN }}", fail_on: crit }
 
   # 2) the contract — hard gate on structural change (+ feeds the reviewer)

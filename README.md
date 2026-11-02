@@ -2,7 +2,7 @@
 
 **Git tells you what *lines* changed. Lenscheck tells you what those changes *mean* — and where to look.**
 
-Lenscheck reads a Django/Python codebase and, for any pull request, branch, or commit, turns a huge
+Lenscheck reads a Python web backend (Django first; Flask and FastAPI too) and, for any pull request, branch, or commit, turns a huge
 diff into a short, ranked list of the things that actually matter: new endpoints, new database
 writes, new external calls, data that now leaves the system, and anything that breaks a rule your
 team cares about. It points you at the exact lines to read — and it's honest about what it
@@ -35,12 +35,25 @@ always followed (and the commit that broke one). Outputs to the terminal, a web 
 pip install lenscheck-semantic-reviewer      # gives you the `lenscheck` command
 ```
 
-Zero third-party dependencies (pure Python standard library). Needs **Python 3.8+**, plus **git**
+Zero third-party dependencies (pure Python standard library). Needs **Python 3.9+**, plus **git**
 and **tar** on the PATH.
 
 *From source instead?* `git clone https://github.com/AnkushSinghGandhi/lenscheck-semantic-reviewer` and use
 `python3 diff_pr.py …` / `python3 serve.py …` / `python3 invariants.py …` — the exact same
 commands as `lenscheck review` / `lenscheck serve` / `lenscheck invariants`.
+
+### Framework support
+
+| | Django | Flask / FastAPI |
+|---|---|---|
+| Routes, methods, auth | ✓ `urls.py` + `include()` chains, DRF | ✓ decorators, blueprint / router prefixes, auth dependencies |
+| DB reads / writes | ✓ Django ORM, raw SQL | ✓ SQLAlchemy models (`__tablename__`) |
+| External calls, PII leaving the system | ✓ | ✓ |
+| Background jobs | ✓ Celery tasks, management commands, signal receivers | ✓ Celery tasks |
+| Test depth | most of the suite | focused fixture tests (`tests/test_frameworks.py`) |
+
+Django is the most battle-tested path. Flask and FastAPI share the same engine; if a route or write
+is missed there, please open an issue with a small example.
 
 ---
 
@@ -245,7 +258,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer@main
+      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer@v3
         with:
           fail_on: violation                 # violation | crit | none (default: none)
           invariants: lenscheck-invariants.json  # optional: enforce your confirmed rules
@@ -255,7 +268,7 @@ jobs:
 Inputs: `github_token` (default `${{ github.token }}`), `fail_on`, `invariants`, `comment`,
 `inline`, `label`, `scan_deps`, `upload_sarif` (set `false` on private repos without GitHub
 Advanced Security so the code-scanning upload is skipped and the check stays green). The Action
-installs `lenscheck-semantic-reviewer` from PyPI, reviews the PR, posts a sticky
+installs Lenscheck from its own checkout (so `@v3` always runs the code that tag points to; pin a full commit SHA for fully reproducible builds), reviews the PR, posts a sticky
 comment, and (with `fail_on`) fails the check when the PR introduces a violation. With `inline`
 (default `true`) it also pins each finding as an inline review comment on the exact changed line —
 findings whose location isn't in the PR's diff stay in the sticky comment.

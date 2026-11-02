@@ -7,7 +7,7 @@ name = "lenscheck-semantic-reviewer"
 version = "3.0.0"
 description = "Semantic PR Reviewer for Python Web Applications"
 readme = "PYPI_README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 license = { text = "Elastic-2.0" }
 authors = [
     { name = "Ankush Singh Gandhi" }

@@ -19,7 +19,7 @@ diagram. Full walkthrough: **The Complete Guide** in the repo (`blog/lenscheck-c
 pip install lenscheck-semantic-reviewer
 ```
 
-Zero third-party dependencies. Needs Python 3.8+, plus `git` and `tar` on the PATH.
+Zero third-party dependencies. Needs Python 3.9+, plus `git` and `tar` on the PATH.
 
 ## Commands
 
@@ -165,7 +165,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer@main
+      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer@v3
         with:
           fail_on: violation   # violation | crit | none
 ```

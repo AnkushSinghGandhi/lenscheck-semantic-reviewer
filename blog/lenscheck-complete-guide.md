@@ -656,7 +656,7 @@ jobs:
   lenscheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer@main
+      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer@v3
         with:
           fail_on: none          # or: violation | crit
 ```
@@ -707,7 +707,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer@main
+      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer@v3
         with:
           comment: 'true'
           fail_on: none          # observe mode — never blocks a merge (yet)
@@ -788,7 +788,7 @@ Once people trust the reviews, flip the switch in your **one** central file — 
 highest-confidence signal:
 
 ```yaml
-      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer@main
+      - uses: AnkushSinghGandhi/lenscheck-semantic-reviewer@v3
         with:
           fail_on: violation     # block only when a PR breaks a confirmed rule
 ```
