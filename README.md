@@ -11,7 +11,7 @@ couldn't figure out.
 > One line: it makes it impossible for an important change to hide inside a large PR.
 
 **Free.** No account, no API key, no paid tier, and nothing is uploaded: everything runs on your machine or in your CI.
-**New in 3.2:** the `serve` Cross-repo tab draws the graph and traces a change's impact, reviews add runtime evidence (`--runtime`), and the extractor follows model methods, properties, forms and reverse relations. [Cross-repo guide](CROSSREPO.md).
+**New in 3.3:** the `serve` review page now shows the git diff up front — grouped by file, readable, and each file tagged with the finding on it, so you jump from a risk straight to the lines that caused it. Plus the 3.2 cross-repo graph, impact trace, and runtime evidence. [Cross-repo guide](CROSSREPO.md).
 
 **How accurate is it?** When it names a table it's right (0 invented in a real-world spot check); it doesn't see everything yet. Measured numbers, and exactly what it can and can't see: [COVERAGE.md](COVERAGE.md).
 
