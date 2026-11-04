@@ -252,9 +252,26 @@
     padding:4px 12px;font-size:12px;font-family:ui-monospace,Menlo,monospace;cursor:pointer}
   .demo-switch .sw:hover{color:var(--fg);border-color:var(--acc)}
   .demo-switch .sw.on{color:#fff;background:rgba(124,116,240,.16);border-color:var(--acc)}
-  #rawdiff{margin:0 20px 8px;max-height:300px;overflow:auto;background:var(--bg);border:1px solid var(--line);border-radius:10px;
-    padding:12px 14px;font:12px/1.5 ui-monospace,Menlo,monospace;color:var(--mut);white-space:pre}
-  #rawdiff .a{color:var(--low)}#rawdiff .r{color:var(--crit)}#rawdiff .h{color:var(--link)}
+  /* file-grouped diff viewer — the default detail view and each change's Diff tab */
+  .diffintro{color:var(--mut);font-size:13px;margin:0 0 12px;line-height:1.5}
+  .difffile{border:1px solid var(--line);border-radius:9px;margin-bottom:10px;overflow:hidden;background:var(--panel)}
+  .dfhead{cursor:pointer;display:flex;align-items:center;gap:10px;padding:8px 12px;list-style:none;flex-wrap:wrap}
+  .dfhead::-webkit-details-marker{display:none}
+  .dfhead::before{content:"▸";color:var(--mut)}.difffile[open]>.dfhead::before{content:"▾"}
+  .difffile[open]>.dfhead{border-bottom:1px solid var(--line)}
+  .dfpath{font-size:12.5px;font-weight:600;word-break:break-all;flex:1}
+  .dfstat{font-size:11.5px;font-weight:700;white-space:nowrap}.dfstat .pls{color:var(--low)}.dfstat .mns{color:var(--crit)}
+  .fbadge{font-size:11px;font-weight:700;padding:1px 8px;border-radius:999px;cursor:pointer;border:1px solid;white-space:nowrap}
+  .fbadge:hover{filter:brightness(1.15)}
+  .dfbody{overflow-x:auto;font:12px/1.55 ui-monospace,Menlo,monospace;background:var(--bg)}
+  .dhunk{color:var(--link);padding:3px 12px;background:rgba(124,116,240,.07);white-space:pre}
+  .dline{display:flex}
+  .dline .dno{flex:none;width:42px;text-align:right;padding:0 8px;color:var(--mut);opacity:.55;user-select:none}
+  .dline .dtx{flex:1;padding:0 10px;white-space:pre-wrap;word-break:break-word;min-width:0}
+  .dline.add{background:rgba(63,185,80,.12)}.dline.add .dtx{color:var(--low)}
+  .dline.del{background:rgba(248,81,73,.12)}.dline.del .dtx{color:var(--crit)}
+  .dline.hl{box-shadow:inset 3px 0 var(--acc)}
+  .difempty{color:var(--mut);padding:10px 2px;font-size:12.5px}
   .linkbtn{border:1px solid var(--line);background:var(--panel);color:var(--mut);border-radius:7px;padding:3px 9px;
     font-size:11.5px;cursor:pointer;margin-left:8px;vertical-align:middle}
   .linkbtn:hover{border-color:var(--acc);color:var(--fg)}
@@ -390,7 +407,6 @@
 
     <div id="results">
       <div id="demohdr"></div>
-      <pre id="rawdiff" hidden></pre>
       <div class="summary" id="summary"></div>
       <div id="invwrap"></div>
       <div id="invpanel"></div>
@@ -421,7 +437,7 @@ const G_INVK={"NEW VIOLATION":"inv-new-violation","WEAKENING":"inv-weakening",
   "universal":"inv-kind-universal","near-miss":"inv-kind-near-miss"};
 const G_NODE={route:"node-route",handler:"node-handler",table:"node-table",table_write:"node-table-write",dbtable:"node-dbtable",
   external:"node-external",async:"node-async",cache:"node-cache"};
-let DATA=null, sel=null, tab="graph", graphZoom=1, REFS=null, searchText="", runMode="pr";
+let DATA=null, sel=null, tab="diff", graphZoom=1, REFS=null, searchText="", runMode="pr";
 const LS_KEY="lenscheck.ui";
 let panelState={};                                  // panel key -> open(bool), remembered across reviews
 try{ const s=JSON.parse(localStorage.getItem(LS_KEY)||"{}"); if(s.panels) panelState=s.panels; }catch(e){}
@@ -771,27 +787,28 @@ function render(){
   document.getElementById("invwrap").innerHTML = contraHtml + depsHtml + invHtml + blastHtml + egressHtml;
   renderDemoHeader(counts);
   renderFilters();
-  document.getElementById("detail").innerHTML='<div class="empty">Select a change.</div>';
   // deep links: ?f=<route> or ?open=N selects a change; ?invariants=1 opens the panel
   const P=new URLSearchParams(location.search);
   let jump=null;
   if(P.has("f")){ const i=DATA.changes.findIndex(c=>c.route===P.get("f")); if(i>=0) jump=i; }
   else if(P.has("open")) jump=+P.get("open")||0;
   if(jump!==null && DATA.changes[jump]){ sel=jump; renderList(); renderDetail(DATA.changes[jump]); }
+  else { sel=null; renderDiffView(); }     // default main view = the full file-grouped diff, loaded immediately
   if(P.get("invariants")==="1") loadInvariants();
 }
 
-// the demo-only header: a first-timer caption, the "N lines → M findings" stat, and a raw-diff toggle
+// the review header: the "N lines → M findings" stat + a raw-diff toggle (every review), plus a
+// first-timer caption and the example switcher (demos only)
 let capDismissed=false;
 function renderDemoHeader(counts){
   const h=document.getElementById("demohdr");
-  if(!DATA.raw_diff){ h.innerHTML=""; document.getElementById("rawdiff").hidden=true; return; }
+  if(!DATA.raw_diff){ h.innerHTML=""; return; }
   const crit=counts["🔴"]||0, n=DATA.changes.length, lines=DATA.diff_lines||0;
-  const cap = capDismissed ? "" :
+  const cap = (capDismissed || !LC_DEMO) ? "" :
     `<div class="demo-cap">👀 <span>A real <b>${lines}-line</b> PR. Lenscheck found the <b>${crit}</b> `+
     `that could leak data or drop auth — <b>click one</b> below.</span>`+
     `<button class="x" onclick="this.parentNode.remove();capDismissed=true">✕</button></div>`;
-  const sw = (LC_DEMOS.length>1) ?
+  const sw = (LC_DEMO && LC_DEMOS.length>1) ?
     `<div class="demo-switch"><span class="sw-lbl">Example:</span>`+
     LC_DEMOS.map(d=>`<button class="sw${d.id===LC_DEMO?' on':''}" onclick="loadDemo('${d.id}')" `+
       `title="${d.title.replace(/"/g,'&quot;')}">${d.repo||d.id}${d.pr?" #"+d.pr:""}</button>`).join("")+
@@ -801,22 +818,69 @@ function renderDemoHeader(counts){
     `<span class="chip" data-g="lines-changed"><b>${lines}</b> lines changed</span>`+
     `<span class="chip" data-g="things-matter"><b>${n}</b> things that matter</span>`+
     (crit?`<span class="chip crit" data-g="sev-crit"><b>${crit}</b> critical</span>`:"")+
-    `<button class="rawbtn" id="rawtoggle" onclick="toggleRawDiff()" data-g="raw-diff">📄 Show the raw diff</button>`+
+    `<button class="rawbtn" onclick="showAllDiff()" data-g="raw-diff">📄 All files changed</button>`+
     `</div>`;
 }
-function toggleRawDiff(){
-  const pre=document.getElementById("rawdiff"), btn=document.getElementById("rawtoggle");
-  if(pre.hidden){
-    pre.innerHTML=(DATA.raw_diff||"").split("\n").map(l=>{
-      const e=esc(l);
-      if(l.startsWith("+")&&!l.startsWith("+++")) return `<span class="a">${e}</span>`;
-      if(l.startsWith("-")&&!l.startsWith("---")) return `<span class="r">${e}</span>`;
-      if(l.startsWith("@@")||l.startsWith("diff ")) return `<span class="h">${e}</span>`;
-      return e;
-    }).join("\n");
-    pre.hidden=false; btn.textContent="📄 Hide the raw diff";
-  }else{ pre.hidden=true; btn.textContent="📄 Show the raw diff"; }
+
+// ---- diff viewer: parse the unified diff into files+hunks, render it grouped & readable, and link
+// each file to the findings on it — the part plain `git diff` can't do ----
+function parseDiff(raw){
+  const files=[]; let f=null, oldNo=0, newNo=0;
+  (raw||"").split("\n").forEach(l=>{
+    if(l.startsWith("diff --git")){ f={path:"",adds:0,dels:0,hunks:[]}; files.push(f); return; }
+    if(!f) return;
+    if(l.startsWith("+++ ")){ const p=l.slice(4).replace(/^b\//,"").trim(); if(p!=="/dev/null") f.path=p; return; }
+    if(l.startsWith("--- ")){ const p=l.slice(4).replace(/^a\//,"").trim(); if(!f.path&&p!=="/dev/null") f.path=p; return; }
+    if(l.startsWith("@@")){ const m=/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(l); if(m){ oldNo=+m[1]; newNo=+m[2]; } f.hunks.push({header:l,lines:[]}); return; }
+    if(!f.hunks.length) return;                     // index / mode lines before the first hunk
+    const h=f.hunks[f.hunks.length-1];
+    if(l.startsWith("+")){ h.lines.push({t:"add",o:"",n:newNo++,x:l.slice(1)}); f.adds++; }
+    else if(l.startsWith("-")){ h.lines.push({t:"del",o:oldNo++,n:"",x:l.slice(1)}); f.dels++; }
+    else if(l.startsWith("\\")){ /* "\ No newline at end of file" */ }
+    else { h.lines.push({t:"ctx",o:oldNo++,n:newNo++,x:l.slice(1)}); }
+  });
+  return files.filter(f=>f.path);
 }
+function filesOfChange(c){   // the files a change's facts live in (head-side file:line in investigate)
+  const s=new Set(); (c.investigate||[]).forEach(i=>{ const p=(i.where||"").split(":")[0];
+    if(p && (p.indexOf("/")>=0 || p.endsWith(".py"))) s.add(p); });
+  return s;
+}
+function fileFindings(){     // {file: [change index, …]} so a diff file can show which findings touch it
+  const m={}; DATA.changes.forEach((c,i)=>{ filesOfChange(c).forEach(p=>{ (m[p]=m[p]||[]).push(i); }); });
+  return m;
+}
+function linesOfChangeInFile(c,path){
+  const s=new Set(); (c.investigate||[]).forEach(i=>{ const parts=(i.where||"").split(":");
+    if(parts[0]===path && parts[1]) s.add(+parts[1]); });
+  return s;
+}
+function diffFilesHtml(files,opt){
+  opt=opt||{}; const only=opt.only, ff=opt.findings||{}, hl=opt.highlight||{};
+  const list=files.filter(f=>!only||only.has(f.path));
+  if(!list.length) return '<div class="difempty">No diff for this change’s files.</div>';
+  return list.map(f=>{
+    const badges=(ff[f.path]||[]).map(i=>{ const c=DATA.changes[i], col=COL[SEV[c.sev]]||"var(--mut)";
+      return `<span class="fbadge" style="color:${col};border-color:${col}" onclick="event.preventDefault();selectChange(${i})" data-g="diff-mapped">${c.sev} ${esc(c.route)}</span>`;
+    }).join("");
+    const H=hl[f.path];
+    const body=f.hunks.map(h=>`<div class="dhunk">${esc(h.header)}</div>`+h.lines.map(ln=>
+      `<div class="dline ${ln.t}${H&&ln.n&&H.has(ln.n)?' hl':''}"><span class="dno">${ln.o}</span><span class="dno">${ln.n}</span><span class="dtx">${esc(ln.x)}</span></div>`
+    ).join("")).join("");
+    return `<details class="difffile" open><summary class="dfhead" data-g="diff-file"><span class="dfpath mono">${esc(f.path)}</span>`+
+      `<span class="dfstat"><span class="pls">+${f.adds}</span> <span class="mns">−${f.dels}</span></span>${badges}</summary><div class="dfbody">${body}</div></details>`;
+  }).join("");
+}
+function renderDiffView(){   // the immediate default view of the detail panel: the whole PR's diff
+  const d=document.getElementById("detail");
+  if(!DATA.raw_diff){ d.innerHTML='<div class="empty">No file changes in this range.</div>'; return; }
+  const files=parseDiff(DATA.raw_diff);
+  const intro=DATA.changes.length
+    ? `Full diff — ${files.length} file${files.length!==1?"s":""} changed. A badge marks a file a finding touches — click it to open that change.`
+    : `No routing, auth, DB, or external-call change — Lenscheck found nothing that shifts behaviour. Here’s the full diff anyway.`;
+  d.innerHTML=`<div class="diffintro">${intro}</div>`+diffFilesHtml(files,{findings:fileFindings()});
+}
+function showAllDiff(){ sel=null; renderList(); renderDiffView(); document.getElementById("detail").scrollTop=0; }
 function copyFindingLink(route){
   const u=location.origin+location.pathname+"?demo="+encodeURIComponent(LC_DEMO||"")+"&f="+encodeURIComponent(route);
   navigator.clipboard.writeText(u);
@@ -827,7 +891,7 @@ function selectChange(i){   // jump from a shared-egress route chip to that endp
   const c=DATA.changes[i];
   if(!c) return;
   active.add(c.sev); activeKind.add(kindKey(c.kind)); activeEntry.add(entryOf(c)); activeOps.clear();  // unhide it if filtered out
-  sel=i; renderFilters(); renderDetail(c);
+  sel=i; renderFilters(); renderList(); renderDetail(c);
   document.getElementById("detail").scrollIntoView({behavior:"smooth",block:"nearest"});
 }
 
@@ -898,18 +962,28 @@ function renderDetail(c){
   d.innerHTML=`<h2><span data-g="${G_SEV[c.sev]}">${c.sev}</span> ${esc(c.route)}<span class="badge" data-g="${G_CH[kindKey(c.kind)]}">${c.kind}</span>`+
     `<span class="badge" data-g="auth">${esc(c.auth)}</span>${linkBtn}</h2>`+
     `<div data-g="why">${esc(c.why)}</div>`+(c.detail?`<div style="color:var(--mut)">${esc(c.detail)}</div>`:"")+
-    `<div class="tabs"><button id="tg" class="${tab==='graph'?'on':''}" onclick="setTab('graph')" data-g="tabs-graph">Flow graph</button>`+
+    `<div class="tabs"><button id="td" class="${tab==='diff'?'on':''}" onclick="setTab('diff')" data-g="tabs-diff">Diff</button>`+
+    `<button id="tg" class="${tab==='graph'?'on':''}" onclick="setTab('graph')" data-g="tabs-graph">Flow graph</button>`+
     `<button id="tw" class="${tab==='where'?'on':''}" onclick="setTab('where')" data-g="tabs-where">Where to look</button></div>`+
     `<div id="tabbody"></div>`;
   renderTab(c);
 }
-function setTab(t){tab=t;document.getElementById("tg").className=t==='graph'?'on':'';
+function setTab(t){tab=t;document.getElementById("td").className=t==='diff'?'on':'';
+  document.getElementById("tg").className=t==='graph'?'on':'';
   document.getElementById("tw").className=t==='where'?'on':'';renderTab(DATA.changes[sel]);}
 function zoomGraph(f){graphZoom=Math.min(3,Math.max(0.4,graphZoom*f));renderTab(DATA.changes[sel]);}
 
 function renderTab(c){
   const b=document.getElementById("tabbody");
-  if(tab==="where"){
+  if(tab==="diff"){
+    // this change mapped to the git diff: only the hunks in its files, with its exact lines highlighted
+    const only=filesOfChange(c), hl={};
+    only.forEach(p=>{ const s=linesOfChangeInFile(c,p); if(s.size) hl[p]=s; });
+    b.innerHTML = DATA.raw_diff
+      ? (only.size?`<div class="diffintro">The diff for this change’s file(s), its lines marked.</div>`:"")
+        + diffFilesHtml(parseDiff(DATA.raw_diff),{only,highlight:hl})
+      : '<div class="difempty">No diff available for this review.</div>';
+  }else if(tab==="where"){
     const invest=c.investigate.map(i=>`<li><span class="where mono">${esc(i.where)}</span><span class="fact">${esc(i.fact)}</span></li>`).join("");
     const unk=(c.unknowns||[]).map(u=>`<div class="unk" data-g="unknowns">${esc(u)}</div>`).join("");
     b.innerHTML=`<ul class="invest" data-g="where">${invest}</ul>`+(unk?`<div style="margin-top:10px">${unk}</div>`:"");

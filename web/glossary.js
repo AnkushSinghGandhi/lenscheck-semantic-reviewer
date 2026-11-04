@@ -94,6 +94,9 @@ const G = window.LC_GLOSSARY = {
   "instance": {t: "<instance> / <unresolved>", d: "A read or write whose table we couldn't name (e.g. `obj.save()` on an untyped variable). Kept visible on purpose: a hidden writer could hide a real problem."},
   "tabs-graph": {t: "Flow graph tab", d: "The picture: what this entrypoint touches, before vs after the PR."},
   "tabs-where": {t: "Where to look tab", d: "The list: every fact with its file:line."},
+  "tabs-diff": {t: "Diff tab", d: "The git diff for just this change's file(s), with the exact lines its facts came from highlighted — the code behind the finding."},
+  "diff-file": {t: "Changed file", d: "One file in the diff: click to fold it. The +N / −N is lines added and removed. A badge means a finding touches this file."},
+  "diff-mapped": {t: "Finding on this file", d: "A semantic change (lost auth, a new write, a new egress, …) lives in this file. Click it to open that change and its mapped diff."},
 
   // ---- review panels ----
   "contra": {t: "🎭 Intent vs. behavior", d: "The PR says one thing (e.g. 'refactor', 'no behavior change') but the facts show another (new writes, new external calls). Every flag comes from a verified fact, not a guess."},

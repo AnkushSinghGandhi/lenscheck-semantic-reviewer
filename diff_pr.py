@@ -1205,6 +1205,13 @@ def run_review(repo, base=None, head=None, merge=None, pr=None, commit=None, inv
         review["crossrepo_impact"] = xrepo
     if rt is not None:
         review["runtime"] = rt
+    # the plain diff this review was computed from, so the UI can show it next to the findings
+    raw = sh("git", "-C", repo, "diff", "--no-color", b, h)
+    if len(raw) > 500_000:                       # keep the review JSON small for a huge branch
+        raw = raw[:500_000] + "\n… diff truncated (too large to show here)"
+    review["raw_diff"] = raw
+    review["diff_lines"] = sum(1 for ln in raw.splitlines()
+                               if ln[:1] in "+-" and not ln.startswith(("+++", "---")))
     return dict(review=review, report=render(changes, meta),
                 findings=findings, changes=changes, n_base=len(base_eps), n_head=len(head_eps),
                 auto_target=auto)
