@@ -103,6 +103,7 @@ class Endpoint:
     follow_depth: int = 0     # deepest fact-bearing hop the adaptive follow actually reached
     follow_stop: str = ""     # why it stopped: 'dried_out' (complete) / 'ceiling' / 'budget' (⚠ maybe more)
     kind: str = "http"        # what triggers it: http | task (celery) | command (manage.py) | signal (Django)
+    writes_cols: list = field(default_factory=list)   # [{model, cols (list|None=unknown), loc}] per ORM write
 
 
 # ---- repo index ----------------------------------------------------------------------
@@ -554,6 +555,42 @@ def full_routes(index: RepoIndex) -> dict:
 
 # ---- view analysis -------------------------------------------------------------------
 
+def _written_cols(method, node):
+    """Columns a write names, or None when not statically knowable. node is the ast.Call."""
+    def _str_list(v):
+        if isinstance(v, (ast.List, ast.Tuple)):
+            names = [e.value for e in v.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)]
+            return set(names) if len(names) == len(v.elts) else None
+        return None
+    if method in ("create", "update", "get_or_create", "update_or_create", "acreate", "aupdate"):
+        if any(k.arg is None for k in node.keywords):      # `**spread` → the column set is incomplete
+            return None
+        cols = {k.arg for k in node.keywords if k.arg and k.arg != "defaults"}
+        for k in node.keywords:
+            if k.arg == "defaults" and isinstance(k.value, ast.Dict):
+                dk = [c.value for c in k.value.keys if isinstance(c, ast.Constant) and isinstance(c.value, str)]
+                if len(dk) == len(k.value.keys):
+                    cols |= set(dk)
+                else:
+                    return None
+            elif k.arg == "defaults":      # dynamic `defaults=` (not a literal dict) → can't know
+                return None
+        return cols or None
+    if method == "save":
+        for k in node.keywords:
+            if k.arg == "update_fields":
+                return _str_list(k.value)
+        return None        # save() with no update_fields → whole row, columns unknown
+    if method in ("bulk_update", "abulk_update"):
+        if len(node.args) >= 2:
+            return _str_list(node.args[1])
+        for k in node.keywords:
+            if k.arg == "fields":
+                return _str_list(k.value)
+        return None
+    return None
+
+
 class FactCollector(ast.NodeVisitor):
     """Walk a function body; collect lens facts. Records callees for 1-level follow."""
 
@@ -565,6 +602,7 @@ class FactCollector(ast.NodeVisitor):
         self.self_type = self_type               # enclosing class, so `self.objects.x()` names its table
         self.manager_model = manager_model       # set when walking a Manager method: `self.create()` → this model
         self.db = []           # (model, kind, file, line)
+        self.write_cols = {}   # (model, file, line) -> set of column names, or None = written, cols unknown
         self.where_only = set()  # ids of filter()/exclude() Call nodes that are only an UPDATE/DELETE
                                  # WHERE clause (no SELECT) — their read must not be recorded
         self.external = []     # (root, dest, file, line)
@@ -704,6 +742,17 @@ class FactCollector(ast.NodeVisitor):
             return None, None
         return hits[0], (f.attr if f.attr in (ORM_READ | ORM_WRITE) else "all")
 
+    def _note_write_cols(self, model, method, node, fl, ln):
+        if not model or model == "<instance>":
+            return
+        cols = _written_cols(method, node)
+        key = (model, fl, ln)
+        if key in self.write_cols:
+            cur = self.write_cols[key]
+            self.write_cols[key] = None if (cur is None or cols is None) else (cur | cols)
+        else:
+            self.write_cols[key] = cols
+
     def visit_Call(self, node: ast.Call):
         f = node.func
         fl, ln = self._loc(node)
@@ -781,6 +830,8 @@ class FactCollector(ast.NodeVisitor):
                         cur = cur.func.value
                 if not (kind == "read" and id(node) in self.where_only):
                     self.db.append((model, kind, fl, ln))
+                if kind == "write":
+                    self._note_write_cols(model, method, node, fl, ln)
             # Django FK traversal in filter/exclude/get kwargs: `fk_field__col__gte=val`
             # causes a JOIN on the related table. The kwarg stem is the FK field name (snake_case);
             # convert to CamelCase and check the repo index — if it's a known model, record a read.
@@ -815,6 +866,8 @@ class FactCollector(ast.NodeVisitor):
             if who and who.endswith(NON_MODEL_SUFFIXES):     # a serializer/form we couldn't map → unknown
                 who = None
             self.db.append((who or "<instance>", "write", fl, ln))
+            if f.attr == "save":
+                self._note_write_cols(who or None, "save", node, fl, ln)
         # queryset write via a typed var: `qs = Model.objects.filter(...); qs.update(...)` — the `.objects`
         # chain is gone by the time we reach `qs.update`, so only the var's resolved type names the table.
         # Unlike save/delete, require a KNOWN model: a bare `x.update(...)` is almost always a dict/context.
@@ -825,6 +878,7 @@ class FactCollector(ast.NodeVisitor):
             who = self.class_models.get(who, who)
             if who and not who.endswith(NON_MODEL_SUFFIXES):
                 self.db.append((who, "write", fl, ln))
+                self._note_write_cols(who, "update", node, fl, ln)
         # SQLAlchemy (Flask/FastAPI stacks) — high-signal patterns, never a false ✓:
         #   session.query(Model) / db.session.query(Model)  → read
         if isinstance(f, ast.Attribute) and f.attr == "query" and node.args \
@@ -2002,6 +2056,8 @@ def build_edges(ep, method_nodes, index, owner_file, self_type=None, class_metho
     ep.e5_async = _score_async(agg)
     ep.e6_pii = _score_pii(agg)
     ep.e7_cache = _score_cache(agg)
+    ep.writes_cols = [{"model": m, "cols": (sorted(c) if c is not None else None), "loc": f"{f}:{ln}"}
+                      for (m, f, ln), c in sorted(agg.write_cols.items())]
     # resolve each touched model to its real SQL table (declared db_table/__tablename__, else convention)
     for model in {m for m, _k, _f, _l in agg.db if m and m != "<instance>"}:
         tbl, explicit = index.table_for(model)
@@ -2115,6 +2171,7 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
             agg.db.append((m_model, "read" + tag, local.file, m_ln))
     if depth == 0:
         agg.db += local.db
+        _merge_write_cols(agg, local)
         agg.external += local.external
         agg.async_ += local.async_
         agg.cache += local.cache
@@ -2297,9 +2354,19 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
                      manager_model=cname)     # cname is the managed Model — `self.create()` writes it
 
 
+def _merge_write_cols(agg, sub):
+    for k, v in sub.write_cols.items():
+        if k in agg.write_cols:
+            cur = agg.write_cols[k]
+            agg.write_cols[k] = None if (cur is None or v is None) else (cur | v)
+        else:
+            agg.write_cols[k] = v
+
+
 def _tag_indirect(agg, sub):
     # facts discovered one level down are still real, but flagged as inter-procedural
     agg.db += [(m, k + "*", f, ln) for (m, k, f, ln) in sub.db]
+    _merge_write_cols(agg, sub)
     agg.external += [(r, d + " (via call)", f, ln) for (r, d, f, ln) in sub.external]
     agg.async_ += [(mech + " (via call)", t, f, ln) for (mech, t, f, ln) in sub.async_]
     agg.cache += [(k + "*", d, f, ln) for (k, d, f, ln) in sub.cache]
@@ -2549,8 +2616,8 @@ def job_entrypoints(index):
     return out
 
 
-def analyze_repo(root: str):
-    index = RepoIndex(root)
+def analyze_repo(root: str, index=None):
+    index = index or RepoIndex(root)
     results = []
     # Django / DRF — routes come from urls.py, handlers resolved by name
     for route, handler, urls_file in parse_endpoints(index):

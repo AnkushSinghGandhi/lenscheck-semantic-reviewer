@@ -217,6 +217,21 @@ $("branches").addEventListener("change",function(ev){
 function eps(lst){if(!lst||!lst.length)return '<span class="none">—</span>';
  var r=lst.slice(0,6).map(function(e){return '<li><code data-g="'+GK_ENT[entOf(e.route)]+'">'+esc(e.route)+'</code> <span class="h">'+esc(e.handler)+'</span> <span class="loc">'+esc(e.loc)+'</span></li>';}).join("");
  if(lst.length>6)r+='<li class="more">+'+(lst.length-6)+' more</li>';return '<ul>'+r+'</ul>';}
+// column-level write breakdown for a multi-writer table: the real coordination columns (both write),
+// or the honest "different columns" signal — with a caveat when some writes' columns are unknown
+function colsHtml(s){
+ if(s.kind!=="multi_writer") return "";
+ var shared=s.shared_write_columns||[], dist=s.distinct_write_columns||{}, comp=s.write_cols_complete||{};
+ var anyUnknown=(s.writers||[]).some(function(r){return !comp[r];});
+ var cap=anyUnknown?' <span class="h">(plus writes whose columns are unknown — verify)</span>':'';
+ if(shared.length)
+  return '<div class="coord" data-g="x-cols">⚠ both write column(s): <code>'+esc(shared.join(", "))+'</code> — coordinate'+cap+'</div>';
+ var per=(s.writers||[]).map(function(r){var d=dist[r]||[];
+  return d.length?'<b>'+esc(r)+'</b> <code>'+esc(d.slice(0,8).join(", "))+(d.length>8?'…':'')+'</code>':null;}).filter(Boolean).join(' · ');
+ if(!anyUnknown)
+  return '<div class="meta" style="margin:4px 0 8px" data-g="x-cols">✓ different columns — not a shared write'+(per?'. '+per:'')+'</div>';
+ return '<div class="meta" style="margin:4px 0 8px" data-g="x-cols">no known shared column'+cap+(per?'. known-distinct: '+per:'')+'</div>';
+}
 function cardHtml(s){
  var per=DATA.repos.map(function(rp){var a=s.by_repo[rp];
   if(!a)return '<div class="repo absent"><b>'+esc(rp)+'</b> <span class="none" data-g="x-not-touched">not touched</span></div>';
@@ -225,7 +240,7 @@ function cardHtml(s){
  if(uk.length){var keys=esc(uk.map(function(k){return k.join("+");}).join("; "));
   ukh=(s.kind==="multi_writer")?'<div class="coord" data-g="x-coordinate">⚠ coordinate on unique key <code>'+keys+'</code> — both writers must agree</div>'
                                :'<div class="meta" style="margin:4px 0 8px" data-g="x-unique-key">unique key: <code>'+keys+'</code></div>';}
- return '<details class="card" data-kind="'+s.kind+'" data-table="'+esc(s.table.toLowerCase())+'"><summary><code>'+(s.database?esc(s.database)+'.':'')+esc(s.table)+'</code> <span class="'+b[0]+'" data-g="'+b[2]+'">'+b[1]+'</span><span class="meta" data-g="x-writers">writers: '+(esc(s.writers.join(", "))||"—")+'</span></summary><div class="body">'+ukh+'<div class="repos">'+per+'</div></div></details>';}
+ return '<details class="card" data-kind="'+s.kind+'" data-table="'+esc(s.table.toLowerCase())+'"><summary><code>'+(s.database?esc(s.database)+'.':'')+esc(s.table)+'</code> <span class="'+b[0]+'" data-g="'+b[2]+'">'+b[1]+'</span><span class="meta" data-g="x-writers">writers: '+(esc(s.writers.join(", "))||"—")+'</span></summary><div class="body">'+ukh+colsHtml(s)+'<div class="repos">'+per+'</div></div></details>';}
 function renderApiLinks(){
  var all=DATA.api_links||[], el=$("apilinks");
  if(!all.length){el.innerHTML="";links=[];return;}

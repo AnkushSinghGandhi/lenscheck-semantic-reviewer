@@ -376,11 +376,16 @@ def _clean_head(path):
         return None
 
 
-def _provenance(path, with_calls, use_cache):
-    """provenance.build, cached by git HEAD. A commit sha is globally unique, so the sha alone keys
-    it — same repo re-run (or an @branch worktree at the same commit) hits instantly."""
+def _provenance(path, with_calls, use_cache, worktree=True):
+    """provenance.build, cached. A plain local path uses the content-hash fact cache (factindex). An
+    @branch worktree uses the git-HEAD cache, which is also the default for direct callers (`build` always
+    passes `worktree` explicitly): a commit sha is globally unique, so the sha alone keys it — same repo
+    re-run (or an @branch worktree at the same commit) hits instantly."""
     if not use_cache:
         return provenance.build(path, with_calls=with_calls)
+    if not worktree:
+        import factindex
+        return factindex.load(path, with_calls)
     head, d = _clean_head(path), _cache_dir()
     if not head or not d:
         return provenance.build(path, with_calls=with_calls)
@@ -407,7 +412,7 @@ def build(repos, writes_only=False, schema=None, use_cache=True, db_map=None):
         for spec in repos:                       # each is 'path' or 'path@branch'
             name, path, cleanup = _resolve(spec)
             cleanups.append(cleanup)
-            per[name] = _provenance(path, True, use_cache)
+            per[name] = _provenance(path, True, use_cache, worktree=("@" in name))
             meta[name] = _repo_meta(path)
     finally:
         for c in cleanups:
@@ -418,6 +423,7 @@ def build(repos, writes_only=False, schema=None, use_cache=True, db_map=None):
 
     # keyed by (database alias, table): same-named tables in different databases are different tables
     merged = {}
+    wcols = {}            # (db, table) -> {repo: (written_columns list, write_cols_complete bool)}
     for name, data in per.items():
         db = _db_of(name, db_map)
         for tbl, rec in data.get("tables", {}).items():
@@ -427,6 +433,8 @@ def build(repos, writes_only=False, schema=None, use_cache=True, db_map=None):
                 "written_by": rec.get("written_by", []),
                 "read_by": rec.get("read_by", []),
             }
+            wcols.setdefault((db, tbl), {})[name] = (
+                rec.get("written_columns") or [], bool(rec.get("write_cols_complete")))
 
     shared = []
     for db, tbl in sorted(merged):
@@ -438,11 +446,24 @@ def build(repos, writes_only=False, schema=None, use_cache=True, db_map=None):
                 else "producer_consumer" if len(writers) == 1 else "read_only")
         if writes_only and kind == "read_only":
             continue
+        cols_by_repo = wcols.get((db, tbl), {})
+        write_columns = {r: cols_by_repo.get(r, ([], False))[0] for r in writers}
+        write_cols_complete = {r: cols_by_repo.get(r, ([], False))[1] for r in writers}
+        # columns every writer is known to write (real coordination points)
+        sets = [set(write_columns[r]) for r in writers]
+        shared_write_columns = sorted(set.intersection(*sets)) if sets else []
+        # columns a repo is known to write that NO other writer is known to write (e.g. delivery_status
+        # written only by cnext_cms) — the signal that a shared table isn't really a shared write
+        distinct_write_columns = {
+            r: sorted(set(write_columns[r]) - set().union(*[set(write_columns[o]) for o in writers if o != r], set()))
+            for r in writers}
         shared.append({
             "table": tbl, "database": db, "repos": sorted(slot), "writers": writers,
             "readers": sorted(r for r, a in slot.items() if a["read_by"]),
             "multi_writer": len(writers) >= 2, "kind": kind,
             "unique_keys": [list(k) for k in (schema or {}).get(tbl, [])], "by_repo": slot,
+            "write_columns": write_columns, "write_cols_complete": write_cols_complete,
+            "shared_write_columns": shared_write_columns, "distinct_write_columns": distinct_write_columns,
         })
 
     api_links = _api_links(per)

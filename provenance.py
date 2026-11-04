@@ -122,9 +122,10 @@ def _call_path(item):
     return _url_path(dest)
 
 
-def build(repo, with_calls=False):
-    index = RepoIndex(repo)
-    eps = analyze_repo(repo)        # HTTP views + background jobs (celery tasks / commands / signals)
+def build(repo, with_calls=False, index=None, eps=None):
+    index = index or RepoIndex(repo)
+    # HTTP views + background jobs (celery tasks / commands / signals); reuse the index, parse once
+    eps = analyze_repo(repo, index=index) if eps is None else eps
 
     # model -> db_table, merged from the index (explicit Meta.db_table / __tablename__) and what the
     # endpoints resolved. Gives FK targets a real table name to point a rule at.
@@ -163,6 +164,17 @@ def build(repo, with_calls=False):
                 rec["pii_off_platform"].add(e.handler)
             elif status == "⚠":
                 rec["pii_to_client"].add(e.handler)
+    # columns written per table: the union of the writes whose columns we KNOW, plus a flag that stays
+    # False if any write there had unknown columns (a whole-row save(), a manager/raw write). A known
+    # column is never erased by an unknown write — "we know X is written" survives, honestly caveated.
+    wcols, wcols_incomplete = {}, set()
+    for e in eps:
+        for it in (getattr(e, "writes_cols", None) or []):
+            tbl = table_of(it["model"])
+            if it["cols"] is None:
+                wcols_incomplete.add(tbl)
+            else:
+                wcols.setdefault(tbl, set()).update(it["cols"])
     for rec in tables.values():
         rec["models"] = sorted(rec["models"])
         rec["pii_off_platform"] = sorted(rec["pii_off_platform"])
@@ -233,6 +245,8 @@ def build(repo, with_calls=False):
                     "anomalies": len(uniq)},
         "tables": {t: {"models": r["models"],
                        "written_by": r["written_by"], "read_by": r["read_by"],
+                       "written_columns": sorted(wcols.get(t, ())),
+                       "write_cols_complete": (t in wcols) and (t not in wcols_incomplete),
                        "pii_off_platform": r["pii_off_platform"], "pii_to_client": r["pii_to_client"]}
                    for t, r in sorted(tables.items())},
         "consistency_rules": rules + uniq,

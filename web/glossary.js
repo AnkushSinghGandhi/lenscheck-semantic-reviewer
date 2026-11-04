@@ -156,6 +156,7 @@ const G = window.LC_GLOSSARY = {
   "x-has-uk": {t: "⚠ Has unique key", d: "Only tables with a unique key from schema.json — the ones where concurrent writers can collide."},
   "x-repos": {t: "Repos", d: "One repo per line. Add @branch to analyze a branch (checked out in a throwaway worktree; your checkout is untouched)."},
   "x-expand": {t: "Expand / collapse", d: "Open or close every shown table card."},
+  "x-cols": {t: "Which columns each repo writes", d: "Column-level write tracking. 'both write col X' = a real coordination point. 'different columns' = the repos write disjoint columns, so it isn't really a shared write. 'columns unknown' = some writes (whole-row save(), manager or raw SQL) didn't name their columns, so it can't be confirmed — verify."},
   "x-impact": {t: "🔗 Cross-repo impact", d: "Endpoints in OTHER repos a change reaches: they read a table it writes, it calls their route or dispatches their task, or they call the changed route. Only links the cross-repo analysis found are followed."},
   "x-kind-data": {t: "gets changed data", d: "This endpoint receives what the change produces: it reads a table a changed endpoint writes, or a changed endpoint calls or dispatches it. Followed further, up to 3 hops."},
   "x-kind-contract": {t: "depends on the changed interface", d: "This endpoint calls the changed route or dispatches the changed task, so a change to its request, response or arguments can break it."},
