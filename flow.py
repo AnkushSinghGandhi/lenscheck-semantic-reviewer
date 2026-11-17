@@ -9,6 +9,7 @@ no LLM; facts come from the same extractor the rest of lenscheck uses.
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 import re
@@ -92,24 +93,40 @@ def resolve(cands, query, pick=None):
     return _choose(scored, qtokens, pick)
 
 
-def entry_endpoint(repo, cand):
+def entry_endpoint(repo, cand, index=None):
     """Re-derive the Endpoint object for a candidate, with its `lc_walk` attached."""
-    index = RepoIndex(repo)
+    index = index or RepoIndex(repo)
     kind = cand.get("kind", "http")
     route, handler = cand.get("route", ""), cand.get("handler", "")
+    # cross-repo hops re-derive many entries on one index: parse the routes / decorator endpoints once
+    memo = index.__dict__.setdefault("_flow_entry_memo", {})
     if kind == "http":
-        for r, h, urls_file in parse_endpoints(index):
+        if "routes" not in memo:
+            memo["routes"] = parse_endpoints(index)
+        for r, h, urls_file in memo["routes"]:
             if (r, h) == (route, handler):
                 ep = analyze_handler(handler, index, near=urls_file)
                 ep.route = route
                 return ep, index
+        # decorator routes (Flask/FastAPI): the candidate's loc names its file, so parse just that one
+        # instead of frameworks.discover() re-parsing and re-analyzing the whole repo
         try:
             import frameworks
         except ImportError:
             from extractor import frameworks
-        for ep in frameworks.discover(index):
-            if (ep.route, ep.handler) == (route, handler):
-                return ep, index
+        path = os.path.join(index.root, cand.get("loc", "").rsplit(":", 1)[0])
+        try:
+            with open(path, encoding="utf-8") as f:
+                tree = ast.parse(f.read())
+        except (OSError, SyntaxError, ValueError):
+            tree = None
+        if tree is not None:
+            prefixes, consts = frameworks._prefix_map(tree), index.consts_for(path)
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == handler:
+                    for methods, r in frameworks._routes_of(node, prefixes, consts):
+                        if r == route:
+                            return frameworks._make_endpoint(node, r, methods, path, index), index
     else:
         for ep in job_entrypoints(index, only=route):
             if ep.handler == handler:
@@ -117,7 +134,7 @@ def entry_endpoint(repo, cand):
     return None, index
 
 
-def build_flow(repo, query, pick=None, keep_all=False):
+def build_flow(repo, query, pick=None, keep_all=False, crossrepo_paths=None, follow=None):
     cand = resolve(candidates(repo), query, pick=pick)
     ep, index = entry_endpoint(repo, cand)
     if ep is None:
@@ -130,7 +147,7 @@ def build_flow(repo, query, pick=None, keep_all=False):
             if tbl:
                 tables[step["model"]] = tbl
     import crossrepo
-    return {
+    flow = {
         "schema": 1,
         "generated_by": "lenscheck flow",
         "repo": os.path.abspath(repo),
@@ -140,7 +157,262 @@ def build_flow(repo, query, pick=None, keep_all=False):
         "steps": tr["steps"],
         "tables": tables,
         "stats": tr["stats"],
+        "hops": [],
     }
+    if crossrepo_paths:
+        origin, origin_path, origin_cleanup = crossrepo._resolve(repo)
+        paths = {origin: origin_path}
+        cleanups = [origin_cleanup]
+        try:
+            for spec in crossrepo_paths:
+                name, path, cleanup = crossrepo._resolve(spec)
+                paths[name] = path
+                cleanups.append(cleanup)
+            per = {name: crossrepo._provenance(path, True, True, worktree=("@" in name))
+                   for name, path in paths.items()}
+            indexes = {origin: index}
+            flow["hops"] = _build_hops(origin, flow, index, per, paths, indexes, follow or [])
+            flow["repos"] = {name: crossrepo._repo_meta(path) for name, path in paths.items()}
+        finally:
+            for cleanup in cleanups:
+                try:
+                    cleanup()
+                except Exception:
+                    pass
+    return flow
+
+
+def _prefix(steps, hop_id):
+    """Deep copy of a step tree with every id/ref namespaced under the hop."""
+    import copy
+    out = copy.deepcopy(steps)
+
+    def walk(items):
+        for step in items:
+            if "id" in step:
+                step["id"] = f"{hop_id}.{step['id']}"
+            if "ref" in step:
+                step["ref"] = f"{hop_id}.{step['ref']}"
+            walk(step.get("children") or [])
+    walk(out)
+    return out
+
+
+def _build_hops(origin, flow, index, per, paths, indexes, follow):
+    import crossrepo
+    import provenance
+
+    def idx_of(name):
+        if name not in indexes:
+            indexes[name] = RepoIndex(paths[name])
+        return indexes[name]
+
+    def merged_cmap(models, idx):
+        out = {}
+        for model in models:
+            out.update(idx.column_map(model))
+        return out
+
+    def col(key, cmap):
+        head = key.split("__")[0]
+        return cmap.get(head, head)
+
+    def entry_ref(cand):
+        return {"route": cand.get("route", ""), "handler": cand.get("handler", ""),
+                "kind": cand.get("kind", "http"), "loc": cand.get("loc", "")}
+
+    def find_cand(repo_name, key):
+        for e in per.get(repo_name, {}).get("endpoints", []):
+            if all(e.get(k, "") == key.get(k, "") for k in ("route", "handler", "loc")):
+                return e
+        return None
+
+    when_of, writes_by_table = {}, {}
+
+    def scan(steps, chain):              # depth-first in source order, so the first write is the first one run
+        for step in steps:
+            when = chain + list(step.get("guards") or [])
+            when_of[step["id"]] = when
+            if step.get("kind") == "write" and step.get("model"):
+                tbl = index.table_for(step["model"])[0]
+                if tbl and tbl != "<instance>":
+                    writes_by_table.setdefault(tbl, []).append(step)
+            scan(step.get("children") or [], when)
+    scan(flow["steps"], [])
+
+    hops = []
+    next_id = [1]
+    reader_traces = {}
+
+    def expand(repo_name, cand, hop_id, via, match, extra):
+        idx = idx_of(repo_name)
+        ep, _ = entry_endpoint(paths[repo_name], cand, index=idx)
+        if ep is None:
+            return None
+        return {"id": hop_id, "via": via, **extra, "repo": repo_name, "match": match,
+                "entry": entry_ref(cand), "steps": _prefix(trace(ep, idx)["steps"], hop_id)}
+
+    # http hops
+    api_links = crossrepo._api_links(per)
+    for link in api_links:
+        if link.get("from_repo") != origin or link["from"].get("loc") != flow["entry"]["loc"]:
+            continue
+        from_step = None
+        for step in _walk_steps(flow["steps"]):
+            if step.get("kind") == "external" and provenance._call_path(
+                    f"{step['text']} @ {step['loc']}") == link["call"]:
+                from_step = step
+                break
+        if from_step is None:
+            continue
+        cand = find_cand(link["to_repo"], link["to"])
+        if cand is None:
+            continue
+        hop_id = f"h{next_id[0]}"
+        hop = expand(link["to_repo"], cand, hop_id, "http", link["match"],
+                     {"from_step": from_step["id"], "when": when_of.get(from_step["id"], [])})
+        if hop is not None:
+            next_id[0] += 1
+            hops.append(hop)
+
+    # celery hops
+    task_links = crossrepo._task_links(per)
+    for link in task_links:
+        if link.get("from_repo") != origin or link["from"].get("loc") != flow["entry"]["loc"]:
+            continue
+        dispatch_loc = link["from"].get("dispatch_loc")
+        from_step = None
+        for step in _walk_steps(flow["steps"]):
+            if step.get("kind") == "async" and step.get("loc") == dispatch_loc:
+                from_step = step
+                break
+        if from_step is None:
+            continue
+        key = {"handler": link["to"].get("task", ""), "loc": link["to"].get("loc", "")}
+        cand = None
+        for e in per.get(link["to_repo"], {}).get("endpoints", []):
+            if e.get("kind") == "task" and e.get("handler") == key["handler"] \
+                    and e.get("loc") == key["loc"]:
+                cand = e
+                break
+        if cand is None:
+            continue
+        hop_id = f"h{next_id[0]}"
+        hop = expand(link["to_repo"], cand, hop_id, "celery", link["match"],
+                     {"from_step": from_step["id"], "when": when_of.get(from_step["id"], [])})
+        if hop is not None:
+            next_id[0] += 1
+            hops.append(hop)
+
+    # table hops
+    for table in sorted(writes_by_table):
+        write_steps = writes_by_table[table]
+        for repo_name in sorted(per):
+            if repo_name == origin:
+                continue
+            info = per[repo_name].get("tables", {}).get(table) or {}
+            read_by = info.get("read_by")
+            if not read_by:
+                continue
+            cmap_o = merged_cmap(dict.fromkeys(s["model"] for s in write_steps), index)
+            cmap_r = merged_cmap(info.get("models") or [], idx_of(repo_name))
+            writer_set = {}
+            for step in write_steps:
+                for k, v in (step.get("set") or {}).items():
+                    writer_set[col(k, cmap_o)] = v
+            writer_cols = set(writer_set)
+            other_writer_cols = {col(f, cmap_r) for f in info.get("written_columns") or []}
+            distinctive = writer_cols - other_writer_cols
+            reader_keys = {(e.get("route", ""), e.get("handler", ""), e.get("loc", ""))
+                           for e in read_by}
+            cands = [e for e in per[repo_name].get("endpoints", [])
+                     if (e.get("route", ""), e.get("handler", ""), e.get("loc", "")) in reader_keys]
+            idx_r = idx_of(repo_name)
+            traced = []
+            for cand in cands:
+                ckey = (repo_name, cand.get("route", ""), cand.get("handler", ""), cand.get("loc", ""))
+                if ckey not in reader_traces:    # one reader often reads several of the written tables
+                    ep, _ = entry_endpoint(paths[repo_name], cand, index=idx_r)
+                    reader_traces[ckey] = (ep, trace(ep, idx_r)["steps"] if ep is not None else None)
+                ep, steps = reader_traces[ckey]
+                cand_out = {"route": cand.get("route", ""), "handler": cand.get("handler", ""),
+                            "loc": cand.get("loc", ""), "kind": cand.get("kind", "http"),
+                            "score": [False, 0, 0], "contradicted": False,
+                            "reasons": [], "expanded": False}
+                if ep is None:
+                    cand_out["reasons"].append("not traceable")
+                    traced.append((cand, cand_out, None))
+                    continue
+                on_t =[s for s in _walk_steps(steps)
+                        if s.get("model") in (info.get("models") or [])
+                        or idx_r.table_for(s.get("model") or "")[0] == table]
+                touched = set()
+                for step in on_t:
+                    for field in ("where", "where_not", "set"):
+                        for k in (step.get(field) or {}):
+                            touched.add(col(k, cmap_r))
+                touched -= {"pk", "id"}
+                contradicted, why = False, None
+                for step in on_t:
+                    for k, v in (step.get("where") or {}).items():
+                        c = col(k, cmap_r)
+                        if c in writer_set and v != "?" and writer_set[c] != "?" \
+                                and v != writer_set[c]:
+                            contradicted, why = True, (c, v, writer_set[c])
+                            break
+                    if contradicted:
+                        break
+                    for k, v in (step.get("where_not") or {}).items():
+                        c = col(k, cmap_r)
+                        if c in writer_set and v != "?" and writer_set[c] == v:
+                            contradicted, why = True, (c, v, writer_set[c])
+                            break
+                    if contradicted:
+                        break
+                reasons = []
+                only = sorted(touched & distinctive)
+                if only:
+                    reasons.append(f"uses {', '.join(only)} — only {origin} is seen writing them")
+                shared = sorted((touched & writer_cols) - distinctive)
+                if shared:
+                    reasons.append(f"shares {', '.join(shared)}")
+                if contradicted:
+                    c, v, w = why
+                    reasons.append(f"✗ filters {c}={v}, this flow writes {c}={w}")
+                score = [not contradicted, len(touched & distinctive), len(touched & writer_cols)]
+                cand_out.update({"score": score, "contradicted": contradicted, "reasons": reasons})
+                traced.append((cand, cand_out, steps))
+            traced.sort(key=lambda x: x[1]["route"])
+            traced.sort(key=lambda x: x[1]["score"], reverse=True)
+
+            top = traced[0] if traced else None
+            forced = next((t for t in traced if f"{repo_name}:{t[1]['route']}" in follow), None)
+            chosen = forced
+            if chosen is None and top is not None and top[1]["score"][0]:
+                if len(traced) == 1 or (top[1]["score"] > traced[1][1]["score"]
+                                        and top[1]["score"][1] >= 1):
+                    chosen = top
+            if chosen is not None and chosen[2] is None:
+                chosen = None
+            match = None
+            if chosen is not None:
+                match = "forced" if chosen is forced else "ranked"
+
+            hop_id = f"h{next_id[0]}"
+            next_id[0] += 1
+            first = write_steps[0]
+            hop = {"id": hop_id, "via": "table", "table": table,
+                   "from_step": first["id"], "when": when_of.get(first["id"], []),
+                   "repo": repo_name, "match": match,
+                   "entry": entry_ref(chosen[0]) if chosen is not None else None,
+                   "candidates": [t[1] for t in traced]}
+            if chosen is not None:
+                t_cand, t_out, t_steps = chosen
+                t_out["expanded"] = True
+                hop["steps"] = _prefix(t_steps, hop_id)
+            hops.append(hop)
+    return hops
+
 
 
 def _walk_steps(steps):
@@ -163,6 +435,8 @@ def _step_line(step):
     text = f"{_MARKERS.get(step['kind'], '')} {step.get('text', '')}"
     if step.get("where"):
         text += " where{" + ", ".join(f"{k}: {_fmt(v)}" for k, v in step["where"].items()) + "}"
+    if step.get("where_not"):
+        text += " not{" + ", ".join(f"{k}: {_fmt(v)}" for k, v in step["where_not"].items()) + "}"
     if step.get("set"):
         text += " set{" + ", ".join(f"{k}: {_fmt(v)}" for k, v in step["set"].items()) + "}"
     if step.get("ref"):
@@ -174,7 +448,10 @@ def _step_line(step):
     return text
 
 
-def _render_steps(steps, prefix):
+_EMPTY_HOP = "(no reads, writes, calls or exits found there)"
+
+
+def _render_steps(steps, prefix, hops=None):
     lines, prev = [], []
     for i, step in enumerate(steps):
         last = i == len(steps) - 1
@@ -185,16 +462,42 @@ def _render_steps(steps, prefix):
                 lines.append(prefix + conn + "? " + guard)
         prev = step.get("guards", [])
         lines.append(prefix + conn + _step_line(step))
+        for hop in (hops or {}).get(step.get("id"), []):
+            route = (hop.get("entry") or {}).get("route", "")
+            lines.append(child_prefix + f"═══ {hop['via']} → {hop['repo']} {route} ({hop['match']}) ═══")
+            lines.extend(_render_steps(hop.get("steps") or [], child_prefix) or [child_prefix + _EMPTY_HOP])
         if step.get("boundary"):
             lines.append(child_prefix + f"═══ {step['boundary']} ═══")
-        lines.extend(_render_steps(step.get("children") or [], child_prefix))
+        lines.extend(_render_steps(step.get("children") or [], child_prefix, hops))
     return lines
 
 
 def render_ascii(flow):
     e = flow["entry"]
+    hops = flow.get("hops") or []
+    inline = {}
+    for hop in hops:
+        if hop.get("via") in ("http", "celery"):
+            inline.setdefault(hop.get("from_step"), []).append(hop)
     lines = [f"FLOW {e['kind']} {e['route']} → {e['handler']} ({e['loc']})"]
-    lines.extend(_render_steps(flow["steps"], ""))
+    lines.extend(_render_steps(flow["steps"], "", inline))
+    for hop in hops:
+        if hop.get("via") != "table":
+            continue
+        lines.append(f"═══ later · {hop['repo']} reads {hop['table']} "
+                     f"(written at {hop['from_step']}) ═══")
+        when = hop.get("when") or []
+        if when:
+            text = " › ".join(when)
+            lines.append("when: " + (text if len(text) <= 120 else text[:120] + "…"))
+        for cand in hop.get("candidates") or []:
+            star = "★" if cand.get("expanded") else " "
+            lines.append(f"{star} {cand.get('route', '')}  {cand.get('handler', '')}  "
+                         f"[{'; '.join(cand.get('reasons') or [])}]")
+        if hop.get("match"):
+            lines.extend(_render_steps(hop.get("steps") or [], "") or ["  " + _EMPTY_HOP])
+        else:
+            lines.append(f"  pick one: --follow {hop['repo']}:<route>")
     return "\n".join(lines)
 
 
@@ -207,6 +510,10 @@ def main():
     p.add_argument("--pick", type=int, metavar="N", help="pick candidate N (1-based)")
     p.add_argument("--all", action="store_true", help="keep every step, including bare helpers")
     p.add_argument("--out", metavar="FILE", help="write the flow as JSON")
+    p.add_argument("--crossrepo", nargs="+", metavar="PATH",
+                   help="follow the flow into these other repos")
+    p.add_argument("--follow", action="append", metavar="REPO:ROUTE",
+                   help="force a table-hop reader (repeatable)")
     args = p.parse_args()
 
     if args.list:
@@ -218,7 +525,8 @@ def main():
         return 2
 
     try:
-        flow = build_flow(args.repo, args.query, pick=args.pick, keep_all=args.all)
+        flow = build_flow(args.repo, args.query, pick=args.pick, keep_all=args.all,
+                          crossrepo_paths=args.crossrepo, follow=args.follow)
     except Ambiguous as e:
         if e.ranked:
             for i, c in enumerate(e.ranked, 1):

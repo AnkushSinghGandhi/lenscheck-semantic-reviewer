@@ -45,6 +45,33 @@ always visible; a call cut deep and reached again shallower is expanded there in
  "stats": {"calls_followed": 3, "truncated": false}}
 ```
 
+## Cross-repo hops
+
+With `--crossrepo PATH [PATH ...]` (each path may be `path@branch`) the flow follows what leaves the
+repo, and `--follow REPO:ROUTE` can force the reader a table hop expands:
+
+```bash
+lenscheck flow ./svc /push --crossrepo ../other
+lenscheck flow ./svc /push --crossrepo ../other --follow svcB:command:read_items
+```
+
+| hop | trigger | what expands |
+|---|---|---|
+| `http` | the entry makes a call whose path matches another repo's route | that repo's serving endpoint |
+| `celery` | the entry dispatches a task another repo defines | that repo's task |
+| `table` | the entry writes a table another repo reads | the best-ranked reader of that table |
+
+Table hops rank readers by whether they **use a column only this repo is seen writing** (the
+distinctive column, e.g. `job_id`), then by how many written columns they share; a reader that
+**filters a column to a different literal** than this flow writes is contradicted and ranked last.
+The winner expands when it is unambiguous (or `--follow` names it); otherwise every candidate is
+listed with `--follow` hints. Hop steps are namespaced (`h1.s3`) so they never collide with the
+origin tree. Table hops are printed after the origin tree; `http`/`celery` hops sit under their
+dispatch line.
+
+Hops are single-depth (a hop's own links are not followed), and nothing from the other repo is
+written back into this repo's cache.
+
 ## Known limits
 
 - **Order inside one statement is approximate**: facts come before the statement's calls, and an outer
@@ -53,5 +80,6 @@ always visible; a call cut deep and reached again shallower is expanded there in
 - **Only analyzer-resolved calls are followed** — an unresolved dynamic call is not traced.
 - **Cold first run builds the fact cache** (the same cache `provenance`/`crossrepo` use); on c360-sized
   repos that is roughly a minute, then it is cached.
-- **Cross-repo stitching, HTML/serve output, front-end parsing and any natural-language resolver are
-  later milestones** — this command is single-repo and static.
+- **Cross-repo hops are single-depth** — the links a hop's own endpoint makes are not followed.
+- **HTML/serve output, front-end parsing and any natural-language resolver are later milestones** —
+  this command is static.

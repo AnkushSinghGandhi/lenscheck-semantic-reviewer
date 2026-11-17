@@ -157,6 +157,8 @@ class SeqCollector(FactCollector):
             if lit:
                 if lit.get("where"):
                     ev["where"] = lit["where"]
+                if lit.get("where_not"):
+                    ev["where_not"] = lit["where_not"]
                 if lit.get("set"):
                     ev["set"] = lit["set"]
             self.events.append(ev)
@@ -194,21 +196,40 @@ class SeqCollector(FactCollector):
         self.events.append({"kind": "exit", "text": _short(text, 60), "loc": loc, "guards": guards})
 
     def _literals(self, node):
-        """{line: {"where": {...}, "set": {...}}} for literal ORM kwargs on that line."""
+        """{line: {"where": {...}, "where_not": {...}, "set": {...}}} for literal ORM kwargs on that line."""
         out = {}
         for call in ast.walk(node):
             if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)):
                 continue
             meth = call.func.attr
             if meth not in {"filter", "exclude", "get", "create", "update",
-                            "get_or_create", "update_or_create"}:
+                            "get_or_create", "update_or_create", "bulk_create"}:
                 continue
-            slot = out.setdefault(getattr(call, "lineno", 0), {"where": {}, "set": {}})
+            slot = out.setdefault(getattr(call, "lineno", 0),
+                                  {"where": {}, "where_not": {}, "set": {}})
+            if meth == "bulk_create":
+                arg = call.args[0] if call.args else None
+                if arg is not None:
+                    for inner in ast.walk(arg):
+                        if not isinstance(inner, ast.Call):
+                            continue
+                        fn = inner.func
+                        name = fn.id if isinstance(fn, ast.Name) else \
+                            (fn.attr if isinstance(fn, ast.Attribute) else "")
+                        if not name or not name[0].isupper():
+                            continue
+                        for kw in inner.keywords:
+                            if kw.arg is None:
+                                continue
+                            slot["set"][kw.arg] = _const_value(kw.value)
+                continue
             for kw in call.keywords:
                 if kw.arg is None:                     # `**spread` — that key is simply absent
                     continue
-                if meth in {"filter", "exclude", "get"}:
+                if meth in {"filter", "get"}:
                     slot["where"][kw.arg] = _const_value(kw.value)
+                elif meth == "exclude":
+                    slot["where_not"][kw.arg] = _const_value(kw.value)
                 elif meth in {"create", "update"}:
                     slot["set"][kw.arg] = _const_value(kw.value)
                 elif kw.arg == "defaults":

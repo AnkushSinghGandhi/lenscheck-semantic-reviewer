@@ -328,6 +328,29 @@ class RepoIndex:
             cache[model] = out
         return cache[model]
 
+    def column_map(self, model):
+        """{field: column} for the model's declared fields: an explicit `db_column`, `{fk}_id` for a
+        ForeignKey/OneToOneField, else the field name."""
+        cache = self.__dict__.setdefault("_col_maps", {})
+        if model not in cache:
+            out = {}
+            for node, _path in (self.classes.get(model) or [])[:1]:
+                for st in getattr(node, "body", []):
+                    if not (isinstance(st, ast.Assign) and len(st.targets) == 1
+                            and isinstance(st.targets[0], ast.Name) and isinstance(st.value, ast.Call)):
+                        continue
+                    fname = _dotted(st.value.func).split(".")[-1]
+                    if not (fname.endswith("Field") or fname in ("ForeignKey", "OneToOneField")):
+                        continue
+                    name = st.targets[0].id
+                    col = next((k.value.value for k in st.value.keywords if k.arg == "db_column"
+                                and isinstance(k.value, ast.Constant) and isinstance(k.value.value, str)), None)
+                    if col is None:
+                        col = f"{name}_id" if fname in ("ForeignKey", "OneToOneField") else name
+                    out[name] = col
+            cache[model] = out
+        return cache[model]
+
     def _scan_drf(self, tree):
         for n in ast.walk(tree):
             if isinstance(n, ast.Assign) and any(
