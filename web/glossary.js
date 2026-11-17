@@ -183,6 +183,8 @@ const G = window.LC_GLOSSARY = {
   "fl-hop-table": {t: "Table hop", d: "The flow wrote a table another repo reads, so the flow continues in that repo's reader. The ★ marks the expansion the ranking chose."},
   "fl-hop-http": {t: "HTTP / celery hop", d: "The flow called a route or dispatched a task defined in another repo, so the flow continues into that endpoint or task."},
   "fl-cut": {t: "Cut", d: "A call the tracer stopped following at its depth or budget cap. The gap is always shown, never silently pruned."},
+  "fl-alt": {t: "⑂ Alternative", d: "Only one of these phases runs for a given call: they sit on opposite sides of the same condition."},
+  "fl-maybe": {t: "Maybe (one of)", d: "The table is picked at runtime from a known list, so this touch hits one of the candidate tables."},
   "fl-ref": {t: "See also", d: "This call was already expanded earlier in the trace. Click it to jump to that earlier step."},
   "fl-when": {t: "When", d: "The guards in effect when this phase starts — the path that had to be taken to reach it."}
 };

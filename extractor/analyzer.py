@@ -57,6 +57,9 @@ NON_ORM_RECEIVERS = {"cache", "caches", "session", "storage", "default_storage",
 # table named "FooSerializer"). We resolve these to Meta.model when known, else fall back to unknown.
 NON_MODEL_SUFFIXES = ("Serializer", "Form")
 
+# shortcut: explicit list of non-ORM classes, widen when a new library shows up as a table
+_NON_ORM_CLASSES = {"Workbook", "Document", "Presentation", "Image", "ZipFile", "BytesIO", "StringIO", "DataFrame", "Path"}
+
 # Django cache ops — surfaced as the E7 cache lens (read vs mutate/invalidate), not DB writes.
 CACHE_READ = {"get", "get_many", "has_key", "keys", "ttl"}
 CACHE_WRITE = {"set", "set_many", "add", "delete", "delete_many", "clear",
@@ -128,6 +131,7 @@ class RepoIndex:
         self.module_imports: dict[str, dict] = {}  # file -> {alias: stem} for relative module imports
         self.signal_connects: list = []            # (handler, signal, sender) from `post_save.connect(h, sender=M)`
         self.instance_consts: dict[str, list] = {}  # NAME -> [(Call, file)] for a module-level `NAME = Cls(...)`
+        self.model_maps: dict[str, list] = {}       # NAME -> [(models tuple, file)] for `NAME = {k: Model, …}`
         self._build()
 
     def _iter_py(self):
@@ -168,6 +172,11 @@ class RepoIndex:
                 if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name) \
                         and _ctor_name(n.value):
                     self.instance_consts.setdefault(n.targets[0].id, []).append((n.value, path))
+                if isinstance(n, ast.Assign) and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name) \
+                        and isinstance(n.value, ast.Dict) \
+                        and all(isinstance(v, ast.Name) for v in n.value.values):
+                    self.model_maps.setdefault(n.targets[0].id, []).append(
+                        (tuple(v.id for v in n.value.values), path))
             # collect relative module imports: `from . import rows` / `from .rows import fn`
             # so `rows.fn()` typed calls can be resolved as module-level functions in rows.py
             file_dir = os.path.dirname(path)
@@ -387,6 +396,15 @@ class RepoIndex:
         if id(call) not in memo:
             memo[id(call)] = _ctor_binding(self, call)
         return memo[id(call)]
+
+    def model_map(self, name: str, near: str = ""):
+        """The repo models a module-level `NAME = {…}` config maps to, sorted; () when none."""
+        memo = self.__dict__.setdefault("_model_map_memo", {})
+        key = (name, near)
+        if key not in memo:
+            names, _ = _pick(self.model_maps.get(name), near)
+            memo[key] = tuple(sorted({n for n in names if _is_model(self, n)})) if names else ()
+        return memo[key]
 
 
 def _pick(candidates, near: str):
@@ -626,6 +644,8 @@ class FactCollector(ast.NodeVisitor):
         self.self_type = self_type               # enclosing class, so `self.objects.x()` names its table
         self.manager_model = manager_model       # set when walking a Manager method: `self.create()` → this model
         self.db = []           # (model, kind, file, line)
+        self.maybe_db = []     # (models_tuple, kind, file, line) — a runtime-chosen model (one of)
+        self.var_unions = {}   # local var name -> tuple of models it may hold
         self.write_cols = {}   # (model, file, line) -> set of column names, or None = written, cols unknown
         self.where_only = set()  # ids of filter()/exclude() Call nodes that are only an UPDATE/DELETE
                                  # WHERE clause (no SELECT) — their read must not be recorded
@@ -810,7 +830,15 @@ class FactCollector(ast.NodeVisitor):
             model, method = self._reverse_manager(f)
         if not model:
             model, method = self._property_manager(f)
+        if not model and self.index is not None:
+            sub, meth = _subscript_objects(f)
+            if sub and isinstance(sub.value, ast.Name) and meth in ORM_READ | ORM_WRITE:
+                models = self.index.model_map(sub.value.id,
+                                              near=os.path.join(self.index.root, self.file))
+                if models:
+                    self.maybe_db.append((models, "write" if meth in ORM_WRITE else "read", fl, ln))
         if model and method:
+            union = ()
             if model in ("self", "cls"):                 # `self.objects.x()` in a model method →
                 model = self.self_type or "<instance>"   # the enclosing class, not a table named "self"
             elif "." in model:                           # `self.model.objects` / `spec.model.objects` /
@@ -821,7 +849,10 @@ class FactCollector(ast.NodeVisitor):
                 # PascalCase. Resolve it to the concrete model if we tracked its binding (e.g.
                 # `link_model = SynonymLink`), else record an honest `<instance>` rather than
                 # inventing a table literally named `model`/`link_model`/`target_model`.
+                var = model
                 model = self.var_types.get(model) or "<instance>"
+                if model == "<instance>":
+                    union = self.var_unions.get(var, ())
             if method in {"annotate", "aggregate"} and self.index is not None and model[:1].isupper():
                 for arg in list(node.args) + [k.value for k in node.keywords]:    # `Count("checks")` joins checks
                     if isinstance(arg, ast.Call) and _dotted(arg.func).split(".")[-1] in _AGG_FUNCS \
@@ -854,6 +885,8 @@ class FactCollector(ast.NodeVisitor):
                         cur = cur.func.value
                 if not (kind == "read" and id(node) in self.where_only):
                     self.db.append((model, kind, fl, ln))
+                    if union:
+                        self.maybe_db.append((union, kind, fl, ln))
                 if kind == "write":
                     self._note_write_cols(model, method, node, fl, ln)
             # Django FK traversal in filter/exclude/get kwargs: `fk_field__col__gte=val`
@@ -884,7 +917,8 @@ class FactCollector(ast.NodeVisitor):
         # instance .save()/.delete() — resolve `var.save()` to its model when we know the type,
         # but skip non-ORM receivers (cache/session/storage) so they aren't mislabeled DB writes.
         if isinstance(f, ast.Attribute) and f.attr in {"save", "delete"} and not model \
-                and not _is_non_orm_receiver(f.value):
+                and not _is_non_orm_receiver(f.value) \
+                and self.instance_types.get(_root_name(f.value) or "") not in _NON_ORM_CLASSES:  # wb = Workbook(); wb.save()
             who = self._value_model(f.value)                 # a typed var, or `self.get_object(pk).save()`
             who = self.class_models.get(who, who)            # FooSerializer.save() → its Meta.model
             if who and who.endswith(NON_MODEL_SUFFIXES):     # a serializer/form we couldn't map → unknown
@@ -1027,6 +1061,14 @@ class FactCollector(ast.NodeVisitor):
         if not model and isinstance(node.value, ast.Name) and node.value.id in self.known_models:
             model = node.value.id                                      # `link_model = SynonymLink`
             # a bare class alias: a later `link_model.objects.filter()` now resolves to the real model
+        if not model and self.index is not None and len(node.targets) == 1 \
+                and isinstance(node.targets[0], ast.Name):
+            union = _class_union(self.index, node.value, os.path.join(self.index.root, self.file))
+            if not union and isinstance(node.value, ast.Call):
+                fn, ffile, _ = self._resolve_callee(node.value.func)
+                union = _return_classes(self.index, fn, ffile) if fn is not None else ()
+            if union:
+                self.var_unions[node.targets[0].id] = union
         # `h = Helper(...)` / `h = module.Helper(...)` where Helper is a repo class → remember the type
         # so `h.method()` can be followed into Helper.method (where controllers hide the real DB writes).
         if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and isinstance(node.value, ast.Call):
@@ -1274,7 +1316,7 @@ class FactCollector(ast.NodeVisitor):
         if not isinstance(value, ast.Call):
             return None
         f = value.func
-        if isinstance(f, ast.Name) and f.id[:1].isupper():          # Model(...)
+        if isinstance(f, ast.Name) and f.id[:1].isupper() and f.id not in _NON_ORM_CLASSES:          # Model(...)
             return f.id
         m, _ = _orm_model_method(f)                                 # Model.objects.<method>(...)
         if m and m[:1].isupper():
@@ -1304,6 +1346,19 @@ def _orm_model_method(f, dotted=False):
     if dotted and isinstance(cur, ast.Attribute) and cur.attr == "objects" \
             and isinstance(cur.value, ast.Attribute) and _root_name(cur.value) is not None:
         return _dotted(cur.value), method          # a pure name chain only (not `x().model.objects`)
+    return None, None
+
+
+def _subscript_objects(f):
+    """`MAP[k].objects.<method>` → (the subscript, method); else (None, None). Like
+    `_orm_model_method`, walking down through chained calls to the `.objects` receiver."""
+    if not isinstance(f, ast.Attribute):
+        return None, None
+    cur = f.value
+    while isinstance(cur, ast.Call):
+        cur = cur.func.value if isinstance(cur.func, ast.Attribute) else None
+    if isinstance(cur, ast.Attribute) and cur.attr == "objects" and isinstance(cur.value, ast.Subscript):
+        return cur.value, f.attr
     return None, None
 
 
@@ -1496,6 +1551,42 @@ def _own_returns(fn):
             yield n
         if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
             stack.extend(ast.iter_child_nodes(n))
+
+
+def _class_union(index, expr, file):
+    """Sorted tuple of repo models `expr` evaluates to *as a class* — `A`, `A if x else B`, or a
+    dict-of-models subscript; `()` when it isn't one of those or either branch is unknown."""
+    if isinstance(expr, ast.Name) and _is_model(index, expr.id):
+        return (expr.id,)
+    if isinstance(expr, ast.IfExp):
+        a = _class_union(index, expr.body, file)
+        b = _class_union(index, expr.orelse, file)
+        if not a or not b:
+            return ()
+        return tuple(sorted(set(a) | set(b)))
+    if isinstance(expr, ast.Subscript) and isinstance(expr.value, ast.Name):
+        return index.model_map(expr.value.id, near=file)
+    return ()
+
+
+def _return_classes(index, fn, ffile):
+    """Sorted tuple of repo models `fn` returns as classes across every return; `()` if any return
+    isn't a class union (so a mixed helper stays unknown). Memoized, with recursion guard."""
+    memo = index.__dict__.setdefault("_ret_cls_memo", {})
+    if id(fn) in memo:
+        return memo[id(fn)]
+    memo[id(fn)] = ()
+    out = set()
+    for r in _own_returns(fn):
+        if r.value is None:
+            continue
+        u = _class_union(index, r.value, ffile)
+        if not u:
+            memo[id(fn)] = ()
+            return ()
+        out.update(u)
+    memo[id(fn)] = tuple(sorted(out))
+    return memo[id(fn)]
 
 
 def _return_model(index, fn, ffile, owner, depth):

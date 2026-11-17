@@ -95,6 +95,18 @@ lenscheck flow ./svc /push --crossrepo ../other --html flow.html --screen s3=sho
 card, or to the first phase when no step is given; it is embedded as a data URI. Bad files are
 skipped with a warning. The ASCII tree and `--out` JSON are unchanged.
 
+## Accuracy
+
+- **One of.** When the model is picked at runtime from a known set — a helper returning
+  `A if x else B`, or `MAP[key].objects…` over a module-level dict of models — the step reads
+  `a_tbl | b_tbl (one of)` (`one_of` in JSON, `W?` chips in the HTML timeline). This lives only in
+  the flow: provenance and crossrepo facts are unchanged (a wrong table is worse than a miss).
+- **Implicit else.** Code after `if X: return …` / `continue` / `break` runs under `else (not: X)`.
+  `raise` does not add a guard — the error path is not a business branch.
+- **Alternatives.** Phases on opposite sides of the same condition are drawn as `⑂ or`, not in sequence.
+- **Not DB writes.** `.save()` on a non-ORM object (`Workbook`, `BytesIO`, `Image`, … — an explicit
+  list) and `@mock.patch('pkg.Model.objects')` decorators (not a `/` route) are ignored.
+
 ## Known limits
 
 - **Order inside one statement is approximate**: facts come before the statement's calls, and an outer

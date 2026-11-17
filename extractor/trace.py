@@ -26,7 +26,7 @@ if hasattr(ast, "TryStar"):
     _COMPOUND += (ast.TryStar,)
 
 _FACT_LISTS = ("db", "external", "async_", "cache", "self_calls", "func_calls",
-               "typed_calls", "manager_calls")
+               "typed_calls", "manager_calls", "maybe_db")
 
 
 def _short(text, limit):
@@ -49,6 +49,7 @@ class SeqCollector(FactCollector):
         super().__init__(*args, **kwargs)
         self.guards = []
         self.events = []
+        self._implicit = [0]
 
     # ---- statement dispatch ----------------------------------------------------------
     def visit(self, node):
@@ -61,8 +62,8 @@ class SeqCollector(FactCollector):
         elif isinstance(node, ast.While):
             self._visit_header(node.test)
             self._under(f"while {ast.unparse(node.test)}", node.body)
-            for s in node.orelse:
-                self.visit(s)
+            if node.orelse:
+                self._block(node.orelse)
         elif isinstance(node, ast.Try) or (hasattr(ast, "TryStar") and isinstance(node, ast.TryStar)):
             self._visit_try(node)
         elif isinstance(node, (ast.With, ast.AsyncWith)):
@@ -70,8 +71,7 @@ class SeqCollector(FactCollector):
         elif hasattr(ast, "Match") and isinstance(node, ast.Match):
             self._visit_header(node.subject)
             for case in node.cases:
-                for s in case.body:
-                    self.visit(s)
+                self._block(case.body)
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             super().visit(node)             # root fn param typing must still run
         else:
@@ -82,6 +82,15 @@ class SeqCollector(FactCollector):
         super().visit(node)
         self._emit_since(before, node)
 
+    def visit_FunctionDef(self, node):
+        """A function's body is its own guard frame: an implicit `else` never leaks past its def."""
+        depth = len(self.guards)
+        try:
+            super().visit_FunctionDef(node)
+        finally:
+            del self.guards[depth:]
+    visit_AsyncFunctionDef = visit_FunctionDef
+
     def _visit_header(self, expr):
         """Facts read by a compound statement's own condition/iterable, under the current guards."""
         if expr is None:
@@ -90,11 +99,21 @@ class SeqCollector(FactCollector):
         self.visit(expr)
         self._emit_since(before, expr)
 
+    def _block(self, stmts):
+        """Visit one statement list, scoping any implicit `else` guard it creates to this block."""
+        self._implicit.append(0)
+        try:
+            for s in stmts:
+                self.visit(s)
+        finally:
+            n = self._implicit.pop()
+            if n:
+                del self.guards[-n:]
+
     def _under(self, guard, body):
         self.guards.append(_short(guard, 80))
         try:
-            for s in body:
-                self.visit(s)
+            self._block(body)
         finally:
             self.guards.pop()
 
@@ -104,23 +123,26 @@ class SeqCollector(FactCollector):
         self._under(f"if {test}", node.body)
         if node.orelse:
             self._under(f"else (not: {test})", node.orelse)
+        if not node.orelse and node.body \
+                and isinstance(node.body[-1], (ast.Return, ast.Continue, ast.Break)):
+            self.guards.append(_short(f"else (not: {test})", 80))
+            self._implicit[-1] += 1
 
     def _visit_for(self, node):
         if isinstance(node, ast.For):
             self._bind_loop_var(node)
         self._visit_header(node.iter)
         self._under(f"for each {ast.unparse(node.target)} in {ast.unparse(node.iter)}", node.body)
-        for s in node.orelse:
-            self.visit(s)
+        if node.orelse:
+            self._block(node.orelse)
 
     def _visit_try(self, node):
-        for s in node.body:
-            self.visit(s)
+        self._block(node.body)
         for h in node.handlers:
             guard = "on any error" if h.type is None else f"on {ast.unparse(h.type)}"
             self._under(guard, h.body)
-        for s in node.orelse:
-            self.visit(s)
+        if node.orelse:
+            self._block(node.orelse)
         self._under("finally", node.finalbody)
 
     def _visit_with(self, node):
@@ -134,8 +156,7 @@ class SeqCollector(FactCollector):
         if atomic:
             self._under("atomic", node.body)
         else:
-            for s in node.body:
-                self.visit(s)
+            self._block(node.body)
 
     # ---- events ----------------------------------------------------------------------
     def _emit_since(self, before, node):
@@ -144,10 +165,35 @@ class SeqCollector(FactCollector):
         lits = self._literals(node)
         idx = dict(zip(_FACT_LISTS, before))
 
+        covered = set()
+        seen_maybe = set()
+        for models, kind, f, line in self.maybe_db[idx["maybe_db"]:]:
+            kind = kind.rstrip("*")
+            kind = "write" if kind == "write" else "read"
+            if (models, kind, line) in seen_maybe:
+                continue
+            seen_maybe.add((models, kind, line))
+            covered.add((kind, line))
+            tables = [(self.index.table_for(m)[0] if self.index is not None else None) or m
+                      for m in models]
+            ev = {"kind": kind, "one_of": list(tables), "models": list(models),
+                  "text": " | ".join(tables) + " (one of)", "loc": f"{f}:{line}", "guards": guards}
+            lit = lits.get(line)
+            if lit:
+                if lit.get("where"):
+                    ev["where"] = lit["where"]
+                if lit.get("where_not"):
+                    ev["where_not"] = lit["where_not"]
+                if lit.get("set"):
+                    ev["set"] = lit["set"]
+            self.events.append(ev)
+
         seen_db = set()
         for model, kind, f, line in self.db[idx["db"]:]:
             kind = kind.rstrip("*")
             kind = "write" if kind == "write" else "read"
+            if model == "<instance>" and (kind, line) in covered:   # already shown as a one-of touch
+                continue
             if (model, kind, f, line) in seen_db:      # a chained queryset names the same read twice
                 continue
             seen_db.add((model, kind, f, line))

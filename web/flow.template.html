@@ -36,6 +36,7 @@ h1{font-size:20px;margin:4px 0 2px}
 .badge.red{background:rgba(248,81,73,.14);color:var(--crit)}
 .badge.amber{background:rgba(219,143,43,.14);color:var(--high)}
 .badge.green{background:rgba(63,185,80,.14);color:var(--low)}
+.badge.alt{background:rgba(188,140,255,.14);color:var(--purple)}
 .stats{color:var(--mut);font-size:12.5px;display:flex;gap:14px;flex-wrap:wrap;margin:6px 0 2px}
 .stats b{color:var(--fg)}
 h2{font-size:15px;margin:26px 0 8px;border-bottom:1px solid var(--line);padding-bottom:6px}
@@ -52,6 +53,7 @@ label.chk{display:inline-flex;gap:6px;align-items:center;color:var(--mut);font-s
 .lane-head{font-weight:800;font-size:12.5px;color:var(--acc);text-transform:uppercase;letter-spacing:.05em;
   padding:4px 2px;border-bottom:1px solid var(--line)}
 .arrow{color:var(--mut);font-size:12px;padding:2px 4px}
+.arrow.alt{color:var(--purple);font-weight:700}
 .pcard{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--acc);border-radius:10px;
   padding:10px 12px;cursor:pointer;max-width:520px}
 .pcard:hover{border-color:var(--acc)}
@@ -72,6 +74,7 @@ label.chk{display:inline-flex;gap:6px;align-items:center;color:var(--mut);font-s
 .trow{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:5px 0;border-bottom:1px solid var(--line)}
 .tname{font-weight:700;font-size:12.5px;min-width:180px;font-family:ui-monospace,Menlo,monospace}
 .ev{font-size:11.5px;padding:2px 8px;border-radius:2em;color:var(--mut)}
+.ev.maybe{border-style:dashed}
 .ev .op{font-weight:800}
 
 details.phase{background:var(--card);border:1px solid var(--line);border-radius:9px;margin-bottom:8px;overflow:hidden}
@@ -183,6 +186,7 @@ function phaseChip(t){
 }
 function cardHTML(p){
   var h="<div class=\"phead\">"+esc(p.title)+"</div>";
+  if(p.alt) h+="<span class=\"badge alt\" data-g=\"fl-alt\">"+esc(cut("⑂ "+(p.alt.branch||""),80))+"</span>";
   if(p.when&&p.when.length)
     h+="<div class=\"when\" data-g=\"fl-when\">"+esc(cut(p.when.join(" › "),120))+"</div>";
   var tables=(p.tables||[]).map(phaseChip).join("");
@@ -208,15 +212,18 @@ function storyView(){
   var lanes=[];
   (D.story||[]).forEach(function(p){if(lanes.indexOf(p.repo)<0)lanes.push(p.repo);});
   if(!lanes.length)lanes.push(D.flow.origin||"");
-  var out="";var i=0;
+  var out="";var i=0;var prevPhase=null;
   (D.story||[]).forEach(function(p){
     if(i>0){
       var via=(p.kind==="table"?"⏱ later · ":"")+(p.via||p.kind||"");
+      var alt=p.alt&&prevPhase&&prevPhase.alt&&p.alt.group===prevPhase.alt.group;
       var g=p.kind==="table"?"fl-hop-table":((p.kind==="http"||p.kind==="celery-hop")?"fl-hop-http":"");
-      out+="<div class=\"arrow\" style=\"grid-column:1/-1\""+(g?" data-g=\""+g+"\"":"")+">↓ "+esc(via)+"</div>";
+      out+="<div class=\"arrow"+(alt?" alt":"")+"\" style=\"grid-column:1/-1\""
+        +(g&&!alt?" data-g=\""+g+"\"":"")+">"+(alt?"⑂ or · ":"↓ ")+esc(via)+"</div>";
     }
     out+="<div class=\"pcard\" style=\"grid-column:"+(lanes.indexOf(p.repo)+1)+"\" data-phase=\""
       +esc(p.id)+"\">"+cardHTML(p)+"</div>";
+    prevPhase=p;
     i++;
   });
   document.getElementById("lanes").style.gridTemplateColumns="repeat("+lanes.length+",minmax(240px,1fr))";
@@ -233,7 +240,9 @@ function timelineView(){
         +(e.set?" set{"+fmtObj(e.set)+"}":"")
         +(e.where?" where{"+fmtObj(e.where)+"}":"")
         +(e.where_not?" not{"+fmtObj(e.where_not)+"}":"");
-      return "<button class=\"ev\" data-step=\""+esc(e.step)+"\"><span class=\"op\">"+esc(e.op)
+      var op=e.maybe?e.op+"?":e.op;
+      return "<button class=\"ev"+(e.maybe?" maybe":"")+"\" data-step=\""+esc(e.step)+"\""
+        +(e.maybe?" data-g=\"fl-maybe\"":"")+"><span class=\"op\">"+esc(op)
         +"</span> "+esc(text.slice(e.op.length))+"</button>";
     }).join("");
     h+="<div class=\"trow\"><span class=\"tname\">"+esc(t.table)+"</span>"+chips+"</div>";

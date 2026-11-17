@@ -75,6 +75,8 @@ def _routes_of(fn, prefixes, consts):
         path = A._resolve_route(dec.args[0], consts)
         if not path:
             continue
+        if not path.startswith("/"):       # Flask/FastAPI routes always start with "/" (drops mock.patch et al.)
+            continue
         found.append((methods, _join(prefixes.get(recv, ""), path)))
     return found
 

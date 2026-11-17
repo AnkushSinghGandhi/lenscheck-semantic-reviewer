@@ -243,10 +243,15 @@ def _build_hops(origin, flow, index, per, paths, indexes, follow):
         for step in steps:
             when = chain + list(step.get("guards") or [])
             when_of[step["id"]] = when
-            if step.get("kind") == "write" and step.get("model"):
-                tbl = index.table_for(step["model"])[0]
-                if tbl and tbl != "<instance>":
-                    writes_by_table.setdefault(tbl, []).append(step)
+            if step.get("kind") == "write":
+                if step.get("one_of"):
+                    for tbl in step["one_of"]:
+                        if tbl and tbl != "<instance>":
+                            writes_by_table.setdefault(tbl, []).append(step)
+                elif step.get("model"):
+                    tbl = index.table_for(step["model"])[0]
+                    if tbl and tbl != "<instance>":
+                        writes_by_table.setdefault(tbl, []).append(step)
             scan(step.get("children") or [], when)
     scan(flow["steps"], [])
 
@@ -324,7 +329,7 @@ def _build_hops(origin, flow, index, per, paths, indexes, follow):
             read_by = info.get("read_by")
             if not read_by:
                 continue
-            cmap_o = merged_cmap(dict.fromkeys(s["model"] for s in write_steps), index)
+            cmap_o = merged_cmap(dict.fromkeys(s["model"] for s in write_steps if s.get("model")), index)
             cmap_r = merged_cmap(info.get("models") or [], idx_of(repo_name))
             writer_set = {}
             for step in write_steps:
@@ -431,6 +436,64 @@ def _walk_steps(steps):
         yield from _walk_steps(step.get("children") or [])
 
 
+def _guard_chains(steps):
+    """step id -> guards in force there (ancestors' guards + own), depth-first in source order."""
+    out = {}
+
+    def walk(items, chain):
+        for step in items:
+            when = chain + list(step.get("guards") or [])
+            out[step.get("id")] = when
+            walk(step.get("children") or [], when)
+
+    walk(steps, [])
+    return out
+
+
+def _exclusive(a, b):
+    """True when two guard chains are two branches of the same `if` — they first differ at an
+    `if …` vs `else (not: …)` with matching (possibly 80-char-cut) conditions."""
+    i = next((j for j, (x, y) in enumerate(zip(a, b)) if x != y), None)
+    if i is None:
+        return False
+    x, y = a[i], b[i]
+    if x.startswith("if ") and y.startswith("else (not: "):
+        cond_if, cond_else = x, y
+    elif y.startswith("if ") and x.startswith("else (not: "):
+        cond_if, cond_else = y, x
+    else:
+        return False
+    cx = cond_if[3:].rstrip("…")
+    cy = cond_else[len("else (not: "):].rstrip("…").rstrip(")")
+    shorter = min(len(cx), len(cy))
+    return shorter >= 1 and (cx.startswith(cy) or cy.startswith(cx))
+
+
+def _mark_alternatives(phases):
+    """Mark mutually exclusive phases (`if X` vs `else (not: X)`) as alternatives of one group."""
+    groups, open_group = [], None
+    for phase in phases:
+        if phase.get("kind") == "entry":
+            continue
+        when = phase.get("when") or []
+        if open_group is not None and all(
+                _exclusive(when, member.get("when") or []) for member in open_group):
+            open_group.append(phase)
+        else:
+            open_group = [phase]
+            groups.append(open_group)
+    n = 0
+    for group in groups:
+        if len(group) < 2:
+            continue
+        n += 1
+        for phase in group:
+            other = next(m for m in group if m is not phase)
+            wa, wb = list(phase.get("when") or []), list(other.get("when") or [])
+            branch = next((wa[i] for i in range(min(len(wa), len(wb))) if wa[i] != wb[i]), None)
+            phase["alt"] = {"group": f"a{n}", "branch": branch}
+
+
 def _new_phase(head, repo):
     return {"id": None, "repo": repo, "kind": head.get("kind", "entry"),
             "title": head.get("title", ""), "via": head.get("via", ""),
@@ -499,6 +562,9 @@ def story(flow):
                               f"{e.get('handler', '')}"}, owner)
     origin_phases = list(p1)
     hops = flow.get("hops") or []
+    chains = _guard_chains(flow.get("steps") or [])
+    for hop in hops:
+        chains.update(_guard_chains(hop.get("steps") or []))
 
     after = {}
     for hop in hops:
@@ -542,6 +608,13 @@ def story(flow):
         for step in hop.get("steps") or []:
             _walk_facts(step, sub, owner)
 
+    for phase in phases:
+        if phase.get("kind") == "entry":
+            phase["when"] = []
+        elif phase.get("kind") == "celery" and phase.get("root") in chains:
+            phase["when"] = list(chains[phase["root"]])
+    _mark_alternatives(phases)
+
     for i, phase in enumerate(phases, 1):
         phase["id"] = f"p{i}"
         for table in phase["tables"]:
@@ -568,11 +641,15 @@ def table_timeline(flow, phases, step_phase):
             if step.get("ref"):
                 continue
             if step.get("kind") in ("read", "write"):
-                key = step.get("table") or step.get("text")
-                if key:
+                one_of = list(step.get("one_of") or [])
+                single = step.get("table") or step.get("text")
+                keys = one_of or ([single] if single else [])
+                for key in keys:
                     ev = {"op": "R" if step["kind"] == "read" else "W", "repo": repo,
                           "phase": step_phase.get(step.get("id")), "step": step.get("id"),
                           "loc": step.get("loc")}
+                    if one_of:
+                        ev["maybe"] = True
                     for field in ("where", "where_not", "set"):
                         if step.get(field):
                             ev[field] = step[field]
