@@ -14,6 +14,7 @@ from __future__ import annotations
 import ast
 import os
 import re
+from collections import namedtuple
 from dataclasses import dataclass, field, asdict
 from typing import Optional
 
@@ -1061,7 +1062,7 @@ class FactCollector(ast.NodeVisitor):
         self._fn_depth -= 1
     visit_AsyncFunctionDef = visit_FunctionDef
 
-    def visit_For(self, node: ast.For):
+    def _bind_loop_var(self, node: ast.For):
         # `for order in Order.objects.filter(...)` → loop var is an Order (resolves `order.save()`). Not when
         # iterating `.values()`/`.values_list()` directly: those rows are dicts/tuples, not instances.
         if isinstance(node.target, ast.Name):
@@ -1073,6 +1074,9 @@ class FactCollector(ast.NodeVisitor):
             labels = self._taint_labels(node.iter)           # iterating a tainted collection
             if labels:
                 self.tainted[node.target.id] = set(labels)
+
+    def visit_For(self, node: ast.For):
+        self._bind_loop_var(node)
         self.generic_visit(node)
 
     def visit_Return(self, node: ast.Return):
@@ -2042,6 +2046,8 @@ def build_edges(ep, method_nodes, index, owner_file, self_type=None, class_metho
     function bodies, following 1–2 levels into helpers. Framework-agnostic — Django resolves a
     class/func handler upstream and passes its methods here; Flask/FastAPI pass the single
     decorated function. The FactCollector + scorers below are pure Python analysis."""
+    ep.lc_walk = {"method_nodes": method_nodes, "owner_file": owner_file, "self_type": self_type,
+                  "class_methods": class_methods or {}, "bindings": bindings}
     agg = FactCollector(_rel(index, owner_file), known_models=set(index.classes))
     followed = set()
     seen = set()                                    # every fact key found ANYWHERE in this endpoint
@@ -2129,6 +2135,125 @@ def _arg_bindings(fn, sets):
     return out or [{}]
 
 
+_Target = namedtuple("_Target", "key fn file classmethods self_type seed_types bindings manager_model")
+
+
+def _frame_collector(index, owner_file, self_type=None, seed_types=None, bindings=None,
+                     manager_model=None, cls=None):
+    """Build a fact collector for one followed frame, seeded exactly as `_walk_follow` always did."""
+    owner_rel = _rel(index, owner_file)
+    local = (cls or FactCollector)(owner_rel, consts=index.consts_for(owner_file),
+                                   class_models=index.class_models, self_type=self_type,
+                                   known_models=set(index.classes), manager_model=manager_model, index=index)
+    if seed_types:
+        local.var_types.update(seed_types)     # bind params to the models passed at the call site
+    for k, b in (bindings or {}).items():      # injected models: class attrs / a config object's fields
+        if isinstance(b, str):
+            local.var_types[k] = b
+        else:
+            local.inst_fields[k] = b
+            if "." not in k:
+                local.instance_types[k] = b[0]
+    return local
+
+
+def _callee_targets(local, index, owner_file, classmethods, bindings, only=None):
+    """Yield every resolvable callee of `local` in follow order. `only` filters to a set of call keys:
+    ("self", mname), ("func", fname), ("typed", cname, mname) or ("manager", cname, mname)."""
+    def wanted(*key):
+        return only is None or key in only
+
+    owner_rel = _rel(index, owner_file)
+    self_b = {k: v for k, v in (bindings or {}).items() if k.startswith(("self.", "cls."))}
+    for mname in sorted(set(local.self_calls)):
+        if not wanted("self", mname):
+            continue
+        meth = classmethods.get(mname)
+        if meth is None:
+            continue
+        for arg_b in _arg_bindings(meth, local.call_arg_insts.get(f"self.{mname}")):
+            sub = {**self_b, **arg_b}            # same instance → its bindings carry to siblings
+            key = f"self:{owner_rel}:{mname}" + _bind_sig(sub)
+            yield _Target(key, meth, getattr(meth, "lc_file", owner_file), classmethods,
+                          self_type=local.self_type,
+                          seed_types=_seed_from_args(meth, local.call_arg_models.get(f"self.{mname}")),
+                          bindings=sub, manager_model=None)
+
+    for fname in sorted(set(local.func_calls) - local.local_names):
+        if not wanted("func", fname):
+            continue
+        node, ffile = index.find_func(fname, near=owner_file, toplevel_only=True)
+        if node is None:
+            continue
+        for arg_b in _arg_bindings(node, local.call_arg_insts.get(fname)):
+            key = f"func:{fname}" + _bind_sig(arg_b)
+            yield _Target(key, node, ffile, {}, self_type=None,
+                          seed_types=_seed_from_args(node, local.call_arg_models.get(fname)),
+                          bindings=arg_b, manager_model=None)
+
+    mod_imports = index.imports_for(owner_file)
+    for cname, mname in sorted(set(local.typed_calls)):
+        if not wanted("typed", cname, mname):
+            continue
+        # resolve an instance variable to the class it holds: `profile_helper.validate()` where
+        # `profile_helper = cus_api_helper.UpdateProfileFlow(req)` → follow UpdateProfileFlow.validate.
+        target_cls = local.instance_types.get(cname) or local.var_types.get(cname) or cname
+        key = f"{target_cls}.{mname}"
+        cls, cfile = index.find_class(target_cls, near=owner_file)
+        if cls is not None:
+            method = next((m for m in cls.body if isinstance(m, ast.FunctionDef) and m.name == mname), None)
+            if method is None:
+                if mname in _VALIDATION_ENTRY:           # `form.is_valid()` runs clean() / clean_<field>()
+                    inh = _inherited_methods(index, target_cls)
+                    for vname, vm in sorted(inh.items()):
+                        if vname not in _VALIDATORS and not vname.startswith(_VALIDATOR_PREFIXES):
+                            continue
+                        vkey = f"{target_cls}.{vname}"
+                        yield _Target(vkey, vm, getattr(vm, "lc_file", cfile), inh,
+                                      self_type=target_cls, seed_types=None, bindings=None,
+                                      manager_model=None)
+                continue
+            # the receiver's bindings: its class attrs, under the fields of the config object it holds
+            inst = local.inst_fields.get(cname)
+            recv_b = {**_class_bindings(index, cls, cfile),
+                      **({f"self.{k}": v for k, v in inst[1].items()} if inst else {})}
+            cls_methods = {m.name: m for m in cls.body if isinstance(m, ast.FunctionDef)}
+            for arg_b in _arg_bindings(method, local.call_arg_insts.get(f"{cname}.{mname}")):
+                sub = {**recv_b, **arg_b}
+                bkey = key + _bind_sig(sub)
+                yield _Target(bkey, method, cfile, cls_methods, self_type=target_cls,
+                              seed_types=_seed_from_args(method, local.call_arg_models.get(f"{cname}.{mname}")),
+                              bindings=sub, manager_model=None)
+        elif cname in mod_imports:
+            # `cname` is a repo module (`from . import cname` / `from pkg import cname`); a module-level call
+            mod_file = mod_imports[cname]
+            node, ffile = index.find_func(mname, near=mod_file, toplevel_only=True)
+            if node is None:
+                continue
+            for arg_b in _arg_bindings(node, local.call_arg_insts.get(key)):
+                bkey = key + _bind_sig(arg_b)
+                yield _Target(bkey, node, ffile, {}, self_type=None,
+                              seed_types=_seed_from_args(node, local.call_arg_models.get(key)),
+                              bindings=arg_b, manager_model=None)
+
+    for cname, mname in sorted(set(local.manager_calls)):
+        if not wanted("manager", cname, mname):
+            continue
+        key = f"manager:{cname}.{mname}"
+        mgr = index.model_managers.get(cname)
+        if not mgr:
+            continue
+        mcls, mfile = index.find_class(mgr, near=owner_file)
+        if mcls is None:
+            continue
+        method = next((m for m in mcls.body if isinstance(m, ast.FunctionDef) and m.name == mname), None)
+        if method is None:
+            continue
+        mcls_methods = {m.name: m for m in mcls.body if isinstance(m, ast.FunctionDef)}
+        yield _Target(key, method, mfile, mcls_methods, self_type=mgr, seed_types=None,
+                      bindings=None, manager_model=cname)
+
+
 def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self_type=None,
                  seen=None, dry_streak=0, stop=None, seed_types=None, manager_model=None, bindings=None):
     """Collect facts in `fn`; recurse into the functions it calls with an ADAPTIVE, findings-driven
@@ -2148,19 +2273,7 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
         seen = set()
     if stop is None:
         stop = {"reason": "dried_out", "depth": 0, "first_fact": None}
-    owner_rel = _rel(index, owner_file)
-    local = FactCollector(owner_rel, consts=index.consts_for(owner_file),
-                          class_models=index.class_models, self_type=self_type,
-                          known_models=set(index.classes), manager_model=manager_model, index=index)
-    if seed_types:
-        local.var_types.update(seed_types)     # bind params to the models passed at the call site
-    for k, b in (bindings or {}).items():      # injected models: class attrs / a config object's fields
-        if isinstance(b, str):
-            local.var_types[k] = b
-        else:
-            local.inst_fields[k] = b
-            if "." not in k:
-                local.instance_types[k] = b[0]
+    local = _frame_collector(index, owner_file, self_type, seed_types, bindings, manager_model)
     local.visit(fn)
     # A custom-manager call (`Order.objects.import_batch()`) records NO fact at the call site — the
     # Manager is followed below and its body supplies the real reads/writes. If the Manager can't be
@@ -2224,134 +2337,13 @@ def _walk_follow(fn, agg, index, owner_file, classmethods, followed, depth, self
             return True
         return False
 
-    # self.method(...) — resolve against the current class's own methods (same self_type).
-    # NOTE: all three follow loops iterate `sorted(set(...))`, not a bare `set(...)`: under the
-    # shared FOLLOW_BUDGET cap, which calls get followed first decides the result, and a set's
-    # iteration order depends on PYTHONHASHSEED — sorting makes the extraction deterministic.
-    # A follow key carries the binding set (`_bind_sig`), so a helper reached with two different config
-    # objects is analyzed once per object; with no bindings the key is exactly what it always was.
-    self_b = {k: v for k, v in (bindings or {}).items() if k.startswith(("self.", "cls."))}
-    for mname in sorted(set(local.self_calls)):
-        meth = classmethods.get(mname)
-        if meth is None:
-            continue
-        for arg_b in _arg_bindings(meth, local.call_arg_insts.get(f"self.{mname}")):
-            sub = {**self_b, **arg_b}                # same instance → its bindings carry to siblings
-            key = f"self:{owner_rel}:{mname}" + _bind_sig(sub)
-            if key in followed:
-                continue
-            if _capped():
-                return
-            followed.add(key)
-            _walk_follow(meth, agg, index, getattr(meth, "lc_file", owner_file), classmethods, followed,
-                         child_depth, self_type=self_type,
-                         seen=child_seen, dry_streak=child_streak, stop=stop,
-                         seed_types=_seed_from_args(meth, local.call_arg_models.get(f"self.{mname}")),
-                         bindings=sub)
-
-    # module-level func(...) defined in the repo (no `self`). Names bound locally — nested
-    # closures, params — are excluded: a call to a local `resolve()` must not bind to a same-named
-    # module function in another app.
-    for fname in sorted(set(local.func_calls) - local.local_names):
-        node, ffile = index.find_func(fname, near=owner_file, toplevel_only=True)
-        if node is None:
-            continue
-        for arg_b in _arg_bindings(node, local.call_arg_insts.get(fname)):
-            key = f"func:{fname}" + _bind_sig(arg_b)
-            if key in followed:
-                continue
-            if _capped():
-                return
-            followed.add(key)
-            _walk_follow(node, agg, index, ffile, {}, followed, child_depth,
-                         seen=child_seen, dry_streak=child_streak, stop=stop,
-                         seed_types=_seed_from_args(node, local.call_arg_models.get(fname)), bindings=arg_b)
-
-    # Model.classmethod(...) / Service().method(...) — recurse with THAT class's methods,
-    # so a `self.x()` inside the service resolves correctly at the next level down.
-    # Fallback: if `cname` is not a class but IS a relative module import (`from . import rows`),
-    # treat `rows.fn()` as a bare module-level call into that sibling module.
-    mod_imports = index.imports_for(owner_file)
-    for cname, mname in sorted(set(local.typed_calls)):
-        # resolve an instance variable to the class it holds: `profile_helper.validate()` where
-        # `profile_helper = cus_api_helper.UpdateProfileFlow(req)` → follow UpdateProfileFlow.validate.
-        target_cls = local.instance_types.get(cname) or local.var_types.get(cname) or cname
-        key = f"{target_cls}.{mname}"
-        cls, cfile = index.find_class(target_cls, near=owner_file)
-        if cls is not None:
-            method = next((m for m in cls.body if isinstance(m, ast.FunctionDef) and m.name == mname), None)
-            if method is None:
-                if mname in _VALIDATION_ENTRY:           # `form.is_valid()` runs clean() / clean_<field>()
-                    inh = _inherited_methods(index, target_cls)
-                    for vname, vm in sorted(inh.items()):
-                        if vname not in _VALIDATORS and not vname.startswith(_VALIDATOR_PREFIXES):
-                            continue
-                        vkey = f"{target_cls}.{vname}"
-                        if vkey in followed:
-                            continue
-                        if _capped():
-                            return
-                        followed.add(vkey)
-                        _walk_follow(vm, agg, index, getattr(vm, "lc_file", cfile), inh, followed, child_depth,
-                                     self_type=target_cls, seen=child_seen, dry_streak=child_streak, stop=stop)
-                continue
-            # the receiver's bindings: its class attrs, under the fields of the config object it holds
-            inst = local.inst_fields.get(cname)
-            recv_b = {**_class_bindings(index, cls, cfile),
-                      **({f"self.{k}": v for k, v in inst[1].items()} if inst else {})}
-            cls_methods = {m.name: m for m in cls.body if isinstance(m, ast.FunctionDef)}
-            for arg_b in _arg_bindings(method, local.call_arg_insts.get(f"{cname}.{mname}")):
-                sub = {**recv_b, **arg_b}
-                bkey = key + _bind_sig(sub)
-                if bkey in followed:
-                    continue
-                if _capped():
-                    return
-                followed.add(bkey)
-                _walk_follow(method, agg, index, cfile, cls_methods, followed, child_depth, self_type=target_cls,
-                             seen=child_seen, dry_streak=child_streak, stop=stop,
-                             seed_types=_seed_from_args(method, local.call_arg_models.get(f"{cname}.{mname}")),
-                             bindings=sub)
-        elif cname in mod_imports:
-            # `cname` is a repo module (`from . import cname` / `from pkg import cname`); a module-level call
-            mod_file = mod_imports[cname]
-            node, ffile = index.find_func(mname, near=mod_file, toplevel_only=True)
-            if node is None:
-                continue
-            for arg_b in _arg_bindings(node, local.call_arg_insts.get(key)):
-                bkey = key + _bind_sig(arg_b)
-                if bkey in followed:
-                    continue
-                if _capped():
-                    return
-                followed.add(bkey)
-                _walk_follow(node, agg, index, ffile, {}, followed, child_depth,
-                             seen=child_seen, dry_streak=child_streak, stop=stop,
-                             seed_types=_seed_from_args(node, local.call_arg_models.get(key)), bindings=arg_b)
-
-    # Model.objects.<custom>() — a custom Manager method. Resolve the model's Manager class and follow
-    # its body with `manager_model` set to the managed Model, so `self.create()` inside surfaces as a
-    # real write to that model's table (not the fallback read the call site would otherwise guess).
-    for cname, mname in sorted(set(local.manager_calls)):
-        key = f"manager:{cname}.{mname}"
-        if key in followed:
-            continue
-        mgr = index.model_managers.get(cname)
-        if not mgr:
-            continue
-        mcls, mfile = index.find_class(mgr, near=owner_file)
-        if mcls is None:
-            continue
-        method = next((m for m in mcls.body if isinstance(m, ast.FunctionDef) and m.name == mname), None)
-        if method is None:
-            continue
-        if _capped():
-            return
-        followed.add(key)
-        mcls_methods = {m.name: m for m in mcls.body if isinstance(m, ast.FunctionDef)}
-        _walk_follow(method, agg, index, mfile, mcls_methods, followed, child_depth, self_type=mgr,
-                     seen=child_seen, dry_streak=child_streak, stop=stop,
-                     manager_model=cname)     # cname is the managed Model — `self.create()` writes it
+    for t in _callee_targets(local, index, owner_file, classmethods, bindings):
+        if t.key in followed: continue
+        if _capped(): return
+        followed.add(t.key)
+        _walk_follow(t.fn, agg, index, t.file, t.classmethods, followed, child_depth, self_type=t.self_type,
+                     seen=child_seen, dry_streak=child_streak, stop=stop, seed_types=t.seed_types,
+                     bindings=t.bindings, manager_model=t.manager_model)
 
 
 def _merge_write_cols(agg, sub):
@@ -2558,13 +2550,15 @@ def _inherited_methods(index, cls_name, _stack=()):
     return out
 
 
-def job_entrypoints(index):
+def job_entrypoints(index, only=None):
     """Celery tasks, management-command handle() methods and signal receivers (`@receiver` and
     `post_save.connect(h, sender=M)`), each analyzed like an endpoint. Best-effort: one bad def never
     sinks the run. `methods` carries the trigger (celery / manage.py / post_save:Order)."""
     out, seen = [], {}
 
     def add(kind, route, name, nodes, path, trigger, **kw):
+        if only is not None and route != only:
+            return
         if (route, path) in seen:                  # one receiver wired to several senders (or decorated AND
             ep = seen[(route, path)]               # connected) → one entrypoint that lists every trigger
             if trigger not in ep.methods:

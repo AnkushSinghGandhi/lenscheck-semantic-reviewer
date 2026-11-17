@@ -63,6 +63,7 @@ def main():
         print("  map       Map every endpoint in a repo, grouped by app, worst-first")
         print("  provenance  Table→endpoint code map + data-consistency rules")
         print("  crossrepo Shared DB tables across 2+ repos: who writes, who reads, cross-service calls")
+        print("  flow      Ordered flow of one route/command/task: steps, conditions, tables")
         print("  review    Run a semantic review of a PR or commit range")
         print("  post      Post a review to a PR (sticky comment, inline comments, label)")
         print("  serve     Start the Lenscheck web UI")
@@ -88,6 +89,11 @@ def main():
         if len(sys.argv) == 1:
             sys.argv.append("--help")
         sys.exit(crossrepo.main())
+    elif command == "flow":
+        import flow
+        if len(sys.argv) == 1:
+            sys.argv.append("--help")
+        sys.exit(flow.main())
     elif command == "review":
         import diff_pr
         # No args → review the current repo's branch vs. its default branch (diff_pr resolves it).
