@@ -33,6 +33,16 @@ def _short(text, limit):
     return text if len(text) <= limit else text[:limit] + "…"
 
 
+def first_doc_line(fn):
+    """First line of a def's docstring, cut to 160 chars — the author's own one-line summary."""
+    try:
+        doc = ast.get_docstring(fn) or ""
+    except TypeError:
+        return ""
+    line = doc.strip().splitlines()[0].strip() if doc.strip() else ""
+    return _short(line, 160)
+
+
 def _const_value(node):
     """A literal column value; a list/tuple of literals; else "?"."""
     if isinstance(node, ast.Constant):
@@ -376,6 +386,9 @@ def trace(ep, index, keep_all=False):
             for t in _callee_targets(col, index, owner_file, classmethods, bindings, only=ev["_keys"]):
                 step = new_step({"kind": "call", "text": _display(t.key), "target": t.key,
                                  "guards": ev["guards"], "loc": ev["loc"], "children": []})
+                doc = first_doc_line(t.fn)
+                if doc:
+                    step["doc"] = doc
                 expand(step, t.key, depth,
                        lambda t=t: trace_fn(t.fn, t.file, t.classmethods, t.self_type,
                                             t.bindings, t.seed_types, t.manager_model, depth + 1))

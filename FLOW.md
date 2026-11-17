@@ -95,6 +95,28 @@ lenscheck flow ./svc /push --crossrepo ../other --html flow.html --screen s3=sho
 card, or to the first phase when no step is given; it is embedded as a data URI. Bad files are
 skipped with a warning. The ASCII tree and `--out` JSON are unchanged.
 
+## Overview and `--explain`
+
+The HTML opens on an **Overview**: one band per system, numbered business stages with icons, `→`
+hand-offs (`⑂ or` for alternatives), then supporting modules, important notes, table lifecycles, key
+files, a legend and a one-line summary. Click any line to open the steps and code behind it; the
+technical views (lanes, timeline, step tree) sit under **Details**.
+
+```bash
+lenscheck flow ./cms leads/upload/ --crossrepo ../c360 --html flow.html --explain
+```
+
+- Without `--explain` the overview is built from the facts alone (no LLM, offline).
+- With `--explain` the `claude` CLI (`claude -p --json-schema`, your Claude Code login, no API key) reads a
+  text digest of the flow — steps, guards, tables, docstrings and a few lines of code around each DB /
+  external step — and answers in a fixed JSON schema. Claude never writes HTML.
+- **Grounding:** every stage, item, note and table must cite step ids. Ids that are not in the flow are
+  dropped; a line left without evidence is shown dashed with ⚠ (unverified). Files and tables Claude
+  names must exist in the flow.
+- The answer is cached by digest + prompt + schema + model (`--refresh-explain` to redo it);
+  `--explain-model` picks the model (default `claude-opus-5-5`). If `claude` is missing or fails, the
+  page falls back to the facts-only overview and says why on stderr.
+
 ## Accuracy
 
 - **One of.** When the model is picked at runtime from a known set — a helper returning

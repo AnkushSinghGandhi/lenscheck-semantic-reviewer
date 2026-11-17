@@ -16,7 +16,7 @@ import re
 import sys
 
 from extractor.analyzer import RepoIndex, parse_endpoints, analyze_handler, job_entrypoints
-from extractor.trace import trace
+from extractor.trace import trace, first_doc_line
 
 
 class Ambiguous(Exception):
@@ -159,6 +159,10 @@ def build_flow(repo, query, pick=None, keep_all=False, crossrepo_paths=None, fol
         "stats": tr["stats"],
         "hops": [],
     }
+    nodes = (getattr(ep, "lc_walk", None) or {}).get("method_nodes") or []
+    doc = first_doc_line(nodes[0]) if nodes else ""
+    if doc:
+        flow["entry"]["doc"] = doc
     origin, origin_path, origin_cleanup = crossrepo._resolve(repo)
     flow["origin"] = origin
     flow["repo_paths"] = {origin: os.path.abspath(repo)}
@@ -756,13 +760,8 @@ def render_ascii(flow):
     return "\n".join(lines)
 
 
-def write_html(flow, path, screens=()):
-    """One self-contained page: story lanes, table timeline, step tree + source snippets."""
-    import base64
-
-    phases, step_phase = story(flow)
-    timeline = table_timeline(flow, phases, step_phase)
-
+def collect_sources(flow):
+    """`{"<repo>:<file>:<line>": snippet}` for every step loc (origin + hops), read off disk."""
     sources = {}
 
     def collect(steps, repo):
@@ -789,6 +788,17 @@ def write_html(flow, path, screens=()):
     collect(flow.get("steps") or [], flow.get("origin") or flow.get("repo") or "")
     for hop in flow.get("hops") or []:
         collect(hop.get("steps") or [], hop.get("repo") or "")
+    return sources
+
+
+def write_html(flow, path, screens=(), explain=False, model=None, refresh=False):
+    """One self-contained page: the overview infographic (Claude-explained with `explain`, else from facts),
+    story lanes, table timeline, step tree + source snippets. Returns the narrative meta."""
+    import base64
+
+    phases, step_phase = story(flow)
+    timeline = table_timeline(flow, phases, step_phase)
+    sources = collect_sources(flow)
 
     exts = {"png": "png", "jpg": "jpeg", "jpeg": "jpeg", "gif": "gif", "webp": "webp"}
     for item in screens or []:
@@ -829,8 +839,19 @@ def write_html(flow, path, screens=()):
             continue
         phase["screens"].append(f"data:image/{exts[ext]};base64,{blob}")
 
+    import narrate
+    narrative, meta = None, {"source": "facts"}
+    if explain:
+        try:
+            narrative, meta = narrate.explain(flow, phases, step_phase, sources, timeline,
+                                              model=model or narrate.DEFAULT_MODEL, refresh=refresh)
+        except narrate.NarrateError as e:
+            print(f"flow: --explain failed ({e}); using the facts-only overview", file=sys.stderr)
+    if narrative is None:
+        narrative = narrate.fallback(flow, phases, step_phase, timeline)
+
     data = {"flow": flow, "story": phases, "step_phase": step_phase,
-            "timeline": timeline, "sources": sources}
+            "timeline": timeline, "sources": sources, "narrative": narrative, "narrative_meta": meta}
     tpl_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web",
                             "flow.template.html")
     with open(tpl_path, encoding="utf-8") as f:
@@ -841,6 +862,7 @@ def write_html(flow, path, screens=()):
     html = diff_pr.inline_glossary(html)
     with open(path, "w", encoding="utf-8") as f:
         f.write(html)
+    return meta
 
 
 def main():
@@ -859,7 +881,13 @@ def main():
     p.add_argument("--html", metavar="FILE", help="write a self-contained interactive HTML page")
     p.add_argument("--screen", action="append", metavar="[STEP=]PATH",
                    help="attach a screenshot to a step (repeatable)")
+    p.add_argument("--explain", action="store_true",
+                   help="have Claude (the `claude` CLI) write the overview; needs --html")
+    p.add_argument("--explain-model", metavar="MODEL", help="model for --explain (default claude-opus-5-5)")
+    p.add_argument("--refresh-explain", action="store_true", help="ignore the cached explanation")
     args = p.parse_args()
+    if args.explain and not args.html:
+        p.error("--explain needs --html FILE")
 
     if args.list:
         for c in candidates(args.repo):
@@ -890,7 +918,13 @@ def main():
             json.dump(flow, f, indent=2, ensure_ascii=False)
             f.write("\n")
     if args.html:
-        write_html(flow, args.html, args.screen or [])
+        meta = write_html(flow, args.html, args.screen or [], explain=args.explain,
+                          model=args.explain_model, refresh=args.refresh_explain)
+        if meta.get("source", "facts") != "facts":
+            st = meta.get("stats") or {}
+            print(f"explained by {meta['source']} ({'cached' if meta.get('cached') else 'fresh'}): "
+                  f"{st.get('refs_kept', 0)} refs kept, {st.get('refs_dropped', 0)} dropped, "
+                  f"{st.get('unverified', 0)} unverified", file=sys.stderr)
         print(f"wrote {args.html}", file=sys.stderr)
     return 0
 

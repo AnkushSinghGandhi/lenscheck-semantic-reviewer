@@ -185,6 +185,12 @@ const G = window.LC_GLOSSARY = {
   "fl-cut": {t: "Cut", d: "A call the tracer stopped following at its depth or budget cap. The gap is always shown, never silently pruned."},
   "fl-alt": {t: "⑂ Alternative", d: "Only one of these phases runs for a given call: they sit on opposite sides of the same condition."},
   "fl-maybe": {t: "Maybe (one of)", d: "The table is picked at runtime from a known list, so this touch hits one of the candidate tables."},
+  "fl-overview": {t: "Overview", d: "The whole flow as business stages per system. Click any line to open the steps and code it is based on."},
+  "fl-source": {t: "Who wrote this overview", d: "Facts only: built from the static trace. Explained by Claude: Claude rewrote the trace in plain language and every line cites the steps it is based on."},
+  "fl-unverified": {t: "⚠ Unverified", d: "Claude wrote this line but cited no step that exists in the trace, so treat it as a guess and check the code."},
+  "fl-branch": {t: "Branch", d: "Parallel or alternative paths inside one stage, side by side."},
+  "fl-notes": {t: "Important notes", d: "Behaviour that is easy to forget: fail-open on errors, early returns, retries, dedupe and skip rules."},
+  "fl-details": {t: "Details", d: "The technical views: repo lanes, every table touch in order, and the full step tree with code."},
   "fl-ref": {t: "See also", d: "This call was already expanded earlier in the trace. Click it to jump to that earlier step."},
   "fl-when": {t: "When", d: "The guards in effect when this phase starts — the path that had to be taken to reach it."}
 };
