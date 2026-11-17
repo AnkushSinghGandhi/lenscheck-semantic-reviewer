@@ -131,3 +131,17 @@ def test_explain_failures_fall_back_to_facts_without_failing(tmp_path, monkeypat
     html = out.read_text(encoding="utf-8")
     data = json.loads(html.split("window.FLOW_DATA = ", 1)[1].split(";</script>", 1)[0])
     assert data["narrative"]["sections"] and data["narrative_meta"]["source"] == "facts"
+
+
+def test_a_journey_step_id_alone_is_not_evidence():
+    f = {"steps": [{"id": "j1", "kind": "call", "loc": "", "children": [
+        {"id": "j1e1", "kind": "call", "loc": "app/views.py:3", "children": [
+            {"id": "j1e1.s1", "kind": "write", "loc": "app/views.py:4", "children": []}]}]}], "hops": []}
+    narr = {"sections": [{"stages": [{"n": 1, "title": "s", "icon": "gear", "refs": ["j1"], "branches": [],
+                                      "items": [{"text": "a", "icon": "gear", "refs": ["j1"]},
+                                                {"text": "b", "icon": "gear", "refs": ["j1", "j1e1.s1"]},
+                                                {"text": "c", "icon": "gear", "refs": ["j1e1"]}]}]}]}
+    out, stats = narrate.validate(narr, f, [])
+    st = out["sections"][0]["stages"][0]
+    assert st["unverified"] is True and st["refs"] == ["j1"]          # kept for navigation, not evidence
+    assert [bool(i.get("unverified")) for i in st["items"]] == [True, False, False]

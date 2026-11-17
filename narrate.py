@@ -7,13 +7,14 @@ shape from the facts alone, so the infographic also works with no LLM at all."""
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 
 DEFAULT_MODEL = "claude-opus-5-5"
-PROMPT_VERSION = "2"
+PROMPT_VERSION = "3"
 MAX_DIGEST_CHARS = 600_000
 ICONS = ["database", "upload", "file", "gear", "task", "clock", "api", "sheet", "user", "shield",
          "filter", "search", "chart", "mail", "warning", "link"]
@@ -70,7 +71,8 @@ If the trace starts with JOURNEY, it is several API calls a user makes in order 
 per journey step, in order, titled with the step name; its stages are what that step's API calls do.
 
 Grounding (strict): every stage, item, module, note and table cites in refs at least one step id that appears
-in the trace. Use only table names, file paths and ids present in the trace. If unsure, leave it out — never
+in the trace. Journey step ids (j1, j2…) only group steps: they are not evidence, so cite the concrete steps
+(j1e1.s12) inside them; a claim you can only back with the JOURNEY header will be shown as unverified. Use only table names, file paths and ids present in the trace. If unsure, leave it out — never
 guess. Don't mention the trace format or this tool.
 
 TRACE:
@@ -79,6 +81,9 @@ TRACE:
 
 class NarrateError(Exception):
     pass
+
+
+_JOURNEY_STEP = re.compile(r"^j\d+$")
 
 
 # ---- digest ------------------------------------------------------------------------------
@@ -282,7 +287,8 @@ def validate(narr, flow, timeline):
         stats["refs_kept"] += len(kept)
         stats["refs_dropped"] += len(given) - len(kept)
         el["refs"] = kept
-        if not kept:
+        # a journey step node (`j3`) has no code behind it: fine for navigation, not evidence
+        if not [r for r in kept if not _JOURNEY_STEP.match(r)]:
             el["unverified"] = True
             stats["unverified"] += 1
         return el
