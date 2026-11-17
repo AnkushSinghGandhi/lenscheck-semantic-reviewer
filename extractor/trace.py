@@ -151,8 +151,12 @@ class SeqCollector(FactCollector):
             if (model, kind, f, line) in seen_db:      # a chained queryset names the same read twice
                 continue
             seen_db.add((model, kind, f, line))
-            ev = {"kind": kind, "model": model, "text": model,
+            # show the real table; a raw-SQL fact already names one, so the model stays the fallback
+            table = self.index.table_for(model)[0] if self.index is not None else None
+            ev = {"kind": kind, "model": model, "text": table or model,
                   "loc": f"{f}:{line}", "guards": guards}
+            if table:
+                ev["table"] = table
             lit = lits.get(line)
             if lit:
                 if lit.get("where"):

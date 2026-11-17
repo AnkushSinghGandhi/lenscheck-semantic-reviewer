@@ -266,3 +266,26 @@ def helper():
     top = [s for s in steps if s["text"] == "helper()"]
     assert len(top) == 1 and "ref" not in top[0]
     assert _find(top[0]["children"], "write", "ModelB") is not None
+
+
+def test_db_steps_show_the_table_name_not_the_model():
+    root = tempfile.mkdtemp()
+    _write(root, "shop/models.py",
+           "from django.db import models\n"
+           "class FreshLead(models.Model):\n"
+           "    class Meta:\n        db_table = 'adm_campaign_lead_temp'\n"
+           "class Order(models.Model):\n    pass\n")
+    _write(root, "shop/apps.py", "from django.apps import AppConfig\nclass ShopConfig(AppConfig):\n    name = 'shop'\n")
+    _write(root, "shop/urls.py",
+           "from django.urls import path\nfrom . import views\nurlpatterns = [path('push/', views.push)]\n")
+    _write(root, "shop/views.py",
+           "from .models import FreshLead, Order\n"
+           "def push(request):\n"
+           "    FreshLead.objects.create(process=0)\n"
+           "    Order.objects.filter(id=1).first()\n")
+    out = flow.build_flow(root, "push/")
+    lead, order = _find(out["steps"], "write", "FreshLead"), _find(out["steps"], "read", "Order")
+    assert (lead["text"], lead["table"]) == ("adm_campaign_lead_temp", "adm_campaign_lead_temp")
+    assert (order["text"], order["table"]) == ("shop_order", "shop_order")     # Django's default name
+    text = flow.render_ascii(out)
+    assert "W adm_campaign_lead_temp" in text and "R shop_order" in text and "FreshLead" not in text
