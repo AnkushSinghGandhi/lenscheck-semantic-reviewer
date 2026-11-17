@@ -314,6 +314,7 @@ def build_journey(repo, spec, crossrepo_paths=None, follow=None, keep_all=False)
             stats["calls_followed"] += (f.get("stats") or {}).get("calls_followed", 0)
             stats["truncated"] = stats["truncated"] or bool((f.get("stats") or {}).get("truncated"))
         top.append(node)
+    hops = _merge_reader_hops(hops)                 # different entries' tables can share one reader too
     out = {"schema": 1, "generated_by": "lenscheck flow", "repo": base["repo"], "repo_meta": base["repo_meta"],
            "entry": {"kind": "journey", "route": spec["name"], "handler": spec.get("title") or spec["name"], "loc": ""},
            "journey": {"name": spec["name"], "title": spec.get("title") or spec["name"],
@@ -544,7 +545,23 @@ def _build_hops(origin, flow, index, per, paths, indexes, follow):
                 t_out["expanded"] = True
                 hop["steps"] = _prefix(t_steps, hop_id)
             hops.append(hop)
-    return hops
+    return _merge_reader_hops(hops)
+
+
+def _merge_reader_hops(hops):
+    """One reader that picks up several tables this flow writes is expanded once: later table hops it
+    already won fold into the first one's `also_tables` instead of repeating the same trace."""
+    first, out = {}, []
+    for h in hops:
+        e = h.get("entry") or {}
+        key = (h.get("repo"), e.get("route"), e.get("handler")) if h.get("via") == "table" and h.get("steps") else None
+        if key in first:
+            first[key].setdefault("also_tables", []).append(h.get("table"))
+            continue
+        if key:
+            first[key] = h
+        out.append(h)
+    return out
 
 
 
@@ -726,7 +743,9 @@ def story(flow):
             title = f"{entry.get('kind', 'http')} {entry.get('route', '')} → {entry.get('handler', '')}"
         else:
             title = f"no clear reader — {len(hop.get('candidates') or [])} candidates"
-        sub = _new_phase({"kind": "table", "via": f"reads {hop.get('table', '')}",
+        also = hop.get("also_tables") or []
+        sub = _new_phase({"kind": "table", "via": f"reads {hop.get('table', '')}"
+                                                  + (f" + {len(also)} more" if also else ""),
                           "when": hop.get("when", []), "hop": hop.get("id"),
                           "title": title}, hop.get("repo") or "")
         sub["candidates"] = [{"route": c.get("route", ""), "expanded": bool(c.get("expanded")),

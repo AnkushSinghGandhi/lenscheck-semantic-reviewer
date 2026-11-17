@@ -171,3 +171,22 @@ def test_journey_keeps_one_table_hop_per_table_and_takes_follow_from_the_file(tm
     assert flow.main() == 0
     hop = json.loads(out.read_text())["hops"][0]
     assert hop["match"] == "forced" and hop["entry"]["route"] == "command:reader_two"
+
+
+def test_one_reader_of_two_written_tables_is_expanded_once(tmp_path):
+    a, b = tmp_path / "svcA", tmp_path / "svcB"
+    for root in (a, b):
+        _write(root, "app/apps.py", APPS)
+        _write(root, "app/models.py", MODELS)
+    _write(a, "app/views.py", "from .models import Campaign, Targeting\n"
+           "def make(request):\n    Campaign.objects.create(name='x')\n    Targeting.objects.create(campaign_id=1)\n")
+    _write(a, "app/urls.py", "from django.urls import path\nfrom . import views\nurlpatterns = [path('make/', views.make)]\n")
+    _write(b, "app/management/commands/reader.py",
+           "from django.core.management.base import BaseCommand\nfrom app.models import Campaign, Targeting\n"
+           "class Command(BaseCommand):\n    def handle(self, *a, **k):\n"
+           "        Campaign.objects.all()\n        Targeting.objects.all()\n")
+    f = flow.build_flow(str(a), "make/", crossrepo_paths=[str(b)], follow=["svcB:command:reader"])
+    tables = [h for h in f["hops"] if h["via"] == "table"]
+    assert len(tables) == 1 and tables[0]["table"] == "campaigns" and tables[0]["also_tables"] == ["targeting"]
+    phases, _ = flow.story(f)
+    assert [p["via"] for p in phases if p["kind"] == "table"] == ["reads campaigns + 1 more"]
