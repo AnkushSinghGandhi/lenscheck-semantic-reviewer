@@ -172,7 +172,19 @@ const G = window.LC_GLOSSARY = {
   "nav-map": {t: "🗺 Repo Map", d: "Every entrypoint in one repo, grouped by app, worst-first."},
   "nav-crossrepo": {t: "🔀 Cross-repo", d: "Tables several repos read or write — finds cross-service multi-writers."},
   "nav-theme": {t: "Theme", d: "Switch between light and dark."},
-  "nav-glossary": {t: "📖 Glossary", d: "Every term this tool uses, A–Z, with search."}
+  "nav-glossary": {t: "📖 Glossary", d: "Every term this tool uses, A–Z, with search."},
+
+  // ---- flow ----
+  "fl-story": {t: "Story", d: "The flow as repo lanes and phase cards, in the order the code runs. Each card is a phase of the trace; arrows name what hands control to the next one."},
+  "fl-lane": {t: "Repo lane", d: "One column per repo the flow touches, in first-appearance order. A card sits in the lane of the repo that runs it."},
+  "fl-timeline": {t: "Table timeline", d: "Every DB read and write grouped by table, in execution order across repos, so you see who writes first and who reads later."},
+  "fl-steps": {t: "Steps", d: "The full step tree per phase, collapsible. Click any step to see its source; the search box filters by text, table or file."},
+  "fl-guard": {t: "Guard", d: "The if/for/try condition that must hold for the steps below it to run. Shown when it changes between sibling steps."},
+  "fl-hop-table": {t: "Table hop", d: "The flow wrote a table another repo reads, so the flow continues in that repo's reader. The ★ marks the expansion the ranking chose."},
+  "fl-hop-http": {t: "HTTP / celery hop", d: "The flow called a route or dispatched a task defined in another repo, so the flow continues into that endpoint or task."},
+  "fl-cut": {t: "Cut", d: "A call the tracer stopped following at its depth or budget cap. The gap is always shown, never silently pruned."},
+  "fl-ref": {t: "See also", d: "This call was already expanded earlier in the trace. Click it to jump to that earlier step."},
+  "fl-when": {t: "When", d: "The guards in effect when this phase starts — the path that had to be taken to reach it."}
 };
 
 // ---- styles (the pages' own CSS vars, so light + dark both work) ----

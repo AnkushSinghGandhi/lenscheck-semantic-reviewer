@@ -159,26 +159,36 @@ def build_flow(repo, query, pick=None, keep_all=False, crossrepo_paths=None, fol
         "stats": tr["stats"],
         "hops": [],
     }
-    if crossrepo_paths:
-        origin, origin_path, origin_cleanup = crossrepo._resolve(repo)
-        paths = {origin: origin_path}
-        cleanups = [origin_cleanup]
+    origin, origin_path, origin_cleanup = crossrepo._resolve(repo)
+    flow["origin"] = origin
+    flow["repo_paths"] = {origin: os.path.abspath(repo)}
+    try:
+        if crossrepo_paths:
+            paths = {origin: origin_path}
+            cleanups = []
+            try:
+                for spec in crossrepo_paths:
+                    name, path, cleanup = crossrepo._resolve(spec)
+                    paths[name] = path
+                    cleanups.append(cleanup)
+                    if "@" not in spec:
+                        flow["repo_paths"][name] = os.path.abspath(spec)
+                per = {name: crossrepo._provenance(path, True, True, worktree=("@" in name))
+                       for name, path in paths.items()}
+                indexes = {origin: index}
+                flow["hops"] = _build_hops(origin, flow, index, per, paths, indexes, follow or [])
+                flow["repos"] = {name: crossrepo._repo_meta(path) for name, path in paths.items()}
+            finally:
+                for cleanup in cleanups:
+                    try:
+                        cleanup()
+                    except Exception:
+                        pass
+    finally:
         try:
-            for spec in crossrepo_paths:
-                name, path, cleanup = crossrepo._resolve(spec)
-                paths[name] = path
-                cleanups.append(cleanup)
-            per = {name: crossrepo._provenance(path, True, True, worktree=("@" in name))
-                   for name, path in paths.items()}
-            indexes = {origin: index}
-            flow["hops"] = _build_hops(origin, flow, index, per, paths, indexes, follow or [])
-            flow["repos"] = {name: crossrepo._repo_meta(path) for name, path in paths.items()}
-        finally:
-            for cleanup in cleanups:
-                try:
-                    cleanup()
-                except Exception:
-                    pass
+            origin_cleanup()
+        except Exception:
+            pass
     return flow
 
 
@@ -421,6 +431,174 @@ def _walk_steps(steps):
         yield from _walk_steps(step.get("children") or [])
 
 
+def _new_phase(head, repo):
+    return {"id": None, "repo": repo, "kind": head.get("kind", "entry"),
+            "title": head.get("title", ""), "via": head.get("via", ""),
+            "when": list(head.get("when") or []), "root": head.get("root"),
+            "hop": head.get("hop"), "tables": [], "externals": [], "cuts": 0, "screens": []}
+
+
+def _record_fact(phase, step, owner):
+    """Feed one step's facts into `phase` and remember which phase owns its id."""
+    if step.get("id") is not None:
+        owner[step["id"]] = phase
+    kind = step.get("kind")
+    if kind in ("read", "write"):
+        key = step.get("table") or step.get("text")
+        if key:
+            entry = next((t for t in phase["tables"] if t["table"] == key), None)
+            if entry is None:
+                entry = {"table": key, "ops": [], "n": 0}
+                phase["tables"].append(entry)
+            entry["n"] += 1
+            op = "R" if kind == "read" else "W"
+            if op not in entry["ops"]:
+                entry["ops"].append(op)
+    elif kind == "external":
+        dest = step.get("target") or step.get("text")
+        if dest and dest not in phase["externals"]:
+            phase["externals"].append(dest)
+    if step.get("truncated"):
+        phase["cuts"] += 1
+
+
+def _phases_of(steps, repo, head, owner=None):
+    """Depth-first phases: a celery boundary starts a new phase for its task body."""
+    owner = {} if owner is None else owner
+    phases = []
+
+    def walk(items, phase):
+        for step in items:
+            if step.get("boundary") and not step.get("ref"):
+                _record_fact(phase, step, owner)     # the dispatch line stays where it runs; its body moves on
+                sub = _new_phase({"kind": "celery", "via": "celery",
+                                  "title": f"celery task {step.get('target', '')}",
+                                  "root": step.get("id")}, repo)
+                phases.append(sub)
+                walk(step.get("children") or [], sub)
+                continue
+            _record_fact(phase, step, owner)
+            if step.get("ref"):
+                continue
+            walk(step.get("children") or [], phase)
+
+    first = _new_phase(head, repo)
+    phases.append(first)
+    walk(steps, first)
+    return phases
+
+
+def story(flow):
+    """The flow as repo lanes / phases, plus the final phase id owning every step."""
+    owner = {}
+    e = flow.get("entry") or {}
+    origin = flow.get("origin") or flow.get("repo") or ""
+    p1 = _phases_of(flow.get("steps") or [], origin,
+                    {"kind": "entry", "via": "",
+                     "title": f"{e.get('kind', 'http')} {e.get('route', '')} → "
+                              f"{e.get('handler', '')}"}, owner)
+    origin_phases = list(p1)
+    hops = flow.get("hops") or []
+
+    after = {}
+    for hop in hops:
+        if hop.get("via") not in ("http", "celery"):
+            continue
+        he = hop.get("entry") or {}
+        k = "http" if hop["via"] == "http" else "celery-hop"
+        sub = _phases_of(hop.get("steps") or [], hop.get("repo") or "",
+                         {"kind": k, "via": f"{hop['via']} ({hop.get('match')})",
+                          "title": f"{he.get('kind', 'http')} {he.get('route', '')} → "
+                                   f"{he.get('handler', '')}",
+                          "hop": hop.get("id"), "when": hop.get("when", [])}, owner)
+        anchor = owner.get(hop.get("from_step"))
+        after.setdefault(id(anchor), []).append((anchor, sub))
+
+    phases = []
+    for phase in origin_phases:
+        phases.append(phase)
+        for anchor, sub in after.get(id(phase), []):
+            phases.extend(sub)
+    for anchor, sub in after.get(id(None), []):
+        phases.extend(sub)
+
+    origin_index = {s.get("id"): i for i, s in enumerate(_walk_steps(flow.get("steps") or []))}
+    table_hops = [h for h in hops if h.get("via") == "table"]
+    table_hops.sort(key=lambda h: origin_index.get(h.get("from_step"), 10 ** 9))
+    for hop in table_hops:
+        expanded = next((c for c in hop.get("candidates") or [] if c.get("expanded")), None)
+        entry = expanded or hop.get("entry")
+        if entry:
+            title = f"{entry.get('kind', 'http')} {entry.get('route', '')} → {entry.get('handler', '')}"
+        else:
+            title = f"no clear reader — {len(hop.get('candidates') or [])} candidates"
+        sub = _new_phase({"kind": "table", "via": f"reads {hop.get('table', '')}",
+                          "when": hop.get("when", []), "hop": hop.get("id"),
+                          "title": title}, hop.get("repo") or "")
+        sub["candidates"] = [{"route": c.get("route", ""), "expanded": bool(c.get("expanded")),
+                              "reasons": list(c.get("reasons") or [])}
+                             for c in hop.get("candidates") or []]
+        phases.append(sub)
+        for step in hop.get("steps") or []:
+            _walk_facts(step, sub, owner)
+
+    for i, phase in enumerate(phases, 1):
+        phase["id"] = f"p{i}"
+        for table in phase["tables"]:
+            table["ops"] = sorted(table["ops"])
+    step_phase = {sid: phase["id"] for sid, phase in owner.items()}
+    return phases, step_phase
+
+
+def _walk_facts(step, phase, owner):
+    _record_fact(phase, step, owner)
+    if step.get("ref"):
+        return
+    for child in step.get("children") or []:
+        _walk_facts(child, phase, owner)
+
+
+def table_timeline(flow, phases, step_phase):
+    """Every read/write in execution order, grouped by table (first touch first)."""
+    phase_index = {p["id"]: i for i, p in enumerate(phases)}
+    events, counter = {}, [0]
+
+    def walk(steps, repo):
+        for step in steps:
+            if step.get("ref"):
+                continue
+            if step.get("kind") in ("read", "write"):
+                key = step.get("table") or step.get("text")
+                if key:
+                    ev = {"op": "R" if step["kind"] == "read" else "W", "repo": repo,
+                          "phase": step_phase.get(step.get("id")), "step": step.get("id"),
+                          "loc": step.get("loc")}
+                    for field in ("where", "where_not", "set"):
+                        if step.get(field):
+                            ev[field] = step[field]
+                    ev["_dfs"] = counter[0]
+                    counter[0] += 1
+                    events.setdefault(key, []).append(ev)
+            walk(step.get("children") or [], repo)
+
+    walk(flow.get("steps") or [], flow.get("origin") or flow.get("repo") or "")
+    for hop in flow.get("hops") or []:
+        walk(hop.get("steps") or [], hop.get("repo") or "")
+
+    def sort_key(ev):
+        return (phase_index.get(ev["phase"], 10 ** 9), ev["_dfs"])
+
+    out = []
+    for key, evs in events.items():
+        evs.sort(key=sort_key)
+        out.append({"table": key, "written": any(ev["op"] == "W" for ev in evs), "events": evs})
+    out.sort(key=lambda item: sort_key(item["events"][0]))
+    for item in out:
+        for ev in item["events"]:
+            del ev["_dfs"]
+    return out
+
+
 _MARKERS = {"read": "R", "write": "W", "external": "→", "async": "⇢", "cache": "$",
             "call": "call", "exit": "⛔"}
 
@@ -501,6 +679,93 @@ def render_ascii(flow):
     return "\n".join(lines)
 
 
+def write_html(flow, path, screens=()):
+    """One self-contained page: story lanes, table timeline, step tree + source snippets."""
+    import base64
+
+    phases, step_phase = story(flow)
+    timeline = table_timeline(flow, phases, step_phase)
+
+    sources = {}
+
+    def collect(steps, repo):
+        for step in _walk_steps(steps):
+            loc = step.get("loc")
+            if not loc:
+                continue
+            key = f"{repo}:{loc}"
+            if key in sources:
+                continue
+            if repo in (flow.get("repo_paths") or {}):
+                rel, _, line = loc.rpartition(":")
+                try:
+                    number = int(line)
+                except ValueError:
+                    sources[key] = {"found": False, "path": rel, "line": line}
+                    continue
+                import serve
+                sources[key] = serve.source_snippet(flow["repo_paths"][repo], "WORKTREE",
+                                                    rel, number, ctx=5)
+            else:
+                sources[key] = {"found": False}
+
+    collect(flow.get("steps") or [], flow.get("origin") or flow.get("repo") or "")
+    for hop in flow.get("hops") or []:
+        collect(hop.get("steps") or [], hop.get("repo") or "")
+
+    exts = {"png": "png", "jpg": "jpeg", "jpeg": "jpeg", "gif": "gif", "webp": "webp"}
+    for item in screens or []:
+        step_id, raw = None, item
+        if "=" in item:
+            left, right = item.split("=", 1)
+            if re.match(r"^(h\d+\.)?s\d+$", left):
+                step_id, raw = left, right
+        ext = os.path.splitext(raw)[1].lower().lstrip(".")
+        if ext not in exts:
+            print(f"flow: skipped screenshot {raw}: unsupported extension", file=sys.stderr)
+            continue
+        try:
+            size = os.path.getsize(raw)
+        except OSError:
+            print(f"flow: skipped screenshot {raw}: file not found", file=sys.stderr)
+            continue
+        if size > 5 * 1024 * 1024:
+            print(f"flow: skipped screenshot {raw}: larger than 5 MB", file=sys.stderr)
+            continue
+        phase = None
+        if step_id is None:
+            phase = phases[0] if phases else None
+        else:
+            pid = step_phase.get(step_id)
+            if pid is None:
+                print(f"flow: skipped screenshot {raw}: unknown step {step_id}", file=sys.stderr)
+                continue
+            phase = next((p for p in phases if p["id"] == pid), None)
+        if phase is None:
+            print(f"flow: skipped screenshot {raw}: no phase holds {step_id}", file=sys.stderr)
+            continue
+        try:
+            with open(raw, "rb") as f:
+                blob = base64.b64encode(f.read()).decode("ascii")
+        except OSError:
+            print(f"flow: skipped screenshot {raw}: cannot read", file=sys.stderr)
+            continue
+        phase["screens"].append(f"data:image/{exts[ext]};base64,{blob}")
+
+    data = {"flow": flow, "story": phases, "step_phase": step_phase,
+            "timeline": timeline, "sources": sources}
+    tpl_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web",
+                            "flow.template.html")
+    with open(tpl_path, encoding="utf-8") as f:
+        template = f.read()
+    import diff_pr
+    html = template.replace("__FLOW_DATA__",
+                            json.dumps(data, ensure_ascii=False).replace("</", "<\\/"))
+    html = diff_pr.inline_glossary(html)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(html)
+
+
 def main():
     p = argparse.ArgumentParser(prog="lenscheck flow",
                                 description="Ordered steps one entrypoint executes.")
@@ -514,6 +779,9 @@ def main():
                    help="follow the flow into these other repos")
     p.add_argument("--follow", action="append", metavar="REPO:ROUTE",
                    help="force a table-hop reader (repeatable)")
+    p.add_argument("--html", metavar="FILE", help="write a self-contained interactive HTML page")
+    p.add_argument("--screen", action="append", metavar="[STEP=]PATH",
+                   help="attach a screenshot to a step (repeatable)")
     args = p.parse_args()
 
     if args.list:
@@ -544,6 +812,9 @@ def main():
         with open(args.out, "w", encoding="utf-8") as f:
             json.dump(flow, f, indent=2, ensure_ascii=False)
             f.write("\n")
+    if args.html:
+        write_html(flow, args.html, args.screen or [])
+        print(f"wrote {args.html}", file=sys.stderr)
     return 0
 
 

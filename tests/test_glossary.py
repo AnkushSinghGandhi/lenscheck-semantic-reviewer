@@ -12,10 +12,10 @@ import map_repo
 import serve
 
 WEB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
-PAGES = ["app.html", "map.html", "crossrepo.html", "viewer.template.html"]
+PAGES = ["app.html", "map.html", "crossrepo.html", "viewer.template.html", "flow.template.html"]
 # key families used by the pages — a quoted string with one of these prefixes must be a glossary key
 FAMILIES = ("sev-", "ch-", "ent-", "op-", "tag-", "post-", "map-", "x-", "inv-", "node-", "nav-", "st-",
-            "egress-", "tabs-", "mode-", "ref-")
+            "egress-", "tabs-", "mode-", "ref-", "fl-")
 NOT_KEYS = {"inv-discovery"}            # a panel id that happens to share a family prefix
 
 

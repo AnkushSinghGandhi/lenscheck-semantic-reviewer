@@ -72,6 +72,29 @@ dispatch line.
 Hops are single-depth (a hop's own links are not followed), and nothing from the other repo is
 written back into this repo's cache.
 
+## HTML
+
+```bash
+lenscheck flow ./svc /push --html flow.html
+lenscheck flow ./svc /push --crossrepo ../other --html flow.html --screen s3=shot.png
+```
+
+`--html FILE` writes one self-contained page (no server, no libraries — it opens from `file://`):
+
+- **Story** — one lane per repo and a card per phase (entry, celery, http / celery / table hops),
+  with labelled arrows, the guards in effect (`when`), table and external chips, `✂` cuts and any
+  attached screenshots. Click a card to jump to its steps.
+- **Tables** — a touch timeline: every read/write grouped by table in execution order across repos,
+  with `where` / `not` / `set` values; click a chip to reveal its step. "Only written tables" is on
+  by default.
+- **Steps** — the full step tree per phase, collapsible, with markers, guard lines, `(see sN)` links
+  and `✂ not followed` badges. Search filters by text, table or file; click a step for its source
+  snippet (with a `vscode://` link when the repo path is known).
+
+`--screen [STEP=]PATH` attaches a screenshot (png / jpg / jpeg / gif / webp, ≤ 5 MB) to a step's
+card, or to the first phase when no step is given; it is embedded as a data URI. Bad files are
+skipped with a warning. The ASCII tree and `--out` JSON are unchanged.
+
 ## Known limits
 
 - **Order inside one statement is approximate**: facts come before the statement's calls, and an outer
@@ -82,4 +105,4 @@ written back into this repo's cache.
   repos that is roughly a minute, then it is cached.
 - **Cross-repo hops are single-depth** — the links a hop's own endpoint makes are not followed.
 - **HTML/serve output, front-end parsing and any natural-language resolver are later milestones** —
-  this command is static.
+  the `flow` command itself is static (`--html` is a static export of that same output).
