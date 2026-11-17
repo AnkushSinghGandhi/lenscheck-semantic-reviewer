@@ -13,7 +13,7 @@ import sys
 import tempfile
 
 DEFAULT_MODEL = "claude-opus-5-5"
-PROMPT_VERSION = "1"
+PROMPT_VERSION = "2"
 MAX_DIGEST_CHARS = 600_000
 ICONS = ["database", "upload", "file", "gear", "task", "clock", "api", "sheet", "user", "shield",
          "filter", "search", "chart", "mail", "warning", "link"]
@@ -65,6 +65,9 @@ Answer in the JSON schema you were given:
 - key_files: the files that matter most, purpose in 3–8 words.
 - one_liner: 4–8 short phrases telling the whole flow end to end.
 - icon: pick from the enum only.
+
+If the trace starts with JOURNEY, it is several API calls a user makes in order (e.g. a wizard): make one section
+per journey step, in order, titled with the step name; its stages are what that step's API calls do.
 
 Grounding (strict): every stage, item, module, note and table cites in refs at least one step id that appears
 in the trace. Use only table names, file paths and ids present in the trace. If unsure, leave it out — never
@@ -153,9 +156,15 @@ def digest(flow, phases, step_phase, sources, timeline, snippets=True):
     """A deterministic text form of the flow for the prompt. Too big → retried without snippets (said on stderr)."""
     e = flow.get("entry") or {}
     hops = {h.get("id"): h for h in flow.get("hops") or []}
-    out = [f"FLOW: {e.get('kind')} {e.get('route')} → {e.get('handler')} @{e.get('loc')}"
-           + (f' — "{e["doc"]}"' if e.get("doc") else ""),
-           f"ORIGIN REPO: {flow.get('origin')}", ""]
+    j = flow.get("journey")
+    if j:
+        out = [f"JOURNEY: {j['title']} — {len(j['steps'])} steps in user order"
+               + (f" (order from: {j['source']})" if j.get("source") else "")]
+        out += [f"  step {i}: {s['name']} — {', '.join(map(str, s['entries']))}" for i, s in enumerate(j["steps"], 1)]
+    else:
+        out = [f"FLOW: {e.get('kind')} {e.get('route')} → {e.get('handler')} @{e.get('loc')}"
+               + (f' — "{e["doc"]}"' if e.get("doc") else "")]
+    out += [f"ORIGIN REPO: {flow.get('origin')}", ""]
     seen = {}
     for p in phases:
         head = f"== {p['id']} [{p['kind']}] repo={p['repo']} \"{p['title']}\""
@@ -301,7 +310,8 @@ def validate(narr, flow, timeline):
 
 # ---- facts-only fallback -------------------------------------------------------------------
 
-_KIND_ICON = {"entry": "upload", "celery": "task", "http": "api", "celery-hop": "task", "table": "clock"}
+_KIND_ICON = {"entry": "upload", "celery": "task", "http": "api", "celery-hop": "task", "table": "clock",
+              "step": "file"}
 
 
 def _short_title(p):
@@ -320,8 +330,9 @@ def fallback(flow, phases, step_phase, timeline):
         first_step.setdefault(pid, sid)
     sections = []
     for p in phases:
-        if not sections or sections[-1]["repo"] != p["repo"]:
-            sections.append({"id": f"S{len(sections) + 1}", "title": p["repo"].upper(), "subtitle": p["title"],
+        if not sections or sections[-1]["repo"] != p["repo"] or p["kind"] == "step":   # a journey step opens its own band
+            title = p["title"].upper() if p["kind"] == "step" else p["repo"].upper()
+            sections.append({"id": f"S{len(sections) + 1}", "title": title, "subtitle": p["title"],
                              "repo": p["repo"], "phases": [], "stages": []})
         sec = sections[-1]
         sec["phases"].append(p["id"])

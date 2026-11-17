@@ -117,6 +117,45 @@ lenscheck flow ./cms leads/upload/ --crossrepo ../c360 --html flow.html --explai
   `--explain-model` picks the model (default `claude-opus-5-5`). If `claude` is missing or fails, the
   page falls back to the facts-only overview and says why on stderr.
 
+## Catalog — what flows exist
+
+```bash
+lenscheck flow ./cms --catalog                                  # text, grouped by app
+lenscheck flow ./cms --catalog --journeys ~/flows/cms --html ~/.cache/lenscheck/flows/cms/   # → index.html
+```
+
+Every entrypoint (APIs, commands, tasks, signals) grouped by Django app, with a one-line summary
+(`@extend_schema(summary=…)` per HTTP method, else the docstring; a command's `help`) and the tables it
+writes. Comes from the cached fact index, so it is instant after the first run. The HTML index lists the
+saved journeys on top, has a search box, and links every flow page already generated next to it.
+
+## Journeys — several API calls in user order
+
+A wizard or any multi-step feature is a **journey**: one YAML (or JSON) file naming the steps and the
+entrypoints each step calls.
+
+```yaml
+name: campaign-creation
+title: Campaign creation (5-step wizard)
+source: CampaignHelper.get_step_progress (campaigns/api/helper.py:1050)   # why this order
+crossrepo: [../c360]                 # optional, relative to the repo
+steps:
+  - name: Campaign, Entity & DU Setup
+    entries: [CampaignListView.post, CampaignDUListView.post]
+  - name: Targeting Setup
+    entries: [CampaignTargetingView.put]
+```
+
+```bash
+lenscheck flow ./cms --journey campaign-creation.yaml --html ~/.cache/lenscheck/flows/cms/ --explain
+```
+
+- An entry is `Handler`, `Handler.method` (one HTTP method of a class view), `Handler@file-fragment` when
+  two definitions share a name, or `command:name` / `task:name`.
+- All entries are traced with one parsed index and joined into one flow: each journey step is a phase
+  (`Step k · name`), so the overview gets one band per step and the table timeline runs across steps.
+- `--html DIR/` names the page after the flow (`campaign-creation.html`), which is what the catalog links.
+
 ## Accuracy
 
 - **One of.** When the model is picked at runtime from a known set — a helper returning

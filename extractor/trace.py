@@ -95,9 +95,11 @@ class SeqCollector(FactCollector):
     def visit_FunctionDef(self, node):
         """A function's body is its own guard frame: an implicit `else` never leaks past its def."""
         depth = len(self.guards)
+        self._implicit.append(0)        # its own counter too, or a nested def's implicit guard is billed to the outer block
         try:
             super().visit_FunctionDef(node)
         finally:
+            self._implicit.pop()
             del self.guards[depth:]
     visit_AsyncFunctionDef = visit_FunctionDef
 

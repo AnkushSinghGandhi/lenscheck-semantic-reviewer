@@ -190,6 +190,8 @@ const G = window.LC_GLOSSARY = {
   "fl-unverified": {t: "⚠ Unverified", d: "Claude wrote this line but cited no step that exists in the trace, so treat it as a guess and check the code."},
   "fl-branch": {t: "Branch", d: "Parallel or alternative paths inside one stage, side by side."},
   "fl-notes": {t: "Important notes", d: "Behaviour that is easy to forget: fail-open on errors, early returns, retries, dedupe and skip rules."},
+  "fl-catalog": {t: "Flow catalog", d: "Every entrypoint of the repo (APIs, commands, tasks), grouped by app, with what it does and which tables it writes."},
+  "fl-journey": {t: "Journey", d: "Several API calls a user makes in order (e.g. a 5-step wizard), traced together as one flow. Defined in a small YAML file."},
   "fl-details": {t: "Details", d: "The technical views: repo lanes, every table touch in order, and the full step tree with code."},
   "fl-ref": {t: "See also", d: "This call was already expanded earlier in the trace. Click it to jump to that earlier step."},
   "fl-when": {t: "When", d: "The guards in effect when this phase starts — the path that had to be taken to reach it."}

@@ -148,3 +148,15 @@ def test_exclusive_survives_the_80_char_guard_cut():
     a = [tr._short("if " + "c" * 100, 80)]
     b = [tr._short("else (not: " + "c" * 100 + ")", 80)]
     assert flow._exclusive(a, b) is True
+
+
+def test_nested_def_early_return_does_not_eat_the_outer_guard(tmp_path):
+    # a closure's `if x: return` inside `with atomic():` used to pop the "atomic" guard (IndexError)
+    root = _app(tmp_path / "svc", _model("A", "a_tbl") + _model("B", "b_tbl"),
+                "from django.db import transaction\nfrom .models import A, B\n"
+                "def push(request):\n    with transaction.atomic():\n"
+                "        def pick(x):\n            if not x:\n                return None\n            return x\n"
+                "        A.objects.create(v=pick(1))\n    B.objects.create(v=2)\n")
+    steps = flow.build_flow(str(root), "push/")["steps"]
+    assert _find(steps, "write", "A")["guards"] == ["atomic"]
+    assert _find(steps, "write", "B")["guards"] == []

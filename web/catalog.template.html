@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lenscheck — Flow catalog</title>
+<script>try{var t=new URLSearchParams(location.search).get("theme")||localStorage.getItem("lenscheck.theme")||"dark";document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<style>
+:root{--bg:#0a0d13;--panel:#141922;--sidebar:#0d1119;--card:#11151d;--line:#232a36;
+  --fg:#e6edf3;--mut:#8b93a3;--faint:#5b6473;
+  --crit:#f85149;--high:#db8f2b;--low:#3fb950;--link:#7aa2ff;--purple:#bc8cff;--acc:#7c74f0;}
+[data-theme="light"]{--bg:#f5f6f9;--panel:#ffffff;--sidebar:#eef0f4;--card:#ffffff;--line:#e2e5ec;
+  --fg:#1b2130;--mut:#5b6572;--faint:#98a1ad;
+  --crit:#d1242f;--high:#b06a00;--low:#1a7f37;--link:#2f5bd8;--purple:#7c3aed;--acc:#6d64f5;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif}
+a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline}
+code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+nav.top{display:flex;align-items:center;gap:14px;height:54px;padding:0 18px;border-bottom:1px solid var(--line);
+  background:var(--sidebar);position:sticky;top:0;z-index:10}
+nav.top .brand{font-weight:800}nav.top .brand .g{color:var(--acc)}nav.top small{color:var(--mut);font-weight:400}
+nav.top .spacer{flex:1}
+.navbtn{padding:6px 12px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--fg);
+  font-size:12.5px;font-weight:600;cursor:pointer}
+.wrap{max-width:1200px;margin:0 auto;padding:18px 16px 60px}
+h1{margin:0 0 4px;font-size:22px}
+.meta{color:var(--mut);font-size:13px}
+.box{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:10px 14px;margin:16px 0}
+.box h2{margin:0 0 8px;font-size:13px;text-transform:uppercase;letter-spacing:.4px;color:var(--mut)}
+.jrow{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:baseline;padding:6px 0;border-top:1px solid var(--line)}
+.jrow:first-of-type{border-top:0}
+.jrow b{font-size:14px}
+.toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:14px 0}
+#q{flex:1 1 320px;padding:8px 11px;border-radius:9px;border:1px solid var(--line);background:var(--panel);color:var(--fg);font-size:14px}
+details.app{border:1px solid var(--line);border-radius:12px;background:var(--panel);margin:8px 0;overflow:hidden}
+details.app>summary{cursor:pointer;padding:9px 14px;font-weight:700;display:flex;gap:10px;align-items:baseline}
+details.app>summary small{color:var(--mut);font-weight:400}
+.row{display:grid;grid-template-columns:62px minmax(0,1.3fr) minmax(0,1.7fr);gap:4px 12px;padding:7px 14px;
+  border-top:1px solid var(--line);font-size:13px}
+.row .kind{font-size:11px;font-weight:700;text-transform:uppercase;color:var(--mut);padding-top:2px}
+.row .route{overflow-wrap:anywhere}
+.row .route code{font-size:12.5px}
+.row .h{font-weight:600}
+.row .sum{color:var(--mut);font-size:12.5px}
+.chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:3px}
+.chip{font-size:11px;padding:1px 7px;border-radius:999px;border:1px solid var(--line)}
+.chip.w{color:var(--crit);border-color:var(--crit)}
+.act{margin-top:4px;font-size:12px}
+.act button{font-size:11.5px;padding:2px 8px;border-radius:6px;border:1px solid var(--line);background:var(--card);
+  color:var(--fg);cursor:pointer}
+.none{color:var(--mut);font-size:12.5px}
+@media (max-width:760px){.row{grid-template-columns:1fr}}
+</style></head>
+<body>
+<nav class="top">
+  <div class="brand"><span class="g">lenscheck</span> <small>flow catalog</small></div>
+  <div class="spacer"></div>
+  <button class="navbtn" onclick="lcGlossaryOpen()" data-g="nav-glossary">📖 Glossary</button>
+  <button class="navbtn" id="themeBtn" onclick="toggleTheme()" data-g="nav-theme">☀</button>
+</nav>
+<div class="wrap">
+  <h1 id="title" data-g="fl-catalog"></h1>
+  <div class="meta" id="sub"></div>
+  <div class="box" id="journeys" data-g="fl-journey"></div>
+  <div class="toolbar">
+    <input id="q" type="search" placeholder="🔎 route, handler, summary or table…" data-g="search">
+    <span class="meta" id="count"></span>
+  </div>
+  <div id="apps"></div>
+</div>
+<script src="glossary.js"></script>
+<script>window.CATALOG = __CATALOG_DATA__;</script>
+<script>
+function applyTheme(t){document.documentElement.setAttribute("data-theme",t);
+  var b=document.getElementById("themeBtn"); if(b) b.textContent=t==="light"?"🌙":"☀";
+  try{localStorage.setItem("lenscheck.theme",t)}catch(e){}}
+function toggleTheme(){applyTheme(document.documentElement.getAttribute("data-theme")==="light"?"dark":"light");}
+applyTheme(document.documentElement.getAttribute("data-theme")||"dark");
+function esc(s){return (s==null?"":""+s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
+
+var C=window.CATALOG||{};
+document.getElementById("title").textContent="Flows in "+(C.name||"");
+document.getElementById("sub").textContent=(C.total||0)+" entrypoints in "+(C.apps||[]).length+" apps · "+(C.repo||"");
+
+(function(){
+  var js=C.journeys||[], h='<h2>Journeys (multi-step flows)</h2>';
+  if(!js.length){h+='<div class="none">No saved journeys yet — ask <code>/flow &lt;name&gt;</code> to draft one.</div>';}
+  js.forEach(function(j){
+    h+='<div class="jrow"><b>'+esc(j.title||j.name)+'</b><span class="meta">'+esc(j.steps)+' steps · '+esc(j.name)+'</span>'
+      +(j.error?'<span class="chip w">'+esc(j.error)+'</span>':'')
+      +(j.page?'<a href="'+esc(j.page)+'">open flow →</a>':'<span class="none">not generated yet</span>')+'</div>';
+  });
+  document.getElementById("journeys").innerHTML=h;
+})();
+
+function cmd(r){return 'lenscheck flow '+(C.repo||'.')+' '+(r.kind==='http'?r.handler:r.route)+' --html <dir>/';}
+function rowHTML(r){
+  var hay=[r.route,r.full_route,r.handler,r.summary,(r.writes||[]).join(" "),(r.reads||[]).join(" ")].join(" ").toLowerCase();
+  var h='<div class="row" data-hay="'+esc(hay)+'"><div class="kind">'+esc(r.kind)+'</div>'
+    +'<div class="route"><code>'+esc(r.full_route||r.route||"—")+'</code><div class="meta">'+esc((r.methods||[]).join(" / "))+'</div></div>'
+    +'<div><span class="h">'+esc(r.handler)+'</span>'+(r.summary?'<div class="sum">'+esc(r.summary)+'</div>':'');
+  if((r.writes||[]).length)h+='<div class="chips">'+r.writes.map(function(t){return '<span class="chip w">W '+esc(t)+'</span>';}).join("")+'</div>';
+  h+='<div class="act">'+(r.page?'<a href="'+esc(r.page)+'">open flow →</a>'
+    :'<button data-cmd="'+esc(cmd(r))+'">copy command</button>')+' <span class="meta">'+esc(r.loc)+'</span></div>';
+  return h+'</div></div>';
+}
+function render(){
+  var q=document.getElementById("q").value.trim().toLowerCase(), shown=0, h="";
+  (C.apps||[]).forEach(function(a){
+    var rows=a.entries.filter(function(r){
+      return !q||[r.route,r.full_route,r.handler,r.summary,(r.writes||[]).join(" ")].join(" ").toLowerCase().indexOf(q)>=0;});
+    if(!rows.length)return;
+    shown+=rows.length;
+    h+='<details class="app"'+(q?' open':'')+'><summary>'+esc(a.app)+' <small>'+rows.length+' / '+a.entries.length+'</small></summary>'
+      +rows.map(rowHTML).join("")+'</details>';
+  });
+  document.getElementById("apps").innerHTML=h||'<div class="none">nothing matches</div>';
+  document.getElementById("count").textContent=shown+" shown";
+}
+document.getElementById("q").addEventListener("input",render);
+document.getElementById("apps").addEventListener("click",function(ev){
+  var b=ev.target.closest?ev.target.closest("button[data-cmd]"):null;
+  if(!b)return;
+  var text=b.getAttribute("data-cmd");
+  try{navigator.clipboard.writeText(text);b.textContent="copied";}catch(e){b.textContent=text;}
+});
+render();
+</script>
+</body></html>

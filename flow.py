@@ -134,11 +134,22 @@ def entry_endpoint(repo, cand, index=None):
     return None, index
 
 
-def build_flow(repo, query, pick=None, keep_all=False, crossrepo_paths=None, follow=None):
-    cand = resolve(candidates(repo), query, pick=pick)
-    ep, index = entry_endpoint(repo, cand)
+def build_flow(repo, query=None, pick=None, keep_all=False, crossrepo_paths=None, follow=None,
+               cand=None, method=None, index=None, indexes=None):
+    """One entrypoint's flow. `cand` skips query resolution, `method` keeps one HTTP method of a class view,
+    `index`/`indexes` share parsed repos across calls (a journey traces many entries of the same repos)."""
+    if cand is None:
+        cand = resolve(candidates(repo), query, pick=pick)
+    ep, index = entry_endpoint(repo, cand, index=index)
     if ep is None:
         raise LookupError(f"entry not re-derivable: {cand.get('route')} -> {cand.get('handler')}")
+    if method:
+        walk = getattr(ep, "lc_walk", None) or {}
+        nodes = [n for n in walk.get("method_nodes") or [] if getattr(n, "name", "") == method]
+        if not nodes:
+            raise LookupError(f"{cand.get('handler')} has no `{method}` method")
+        ep.lc_walk = {**walk, "method_nodes": nodes}
+        ep.methods = [method.upper()]
     tr = trace(ep, index, keep_all=keep_all)
     tables = {}
     for step in _walk_steps(tr["steps"]):
@@ -153,7 +164,7 @@ def build_flow(repo, query, pick=None, keep_all=False, crossrepo_paths=None, fol
         "repo": os.path.abspath(repo),
         "repo_meta": crossrepo._repo_meta(repo),
         "entry": {"route": ep.route, "handler": ep.handler, "kind": ep.kind,
-                  "loc": f"{ep.file}:{ep.line}"},
+                  "loc": f"{ep.file}:{ep.line}", "methods": list(ep.methods or [])},
         "steps": tr["steps"],
         "tables": tables,
         "stats": tr["stats"],
@@ -179,7 +190,8 @@ def build_flow(repo, query, pick=None, keep_all=False, crossrepo_paths=None, fol
                         flow["repo_paths"][name] = os.path.abspath(spec)
                 per = {name: crossrepo._provenance(path, True, True, worktree=("@" in name))
                        for name, path in paths.items()}
-                indexes = {origin: index}
+                indexes = {} if indexes is None else indexes
+                indexes.setdefault(origin, index)
                 flow["hops"] = _build_hops(origin, flow, index, per, paths, indexes, follow or [])
                 flow["repos"] = {name: crossrepo._repo_meta(path) for name, path in paths.items()}
             finally:
@@ -209,6 +221,103 @@ def _prefix(steps, hop_id):
                 step["ref"] = f"{hop_id}.{step['ref']}"
             walk(step.get("children") or [])
     walk(out)
+    return out
+
+
+# ---- journeys: several entrypoints a user goes through, in order ---------------------------
+
+_VERBS = {"get", "post", "put", "patch", "delete", "head", "options"}
+
+
+def resolve_entry(cands, spec):
+    """`Handler[.method][@file-fragment]` or `command:x` / `task:x` → (candidate, method or None).
+    LookupError when nothing or more than one handler definition matches."""
+    spec = str(spec).strip()
+    method, name, frag = None, spec, ""
+    if spec.startswith(("command:", "task:", "signal:")):
+        hits = [c for c in cands if c.get("route") == spec]
+    else:
+        name, _, frag = spec.partition("@")
+        head, dot, tail = name.rpartition(".")
+        if dot and tail in _VERBS:
+            name, method = head, tail
+        hits = [c for c in cands if c.get("handler") == name and (not frag or frag in c.get("loc", ""))]
+    uniq = list({c.get("loc"): c for c in hits}.values())     # one view mounted on two urls is one definition
+    if len(uniq) == 1:
+        return uniq[0], method
+    if not uniq:
+        stem = name.lower()[:6]
+        near = sorted({c.get("handler", "") for c in cands if stem and stem in c.get("handler", "").lower()})[:5]
+        raise LookupError(f"no entrypoint for {spec!r}" + (f" — close: {', '.join(near)}" if near else ""))
+    raise LookupError(f"{spec!r} matches {len(uniq)} definitions: "
+                      + "; ".join(f"{c.get('handler')} @{c.get('loc')}" for c in uniq) + " — add @<file> to pick one")
+
+
+def load_journey(path):
+    """A journey file (.yaml/.yml via PyYAML, or .json): `name`, `title`, `source`, `crossrepo`,
+    `steps: [{name, entries: [...]}]`. ValueError naming the file when the shape is wrong."""
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    if path.endswith(".json"):
+        data = json.loads(text)
+    else:
+        try:
+            import yaml
+        except ImportError:
+            raise ValueError(f"{path}: reading YAML needs PyYAML (pip install pyyaml) — or use a .json journey")
+        data = yaml.safe_load(text)
+    if not isinstance(data, dict) or not isinstance(data.get("steps"), list) or not data["steps"]:
+        raise ValueError(f"{path}: a journey needs a non-empty `steps` list")
+    for i, st in enumerate(data["steps"], 1):
+        if not isinstance(st, dict) or not st.get("entries"):
+            raise ValueError(f"{path}: step {i} needs `entries`")
+    data.setdefault("name", os.path.splitext(os.path.basename(path))[0])
+    data.setdefault("title", data["name"])
+    return data
+
+
+def build_journey(repo, spec, crossrepo_paths=None, follow=None, keep_all=False):
+    """Trace every entry of a journey (one shared index) and join them into ONE flow whose top-level
+    nodes are the journey steps (`boundary: "step"`), so story/timeline/HTML/narrative work unchanged."""
+    cands = candidates(repo)
+    index, indexes = RepoIndex(repo), {}
+    top, hops, tables, repo_paths = [], [], {}, {}
+    stats = {"calls_followed": 0, "truncated": False}
+    base = None
+    for k, st in enumerate(spec["steps"], 1):
+        node = {"id": f"j{k}", "kind": "call", "text": f"Step {k} · {st.get('name', '')}".strip(),
+                "guards": [], "loc": "", "boundary": "step", "children": []}
+        for m, entry in enumerate(st["entries"], 1):
+            cand, method = resolve_entry(cands, entry)
+            f = build_flow(repo, cand=cand, method=method, keep_all=keep_all, crossrepo_paths=crossrepo_paths,
+                           follow=follow, index=index, indexes=indexes)
+            base = base or f
+            pre, e = f"j{k}e{m}", f["entry"]
+            enode = {"id": pre, "kind": "call", "guards": [], "loc": e["loc"],
+                     "text": f"{'/'.join(e.get('methods') or [])} {e['route']} → {e['handler']}".strip(),
+                     "children": _prefix(f["steps"], pre)}
+            if e.get("doc"):
+                enode["doc"] = e["doc"]
+            node["children"].append(enode)
+            for h in f.get("hops") or []:
+                h = dict(h, id=f"{pre}.{h['id']}", steps=_prefix(h.get("steps") or [], pre))
+                if h.get("from_step"):
+                    h["from_step"] = f"{pre}.{h['from_step']}"
+                hops.append(h)
+            tables.update(f.get("tables") or {})
+            repo_paths.update(f.get("repo_paths") or {})
+            stats["calls_followed"] += (f.get("stats") or {}).get("calls_followed", 0)
+            stats["truncated"] = stats["truncated"] or bool((f.get("stats") or {}).get("truncated"))
+        top.append(node)
+    out = {"schema": 1, "generated_by": "lenscheck flow", "repo": base["repo"], "repo_meta": base["repo_meta"],
+           "entry": {"kind": "journey", "route": spec["name"], "handler": spec.get("title") or spec["name"], "loc": ""},
+           "journey": {"name": spec["name"], "title": spec.get("title") or spec["name"],
+                       "source": spec.get("source", ""),
+                       "steps": [{"name": s.get("name", ""), "entries": list(s["entries"])} for s in spec["steps"]]},
+           "steps": top, "tables": tables, "stats": stats, "hops": hops,
+           "origin": base["origin"], "repo_paths": repo_paths}
+    if base.get("repos"):
+        out["repos"] = base["repos"]
     return out
 
 
@@ -536,6 +645,13 @@ def _phases_of(steps, repo, head, owner=None):
 
     def walk(items, phase):
         for step in items:
+            if step.get("boundary") == "step" and not step.get("ref"):      # a journey step: its own phase
+                sub = _new_phase({"kind": "step", "via": "next step", "title": step.get("text", ""),
+                                  "root": step.get("id")}, repo)
+                _record_fact(sub, step, owner)
+                phases.append(sub)
+                walk(step.get("children") or [], sub)
+                continue
             if step.get("boundary") and not step.get("ref"):
                 _record_fact(phase, step, owner)     # the dispatch line stays where it runs; its body moves on
                 sub = _new_phase({"kind": "celery", "via": "celery",
@@ -591,6 +707,9 @@ def story(flow):
             phases.extend(sub)
     for anchor, sub in after.get(id(None), []):
         phases.extend(sub)
+    if e.get("kind") == "journey":                  # the synthetic journey root owns no step — drop its phase
+        used = {id(p) for p in owner.values()}
+        phases = [p for p in phases if p["kind"] != "entry" or id(p) in used]
 
     origin_index = {s.get("id"): i for i, s in enumerate(_walk_steps(flow.get("steps") or []))}
     table_hops = [h for h in hops if h.get("via") == "table"]
@@ -865,6 +984,153 @@ def write_html(flow, path, screens=(), explain=False, model=None, refresh=False)
     return meta
 
 
+# ---- catalog: every entrypoint, grouped by app, with what it does ---------------------------
+
+def slug(text):
+    """File-name-safe name for a flow page (`CampaignTargetingView <int:pk>/targeting/` → `campaigntargetingview-int-pk-targeting`)."""
+    return re.sub(r"[^a-z0-9]+", "-", str(text).lower()).strip("-")[:80] or "flow"
+
+
+def flow_slug(flow):
+    e = flow.get("entry") or {}
+    if e.get("kind") == "journey":
+        return slug(e.get("route"))
+    return slug(f"{e.get('handler', '')} {e.get('route', '')}")
+
+
+def _schema_summary(fn):
+    """`@extend_schema(summary="…")` on a view method, else ""."""
+    for d in getattr(fn, "decorator_list", []):
+        if isinstance(d, ast.Call) and ast.unparse(d.func).split(".")[-1] == "extend_schema":
+            for kw in d.keywords:
+                if kw.arg == "summary" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                    return kw.value.value.strip()
+    return ""
+
+
+def _summarizer(repo):
+    """summary(rel_file, handler) — per-method swagger summary or docstring for a view, `help` for a command."""
+    trees = {}
+
+    def tree(rel):
+        if rel not in trees:
+            try:
+                with open(os.path.join(repo, rel), encoding="utf-8") as f:
+                    trees[rel] = ast.parse(f.read())
+            except (OSError, SyntaxError, ValueError):
+                trees[rel] = None
+        return trees[rel]
+
+    def summary(rel, handler):
+        t = tree(rel)
+        for node in ast.walk(t) if t is not None else []:
+            if isinstance(node, ast.ClassDef) and node.name == handler:
+                parts = []
+                for m in node.body:
+                    if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)) and m.name in _VERBS:
+                        s = _schema_summary(m) or first_doc_line(m)
+                        if s:
+                            parts.append(f"{m.name.upper()}: {s}")
+                    elif isinstance(m, ast.Assign) and any(getattr(x, "id", "") == "help" for x in m.targets) \
+                            and isinstance(m.value, ast.Constant) and isinstance(m.value.value, str):
+                        parts.append(m.value.value.strip().splitlines()[0][:160])    # a management command's help
+                return " · ".join(parts) or first_doc_line(node)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == handler:
+                return _schema_summary(node) or first_doc_line(node)
+        return ""
+    return summary
+
+
+def list_journeys(directory):
+    out = []
+    for fn in sorted(os.listdir(directory)) if directory and os.path.isdir(directory) else []:
+        if not fn.endswith((".yaml", ".yml", ".json")):
+            continue
+        path = os.path.join(directory, fn)
+        try:
+            j = load_journey(path)
+            out.append({"name": j["name"], "title": j["title"], "steps": len(j["steps"]),
+                        "source": j.get("source", ""), "file": path, "slug": slug(j["name"])})
+        except (OSError, ValueError) as e:
+            out.append({"name": fn, "title": "", "steps": 0, "file": path, "error": str(e)})
+    return out
+
+
+def catalog(repo, journeys_dir=None):
+    """Every entrypoint of the repo (from the cached fact index), grouped by app, with a one-line summary
+    and the tables it writes / reads — the "what flows exist here" index."""
+    import factindex
+    import map_repo
+    from types import SimpleNamespace
+    prov = factindex.load(repo, with_calls=True)
+    writes, reads = {}, {}
+    for table, rec in (prov.get("tables") or {}).items():
+        if table == "<unresolved>":
+            continue
+        for e in rec.get("written_by") or []:
+            writes.setdefault(e.get("loc"), set()).add(table)
+        for e in rec.get("read_by") or []:
+            reads.setdefault(e.get("loc"), set()).add(table)
+    apps, summary, groups = map_repo.resolve_apps(repo), _summarizer(repo), {}
+    for e in prov.get("endpoints") or []:
+        rel = str(e.get("loc", "")).rpartition(":")[0]
+        app = map_repo.app_of(SimpleNamespace(file=rel), apps)
+        groups.setdefault(app, []).append({
+            "kind": e.get("kind", "http"), "route": e.get("route", ""),
+            "full_route": (e.get("full_routes") or [""])[0], "handler": e.get("handler", ""),
+            "methods": list(e.get("methods") or []), "loc": e.get("loc", ""),
+            "summary": summary(rel, e.get("handler", "")),
+            "writes": sorted(writes.get(e.get("loc"), ())), "reads": sorted(reads.get(e.get("loc"), ())),
+            "slug": slug(f"{e.get('handler', '')} {e.get('route', '')}")})
+    apps_out = [{"app": a, "entries": sorted(rows, key=lambda r: (r["kind"], r["full_route"] or r["route"]))}
+                for a, rows in sorted(groups.items())]
+    return {"repo": os.path.abspath(repo), "name": os.path.basename(os.path.abspath(repo)),
+            "total": sum(len(a["entries"]) for a in apps_out), "apps": apps_out,
+            "journeys": list_journeys(journeys_dir)}
+
+
+def render_catalog(cat):
+    lines = [f"CATALOG {cat['name']} — {cat['total']} entrypoints in {len(cat['apps'])} apps"]
+    if cat["journeys"]:
+        lines.append("JOURNEYS:")
+        for j in cat["journeys"]:
+            lines.append(f"  {j['name']}: {j.get('error') or j['title']} ({j['steps']} steps)")
+    for a in cat["apps"]:
+        lines.append(f"\n== {a['app']} ({len(a['entries'])})")
+        for r in a["entries"]:
+            line = f"  {r['kind']:7} {r['full_route'] or r['route']}  [{'/'.join(r['methods'])}]  {r['handler']}"
+            if r["summary"]:
+                line += f" — {r['summary']}"
+            if r["writes"]:
+                line += f"  (writes: {', '.join(r['writes'])})"
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def write_catalog_html(cat, path):
+    out_dir = os.path.dirname(os.path.abspath(path))
+    for a in cat["apps"]:                           # link the flow pages already generated next to the index
+        for r in a["entries"]:
+            r["page"] = f"{r['slug']}.html" if os.path.exists(os.path.join(out_dir, f"{r['slug']}.html")) else ""
+    for j in cat["journeys"]:
+        j["page"] = f"{j.get('slug')}.html" if j.get("slug") and \
+            os.path.exists(os.path.join(out_dir, f"{j['slug']}.html")) else ""
+    tpl = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web", "catalog.template.html")
+    with open(tpl, encoding="utf-8") as f:
+        html = f.read().replace("__CATALOG_DATA__", json.dumps(cat, ensure_ascii=False).replace("</", "<\\/"))
+    import diff_pr
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(diff_pr.inline_glossary(html))
+
+
+def _html_target(arg, flow):
+    """`--html DIR/` (an existing dir or a trailing slash) → DIR/<slug>.html; else the file as given."""
+    if arg.endswith(os.sep) or os.path.isdir(arg):
+        os.makedirs(arg, exist_ok=True)
+        return os.path.join(arg, flow_slug(flow) + ".html")
+    return arg
+
+
 def main():
     p = argparse.ArgumentParser(prog="lenscheck flow",
                                 description="Ordered steps one entrypoint executes.")
@@ -885,6 +1151,10 @@ def main():
                    help="have Claude (the `claude` CLI) write the overview; needs --html")
     p.add_argument("--explain-model", metavar="MODEL", help="model for --explain (default claude-opus-5-5)")
     p.add_argument("--refresh-explain", action="store_true", help="ignore the cached explanation")
+    p.add_argument("--journey", metavar="FILE", help="trace a journey (several entrypoints in order) from a YAML/JSON file")
+    p.add_argument("--catalog", action="store_true", help="every entrypoint grouped by app, with summaries and writes")
+    p.add_argument("--journeys", metavar="DIR", help="with --catalog: list the saved journeys in DIR")
+    p.add_argument("--json", metavar="FILE", help="with --catalog: write the catalog as JSON")
     args = p.parse_args()
     if args.explain and not args.html:
         p.error("--explain needs --html FILE")
@@ -893,13 +1163,37 @@ def main():
         for c in candidates(args.repo):
             print(f"{c.get('kind', ''):8} {c.get('route', ''):30} {c.get('handler', ''):20} {c.get('loc', '')}")
         return 0
-    if not args.query:
+    if args.catalog:
+        cat = catalog(args.repo, args.journeys)
+        print(render_catalog(cat))
+        if args.json:
+            with open(args.json, "w", encoding="utf-8") as f:
+                json.dump(cat, f, indent=2, ensure_ascii=False)
+        if args.html:
+            path = os.path.join(args.html, "index.html") if (args.html.endswith(os.sep) or os.path.isdir(args.html)) \
+                else args.html
+            os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+            write_catalog_html(cat, path)
+            print(f"wrote {path}", file=sys.stderr)
+        return 0
+    if not args.query and not args.journey:
         p.print_usage(sys.stderr)
         return 2
 
     try:
-        flow = build_flow(args.repo, args.query, pick=args.pick, keep_all=args.all,
-                          crossrepo_paths=args.crossrepo, follow=args.follow)
+        if args.journey:
+            try:
+                spec = load_journey(args.journey)
+            except (OSError, ValueError) as e:
+                print(str(e), file=sys.stderr)
+                return 2
+            xrepo = args.crossrepo or [p2 if os.path.isabs(os.path.expanduser(p2)) else
+                                       os.path.normpath(os.path.join(args.repo, p2))
+                                       for p2 in (spec.get("crossrepo") or [])] or None
+            flow = build_journey(args.repo, spec, crossrepo_paths=xrepo, follow=args.follow, keep_all=args.all)
+        else:
+            flow = build_flow(args.repo, args.query, pick=args.pick, keep_all=args.all,
+                              crossrepo_paths=args.crossrepo, follow=args.follow)
     except Ambiguous as e:
         if e.ranked:
             for i, c in enumerate(e.ranked, 1):
@@ -909,6 +1203,8 @@ def main():
             print(f"no entrypoint matches {args.query!r}", file=sys.stderr)
         return 2
     except LookupError as e:
+        if type(e) is not LookupError:      # IndexError / KeyError are bugs, not "entry not found" — show the traceback
+            raise
         print(str(e), file=sys.stderr)
         return 1
 
@@ -918,6 +1214,7 @@ def main():
             json.dump(flow, f, indent=2, ensure_ascii=False)
             f.write("\n")
     if args.html:
+        args.html = _html_target(args.html, flow)
         meta = write_html(flow, args.html, args.screen or [], explain=args.explain,
                           model=args.explain_model, refresh=args.refresh_explain)
         if meta.get("source", "facts") != "facts":

@@ -12,7 +12,7 @@ import map_repo
 import serve
 
 WEB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
-PAGES = ["app.html", "map.html", "crossrepo.html", "viewer.template.html", "flow.template.html"]
+PAGES = ["app.html", "map.html", "crossrepo.html", "viewer.template.html", "flow.template.html", "catalog.template.html"]
 # key families used by the pages — a quoted string with one of these prefixes must be a glossary key
 FAMILIES = ("sev-", "ch-", "ent-", "op-", "tag-", "post-", "map-", "x-", "inv-", "node-", "nav-", "st-",
             "egress-", "tabs-", "mode-", "ref-", "fl-")
