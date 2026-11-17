@@ -143,3 +143,31 @@ def test_html_dir_target_names_the_page_by_slug(tmp_path):
     out_dir = tmp_path / "atlas"
     assert flow._html_target(str(out_dir) + "/", f) == str(out_dir / "campaign-setup.html")
     assert flow._html_target(str(tmp_path / "x.html"), f) == str(tmp_path / "x.html")
+
+
+def test_journey_keeps_one_table_hop_per_table_and_takes_follow_from_the_file(tmp_path, monkeypatch):
+    a, b = tmp_path / "svcA", tmp_path / "svcB"
+    _write(a, "app/apps.py", APPS)
+    _write(a, "app/models.py", MODELS)
+    _write(a, "app/views.py", "from .models import Campaign\n"
+           "def make(request):\n    Campaign.objects.create(name='x')\n"
+           "def rename(request):\n    Campaign.objects.filter(id=1).update(name='y')\n")
+    _write(a, "app/urls.py", "from django.urls import path\nfrom . import views\n"
+           "urlpatterns = [path('make/', views.make), path('rename/', views.rename)]\n")
+    _write(b, "app/apps.py", APPS)
+    _write(b, "app/models.py", MODELS)
+    for cmd in ("reader_one", "reader_two"):
+        _write(b, f"app/management/commands/{cmd}.py",
+               "from django.core.management.base import BaseCommand\nfrom app.models import Campaign\n"
+               "class Command(BaseCommand):\n    def handle(self, *a, **k):\n        Campaign.objects.all()\n")
+    spec = {"name": "j", "title": "J", "steps": [{"name": "make", "entries": ["make"]},
+                                                 {"name": "rename", "entries": ["rename"]}]}
+    f = flow.build_journey(str(a), spec, crossrepo_paths=[str(b)])
+    assert [h["table"] for h in f["hops"] if h["via"] == "table"] == ["campaigns"]
+    jf = tmp_path / "j.json"
+    jf.write_text(json.dumps(dict(spec, follow=["svcB:command:reader_two"])))
+    out = tmp_path / "out.json"
+    monkeypatch.setattr("sys.argv", ["flow", str(a), "--journey", str(jf), "--crossrepo", str(b), "--out", str(out)])
+    assert flow.main() == 0
+    hop = json.loads(out.read_text())["hops"][0]
+    assert hop["match"] == "forced" and hop["entry"]["route"] == "command:reader_two"

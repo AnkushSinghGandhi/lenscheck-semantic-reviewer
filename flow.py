@@ -281,7 +281,7 @@ def build_journey(repo, spec, crossrepo_paths=None, follow=None, keep_all=False)
     nodes are the journey steps (`boundary: "step"`), so story/timeline/HTML/narrative work unchanged."""
     cands = candidates(repo)
     index, indexes = RepoIndex(repo), {}
-    top, hops, tables, repo_paths = [], [], {}, {}
+    top, hops, tables, repo_paths, table_hops = [], [], {}, {}, set()
     stats = {"calls_followed": 0, "truncated": False}
     base = None
     for k, st in enumerate(spec["steps"], 1):
@@ -300,6 +300,11 @@ def build_journey(repo, spec, crossrepo_paths=None, follow=None, keep_all=False)
                 enode["doc"] = e["doc"]
             node["children"].append(enode)
             for h in f.get("hops") or []:
+                if h.get("via") == "table":                 # several entries write one table: one hop is enough
+                    key = (h.get("table"), h.get("repo"))
+                    if key in table_hops:
+                        continue
+                    table_hops.add(key)
                 h = dict(h, id=f"{pre}.{h['id']}", steps=_prefix(h.get("steps") or [], pre))
                 if h.get("from_step"):
                     h["from_step"] = f"{pre}.{h['from_step']}"
@@ -1190,7 +1195,8 @@ def main():
             xrepo = args.crossrepo or [p2 if os.path.isabs(os.path.expanduser(p2)) else
                                        os.path.normpath(os.path.join(args.repo, p2))
                                        for p2 in (spec.get("crossrepo") or [])] or None
-            flow = build_journey(args.repo, spec, crossrepo_paths=xrepo, follow=args.follow, keep_all=args.all)
+            flow = build_journey(args.repo, spec, crossrepo_paths=xrepo, follow=args.follow or spec.get("follow"),
+                                 keep_all=args.all)
         else:
             flow = build_flow(args.repo, args.query, pick=args.pick, keep_all=args.all,
                               crossrepo_paths=args.crossrepo, follow=args.follow)
