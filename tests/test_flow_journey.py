@@ -190,3 +190,20 @@ def test_one_reader_of_two_written_tables_is_expanded_once(tmp_path):
     assert len(tables) == 1 and tables[0]["table"] == "campaigns" and tables[0]["also_tables"] == ["targeting"]
     phases, _ = flow.story(f)
     assert [p["via"] for p in phases if p["kind"] == "table"] == ["reads campaigns + 1 more"]
+
+
+def test_a_core_table_with_too_many_readers_gets_no_hop_unless_followed(tmp_path, monkeypatch):
+    a, b = tmp_path / "svcA", tmp_path / "svcB"
+    for root in (a, b):
+        _write(root, "app/apps.py", APPS)
+        _write(root, "app/models.py", MODELS)
+    _write(a, "app/views.py", "from .models import Campaign\ndef make(request):\n    Campaign.objects.create(name='x')\n")
+    _write(a, "app/urls.py", "from django.urls import path\nfrom . import views\nurlpatterns = [path('make/', views.make)]\n")
+    for cmd in ("r1", "r2", "r3"):
+        _write(b, f"app/management/commands/{cmd}.py",
+               "from django.core.management.base import BaseCommand\nfrom app.models import Campaign\n"
+               "class Command(BaseCommand):\n    def handle(self, *a, **k):\n        Campaign.objects.all()\n")
+    monkeypatch.setattr(flow, "MAX_TABLE_READERS", 2)
+    assert flow.build_flow(str(a), "make/", crossrepo_paths=[str(b)])["hops"] == []
+    hops = flow.build_flow(str(a), "make/", crossrepo_paths=[str(b)], follow=["svcB:command:r2"])["hops"]
+    assert len(hops) == 1 and hops[0]["entry"]["route"] == "command:r2"

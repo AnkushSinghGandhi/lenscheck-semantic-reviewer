@@ -227,6 +227,7 @@ def _prefix(steps, hop_id):
 # ---- journeys: several entrypoints a user goes through, in order ---------------------------
 
 _VERBS = {"get", "post", "put", "patch", "delete", "head", "options"}
+MAX_TABLE_READERS = 40       # more readers than this in the other repo = a core table, not a hand-off
 
 
 def resolve_entry(cands, spec):
@@ -461,6 +462,12 @@ def _build_hops(origin, flow, index, per, paths, indexes, follow):
                            for e in read_by}
             cands = [e for e in per[repo_name].get("endpoints", [])
                      if (e.get("route", ""), e.get("handler", ""), e.get("loc", "")) in reader_keys]
+            # a core table everyone reads (users, campaigns…) is not where this flow hands off: skip it
+            # unless --follow names one of its readers.
+            # shortcut: fixed threshold, make it a flag if a real hand-off table ever has this many readers
+            if len(cands) > MAX_TABLE_READERS and not any(
+                    f"{repo_name}:{c.get('route', '')}" in follow for c in cands):
+                continue
             idx_r = idx_of(repo_name)
             traced = []
             for cand in cands:
