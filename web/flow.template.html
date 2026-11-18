@@ -156,6 +156,20 @@ li.step.flash{background:rgba(124,116,240,.30)}
 .ov-chain{display:flex;flex-wrap:wrap;gap:6px;align-items:center;justify-content:center;margin:14px 0 6px;
   padding:9px 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel);font-size:13px;font-weight:600}
 .ov-chain i{font-style:normal;color:var(--mut)}
+/* ---- served mode (lenscheck serve /flow): a form instead of baked-in data ---- */
+.srv-only{display:none!important}
+body.served a.srv-only,body.served button.srv-only{display:inline-flex!important}
+body.served form.srv-only{display:block!important}
+body.nodata #details{display:none}
+.ff{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:10px 14px;margin:14px 0}
+.ffrow{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin:6px 0}
+.ffrow[hidden]{display:none}
+.ffrow label{display:flex;gap:6px;align-items:center;font-size:13px;color:var(--mut)}
+.ffrow label.grow{flex:1 1 320px}
+.ffrow input[type=text],.ffrow input:not([type]),.ffrow select{flex:1;min-width:0;padding:6px 9px;border-radius:8px;
+  border:1px solid var(--line);background:var(--card);color:var(--fg);font-size:13px}
+#ff-picks button{margin:4px 6px 0 0;font-size:12px;padding:3px 9px;border-radius:7px;border:1px solid var(--line);
+  background:var(--card);color:var(--fg);cursor:pointer;text-align:left}
 details.details{margin-top:22px;border-top:1px solid var(--line);padding-top:6px}
 details.details>summary{cursor:pointer;font-size:15px;font-weight:700;padding:8px 0}
 </style></head>
@@ -163,10 +177,37 @@ details.details>summary{cursor:pointer;font-size:15px;font-weight:700;padding:8p
 <nav class="top">
   <div class="brand"><span class="g">lenscheck</span> <small>flow</small></div>
   <div class="spacer"></div>
+  <a class="navbtn srv-only" href="./" data-g="nav-review">☑ Review</a>
+  <a class="navbtn srv-only" href="map" data-g="nav-map">🗺 Repo Map</a>
+  <a class="navbtn srv-only" href="crossrepo" data-g="nav-crossrepo">🔀 Cross-repo</a>
+  <button class="navbtn on srv-only" data-g="nav-flow">🧭 Flow</button>
   <button class="navbtn" onclick="lcGlossaryOpen()" data-g="nav-glossary">📖 Glossary</button>
   <button class="navbtn" id="themeBtn" onclick="toggleTheme()" data-g="nav-theme">☀</button>
 </nav>
 <div class="wrap">
+  <form id="flowform" class="ff srv-only" data-g="nav-flow" onsubmit="return false">
+    <div class="ffrow">
+      <label>Repo <input id="ff-repo" placeholder="/path/to/repo" required></label>
+      <label class="ffmode"><input type="radio" name="ffmode" value="entry" checked> Entrypoint</label>
+      <label class="ffmode" data-g="fl-journey"><input type="radio" name="ffmode" value="journey"> Journey</label>
+    </div>
+    <div class="ffrow" id="ff-entry-row">
+      <label class="grow">Entrypoint <input id="ff-q" list="ff-entries" placeholder="handler, route, command:x, or words like “lead push upload”"></label>
+      <datalist id="ff-entries"></datalist>
+    </div>
+    <div class="ffrow" id="ff-journey-row" hidden>
+      <label class="grow">Journey <select id="ff-journey"></select></label>
+      <label class="grow">from <input id="ff-jdir" placeholder="journeys folder (default: <repo>/.flows)"></label>
+    </div>
+    <div class="ffrow">
+      <label class="grow">Cross-repo <input id="ff-xrepo" placeholder="optional: /path/to/other-repo, /path/to/third"></label>
+      <label class="ffmode" data-g="fl-source"><input type="checkbox" id="ff-explain"> Explain with Claude</label>
+      <label class="ffmode"><input type="checkbox" id="ff-refresh"> fresh</label>
+      <button class="navbtn" id="ff-go" type="submit">Show flow</button>
+    </div>
+    <div id="ff-status" class="meta"></div>
+    <div id="ff-picks"></div>
+  </form>
   <h1 id="title"></h1>
   <div class="meta" id="subtitle"></div>
   <div class="stats" id="stats"></div>
@@ -236,8 +277,11 @@ var META={};
 function indexSteps(steps,repo){(steps||[]).forEach(function(s){
   if(s.id)META[s.id]={repo:repo,loc:s.loc||""};
   indexSteps(s.children||[],repo);});}
-indexSteps((D.flow.steps)||[],D.flow.origin||"");
-(D.flow.hops||[]).forEach(function(h){indexSteps(h.steps||[],h.repo||"");});
+function indexAll(){                    // run on every render: in served mode the data arrives later
+  META={};
+  indexSteps((D.flow.steps)||[],D.flow.origin||"");
+  (D.flow.hops||[]).forEach(function(h){indexSteps(h.steps||[],h.repo||"");});
+}
 
 function headInfo(){
   var e=D.flow.entry||{}, meta=D.flow.repo_meta||{};
@@ -557,6 +601,91 @@ document.getElementById("overview").addEventListener("click",function(ev){
 });
 
 var SHOW_EXITS=document.getElementById("showexits").checked;
-headInfo();overviewView();storyView();timelineView();stepsView();
+function renderAll(){
+  document.body.classList.remove("nodata");
+  indexAll();headInfo();overviewView();storyView();timelineView();stepsView();
+}
+
+// ---- served mode: `lenscheck serve` sends this page with FLOW_DATA = null and a form fetches /api/flow ----
+var SERVED=window.FLOW_DATA===null;
+function $id(id){return document.getElementById(id);}
+function api(path,params){
+  var u=new URL(path,location.href), own=new URLSearchParams(location.search);
+  Object.keys(params||{}).forEach(function(k){if(params[k])u.searchParams.set(k,params[k]);});
+  if(own.get("token"))u.searchParams.set("token",own.get("token"));
+  return fetch(u.toString()).then(function(r){return r.json().then(function(j){return {status:r.status,body:j};});});
+}
+function ffMode(){var r=document.querySelector('input[name=ffmode]:checked');return r?r.value:"entry";}
+function ffSetMode(m){
+  [].forEach.call(document.querySelectorAll('input[name=ffmode]'),function(r){r.checked=(r.value===m);});
+  $id("ff-entry-row").hidden=(m!=="entry");$id("ff-journey-row").hidden=(m!=="journey");
+}
+function ffStatus(msg,bad){$id("ff-status").innerHTML=bad?'<span style="color:var(--crit)">'+esc(msg)+'</span>':esc(msg);}
+function ffLoad(){
+  var repo=$id("ff-repo").value.trim();
+  if(!repo)return Promise.resolve();
+  return api("api/flow/candidates",{repo:repo,journeys:$id("ff-jdir").value.trim()}).then(function(res){
+    if(res.status!==200){ffStatus(res.body.error||"could not list entrypoints",true);return;}
+    $id("ff-entries").innerHTML=(res.body.entries||[]).map(function(e){
+      return '<option value="'+esc(e.kind==="http"?e.handler:e.route)+'">'+esc(e.kind+" "+(e.route||""))+'</option>';}).join("");
+    var js=(res.body.journeys||[]).filter(function(j){return !j.error;});
+    $id("ff-journey").innerHTML=js.length?js.map(function(j){
+      return '<option value="'+esc(j.file)+'">'+esc((j.title||j.name)+" · "+j.steps+" steps")+'</option>';}).join("")
+      :'<option value="">no journeys found — set the folder</option>';
+  });
+}
+function ffRun(extra){
+  var p={repo:$id("ff-repo").value.trim(),crossrepo:$id("ff-xrepo").value.trim(),
+         explain:$id("ff-explain").checked?"1":"",refresh:$id("ff-refresh").checked?"1":""};
+  if(ffMode()==="journey"){p.journey=$id("ff-journey").value;if(!p.journey){ffStatus("pick a journey",true);return;}}
+  else{p.q=$id("ff-q").value.trim();if(!p.q){ffStatus("type an entrypoint",true);return;}}
+  Object.keys(extra||{}).forEach(function(k){p[k]=extra[k];});
+  $id("ff-picks").innerHTML="";$id("ff-go").disabled=true;
+  ffStatus(p.explain?"Tracing, then Claude explains — a fresh explanation takes a few minutes…":"Tracing…");
+  var t0=Date.now();
+  api("api/flow",p).then(function(res){
+    $id("ff-go").disabled=false;
+    if(res.status===200){
+      D=res.body;renderAll();
+      var m=D.narrative_meta||{};
+      ffStatus("Done in "+Math.round((Date.now()-t0)/1000)+"s"
+        +(m.source&&m.source!=="facts"?" · explained by "+m.source.replace("claude:","")+(m.cached?" (cached)":""):""));
+      var keep={},own=new URLSearchParams(location.search);
+      ["repo","q","journey","crossrepo","pick","explain"].forEach(function(k){if(p[k])keep[k]=p[k];});
+      if($id("ff-jdir").value.trim())keep.journeys=$id("ff-jdir").value.trim();
+      if(own.get("token"))keep.token=own.get("token");
+      history.replaceState(null,"","?"+new URLSearchParams(keep).toString());   // a reload / shared link reruns it
+      return;
+    }
+    if(res.status===409){
+      ffStatus(res.body.error||"several match — pick one");
+      $id("ff-picks").innerHTML=(res.body.ranked||[]).map(function(c,i){
+        return '<button type="button" data-pick="'+(i+1)+'">'+esc((i+1)+". "+c.kind+"  "+(c.route||"")+"  → "+c.handler)+'</button>';}).join("");
+      return;
+    }
+    ffStatus(res.body.error||("error "+res.status),true);
+  }).catch(function(e){$id("ff-go").disabled=false;ffStatus(String(e),true);});
+}
+function initForm(){
+  var q=new URLSearchParams(location.search);
+  $id("ff-repo").value=q.get("repo")||"";$id("ff-q").value=q.get("q")||"";
+  $id("ff-xrepo").value=q.get("crossrepo")||"";$id("ff-jdir").value=q.get("journeys")||"";
+  $id("ff-explain").checked=q.get("explain")==="1";
+  ffSetMode(q.get("journey")?"journey":"entry");
+  [].forEach.call(document.querySelectorAll('input[name=ffmode]'),function(r){
+    r.addEventListener("change",function(){ffSetMode(ffMode());});});
+  $id("ff-repo").addEventListener("change",ffLoad);$id("ff-jdir").addEventListener("change",ffLoad);
+  $id("flowform").addEventListener("submit",function(ev){ev.preventDefault();ffRun();});
+  $id("ff-picks").addEventListener("click",function(ev){
+    var b=ev.target.closest?ev.target.closest("button[data-pick]"):null;if(b)ffRun({pick:b.getAttribute("data-pick")});});
+  var ready=$id("ff-repo").value?Promise.resolve():api("api/config",{}).then(function(res){
+    if(res.status===200&&res.body.repo)$id("ff-repo").value=res.body.repo;});
+  ready.then(ffLoad).then(function(){
+    if(q.get("journey"))$id("ff-journey").value=q.get("journey");
+    if(q.get("q")||q.get("journey"))ffRun(q.get("pick")?{pick:q.get("pick")}:null);
+  });
+}
+if(SERVED){document.body.classList.add("served","nodata");initForm();}
+else{renderAll();}
 </script>
 </body></html>

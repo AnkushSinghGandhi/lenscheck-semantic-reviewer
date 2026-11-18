@@ -84,8 +84,8 @@ def resolve(cands, query, pick=None):
              or c.get("route") == query
              or query in (c.get("full_routes") or [])
              or c.get("route") in ("command:" + query, "task:" + query)]
-    if len(exact) == 1:
-        return exact[0]
+    if len(exact) == 1 or (exact and len({c.get("loc") for c in exact}) == 1):
+        return exact[0]                     # one view mounted on several urls is still one definition
     pool = exact if len(exact) > 1 else cands
     scored, qtokens = _rank(pool, query)
     if not exact and not any(s > 0 for s, _c, _m in scored):
@@ -937,6 +937,23 @@ def collect_sources(flow):
 def write_html(flow, path, screens=(), explain=False, model=None, refresh=False):
     """One self-contained page: the overview infographic (Claude-explained with `explain`, else from facts),
     story lanes, table timeline, step tree + source snippets. Returns the narrative meta."""
+    data = page_data(flow, screens, explain=explain, model=model, refresh=refresh)
+    tpl_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web",
+                            "flow.template.html")
+    with open(tpl_path, encoding="utf-8") as f:
+        template = f.read()
+    import diff_pr
+    html = template.replace("__FLOW_DATA__",
+                            json.dumps(data, ensure_ascii=False).replace("</", "<\\/"))
+    html = diff_pr.inline_glossary(html)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(html)
+    return data["narrative_meta"]
+
+
+def page_data(flow, screens=(), explain=False, model=None, refresh=False):
+    """Everything the flow page renders (phases, timeline, snippets, narrative) — written into a file by
+    `write_html`, returned as JSON by `lenscheck serve`'s /api/flow."""
     import base64
 
     phases, step_phase = story(flow)
@@ -993,19 +1010,8 @@ def write_html(flow, path, screens=(), explain=False, model=None, refresh=False)
     if narrative is None:
         narrative = narrate.fallback(flow, phases, step_phase, timeline)
 
-    data = {"flow": flow, "story": phases, "step_phase": step_phase,
+    return {"flow": flow, "story": phases, "step_phase": step_phase,
             "timeline": timeline, "sources": sources, "narrative": narrative, "narrative_meta": meta}
-    tpl_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web",
-                            "flow.template.html")
-    with open(tpl_path, encoding="utf-8") as f:
-        template = f.read()
-    import diff_pr
-    html = template.replace("__FLOW_DATA__",
-                            json.dumps(data, ensure_ascii=False).replace("</", "<\\/"))
-    html = diff_pr.inline_glossary(html)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(html)
-    return meta
 
 
 # ---- catalog: every entrypoint, grouped by app, with what it does ---------------------------

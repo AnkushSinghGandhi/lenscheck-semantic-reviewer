@@ -129,6 +129,56 @@ def make_handler(cfg):
             target = repo.split("?")[0].split("#")[0] if is_url(repo) else os.path.realpath(repo)
             return any(a and a in target for a in cfg["allowed"])
 
+        def _flow(self, path, g):
+            """/api/flow/candidates → entrypoints + saved journeys of a repo; /api/flow → one flow's page data.
+            Every path that reaches the engine (repo, crossrepo repos, journey file) passes the allowlist."""
+            import flow as flow_mod
+            repo = g("repo") or cfg["repo"]
+            if not repo or is_url(repo) or not os.path.isdir(repo):
+                return self._json(400, {"error": "flow needs a local repo path"})
+            if not self._repo_ok(repo):
+                return self._json(403, {"error": "repo not in allowlist"})
+            if path == "/api/flow/candidates":
+                jdir = g("journeys") or os.path.join(repo, ".flows")
+                if not self._repo_ok(jdir):
+                    return self._json(403, {"error": "journeys folder not in allowlist"})
+                entries = [{k: c.get(k, "") for k in ("kind", "route", "handler", "loc")}
+                           for c in flow_mod.candidates(repo)]
+                return self._json(200, {"repo": repo, "entries": entries, "journeys": flow_mod.list_journeys(jdir)})
+            xrepo = [r.strip() for r in (g("crossrepo") or "").split(",") if r.strip()]
+            journey, query = g("journey"), g("q")
+            spec = None
+            if journey:
+                if not (journey.endswith((".yaml", ".yml", ".json")) and self._repo_ok(journey)):
+                    return self._json(403, {"error": "journey must be a .yaml/.json file inside an allowed path"})
+                try:
+                    spec = flow_mod.load_journey(journey)
+                except (OSError, ValueError) as e:
+                    return self._json(400, {"error": str(e)})
+                if not xrepo:
+                    xrepo = [os.path.normpath(os.path.join(repo, p)) for p in spec.get("crossrepo") or []]
+            elif not query:
+                return self._json(400, {"error": "give q (an entrypoint) or journey (a file)"})
+            for spec_path in xrepo:
+                head, sep, _ = spec_path.rpartition("@")
+                if not self._repo_ok(head if (sep and os.path.isdir(head)) else spec_path):
+                    return self._json(403, {"error": f"crossrepo repo not in allowlist: {spec_path}"})
+            follow = [x.strip() for x in (g("follow") or "").split(",") if x.strip()] or \
+                ((spec or {}).get("follow") or None)
+            try:
+                if spec is not None:
+                    f = flow_mod.build_journey(repo, spec, crossrepo_paths=xrepo or None, follow=follow)
+                else:
+                    pick = int(g("pick")) if (g("pick") or "").isdigit() else None
+                    f = flow_mod.build_flow(repo, query, pick=pick, crossrepo_paths=xrepo or None, follow=follow)
+            except flow_mod.Ambiguous as e:
+                return self._json(409, {"error": "several entrypoints match — pick one", "ranked": e.ranked})
+            except LookupError as e:
+                if type(e) is not LookupError:
+                    raise
+                return self._json(404, {"error": str(e)})
+            return self._json(200, flow_mod.page_data(f, explain=g("explain") == "1", refresh=g("refresh") == "1"))
+
         def do_GET(self):
             u = urlparse(self.path)
             q = parse_qs(u.query)
@@ -148,6 +198,10 @@ def make_handler(cfg):
                 if path in ("/crossrepo", "/crossrepo.html"):
                     return self._send(200, open(os.path.join(HERE, "web", "crossrepo.html"), "rb").read(),
                                       "text/html; charset=utf-8")
+                if path in ("/flow", "/flow.html"):
+                    # the export template in "served" mode: no data baked in, the page fetches /api/flow
+                    with open(os.path.join(HERE, "web", "flow.template.html"), encoding="utf-8") as f:
+                        return self._send(200, f.read().replace("__FLOW_DATA__", "null"), "text/html; charset=utf-8")
                 if path == "/glossary.js":      # the shared hover glossary every page loads
                     return self._send(200, open(os.path.join(HERE, "web", "glossary.js"), "rb").read(),
                                       "application/javascript; charset=utf-8")
@@ -175,7 +229,7 @@ def make_handler(cfg):
                 # (`base=--output=/x` → `git diff --output=/x` writes a file). No real ref, sha, path or
                 # URL starts with "-", so refuse them here, at the trust boundary.
                 for k in ("repo", "repos", "base", "head", "merge", "commit", "ref", "pr", "schema",
-                          "changed", "since"):
+                          "changed", "since", "crossrepo", "journey", "journeys", "follow"):
                     if any(v.strip().startswith("-") for v in (g(k) or "").split(",")):
                         return self._json(400, {"error": f"invalid {k}"})
 
@@ -223,6 +277,8 @@ def make_handler(cfg):
                     except Exception as e:
                         return self._json(500, {"error": str(e)})
                     return self._json(200, data)
+                if path in ("/api/flow", "/api/flow/candidates"):
+                    return self._flow(path, g)
                 if path == "/api/refs":
                     repo = g("repo") or cfg["repo"]
                     if not repo:

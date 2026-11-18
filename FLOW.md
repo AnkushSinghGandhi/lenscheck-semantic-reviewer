@@ -156,6 +156,23 @@ lenscheck flow ./cms --journey campaign-creation.yaml --html ~/.cache/lenscheck/
   (`Step k · name`), so the overview gets one band per step and the table timeline runs across steps.
 - `--html DIR/` names the page after the flow (`campaign-creation.html`), which is what the catalog links.
 
+## In the browser — `lenscheck serve` → 🧭 Flow
+
+```bash
+lenscheck serve --repo ./cms          # then open the Flow tab (http://127.0.0.1:8765/flow)
+```
+
+A form instead of the command line: repo, an entrypoint (suggestions from the repo) **or** a saved journey
+(from `<repo>/.flows`, or any folder you type), optional cross-repo paths, and "Explain with Claude". Several
+matches come back as pick buttons. The result is the same page as `--html` (overview, details, code panel),
+and the URL keeps the query, so a reload or a shared link re-runs it (`/flow?repo=…&journey=…&explain=1`).
+
+API: `GET /api/flow/candidates?repo=&journeys=` (entrypoints + journeys) and `GET /api/flow?repo=&q=|journey=
+&pick=&crossrepo=a,b&follow=x&explain=1&refresh=1` (409 + `ranked` when ambiguous). Same trust boundary as the
+other endpoints: `LENSCHECK_TOKEN`, and every repo / cross-repo / journey path must pass
+`LENSCHECK_ALLOWED_REPOS`; a journey must be a `.yaml`/`.json` file. An explanation request runs `claude -p`
+on the server (minutes when fresh, cached after).
+
 ## Accuracy
 
 - **One of.** When the model is picked at runtime from a known set — a helper returning

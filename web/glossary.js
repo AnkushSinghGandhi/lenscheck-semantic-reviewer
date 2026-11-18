@@ -173,6 +173,7 @@ const G = window.LC_GLOSSARY = {
   "nav-crossrepo": {t: "🔀 Cross-repo", d: "Tables several repos read or write — finds cross-service multi-writers."},
   "nav-theme": {t: "Theme", d: "Switch between light and dark."},
   "nav-glossary": {t: "📖 Glossary", d: "Every term this tool uses, A–Z, with search."},
+  "nav-flow": {t: "🧭 Flow", d: "Pick an entrypoint or a saved journey and see its whole flow: stages, tables, conditions, other repos, and the code behind each line."},
 
   // ---- flow ----
   "fl-story": {t: "Story", d: "The flow as repo lanes and phase cards, in the order the code runs. Each card is a phase of the trace; arrows name what hands control to the next one."},
