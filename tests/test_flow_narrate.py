@@ -111,6 +111,7 @@ def test_explain_parses_the_cli_answer_and_caches_it(tmp_path, monkeypatch, wrap
     assert narr["title"] == "Push" and meta["source"] == "claude:claude-opus-5-5" and meta["cached"] is False
     cmd, kw = run.calls[0]
     assert cmd[:2] == ["/usr/bin/claude", "-p"] and "--json-schema" in cmd and "--disallowedTools" in cmd
+    assert cmd[cmd.index("--setting-sources") + 1] == "project,local"
     assert "TRACE:" in kw["input"]
     _, meta2 = narrate.explain(f, phases, sp, src, tl)
     assert meta2["cached"] is True and len(run.calls) == 1

@@ -212,7 +212,8 @@ def _claude_cli(prompt, model, timeout=900):
     if not exe:
         raise NarrateError("the `claude` CLI is not on PATH")
     cmd = [exe, "-p", "--output-format", "json", "--json-schema", json.dumps(SCHEMA), "--model", model,
-           "--no-session-persistence", "--strict-mcp-config", "--disallowedTools", _NO_TOOLS]
+           "--no-session-persistence", "--strict-mcp-config", "--disallowedTools", _NO_TOOLS,
+           "--setting-sources", "project,local"]      # keep the user's ~/.claude/CLAUDE.md (language, style) out
     with tempfile.TemporaryDirectory(prefix="lc_narrate_") as cwd:     # no project files for it to wander into
         try:
             r = subprocess.run(cmd, input=prompt, cwd=cwd, capture_output=True, text=True, timeout=timeout)
